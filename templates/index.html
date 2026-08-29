@@ -29,13 +29,29 @@
     .sub { color: var(--muted); font-size: .75rem; margin-top: 2px; }
     .live { font-size: .7rem; color: var(--green); }
     #server-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
-    .server-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 10px; cursor: pointer; }
-    @media (max-width: 560px) { .server-summary { grid-template-columns: repeat(2, 1fr); } }
-    .metric { background: #0d1016; border: 1px solid var(--border); border-radius: 10px; padding: 7px 8px; min-width: 0; }
-    .metric .label { font-size: .62rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-    .metric .value { font-size: .95rem; font-weight: 700; margin-top: 1px; line-height: 1.2; }
-    .metric .sub { font-size: .62rem; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .metric canvas { width: 100%; height: 32px; margin-top: 4px; display: block; }
+    .server-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 8px; cursor: pointer; }
+    @media (min-width: 700px) { .server-summary { grid-template-columns: repeat(4, 1fr); } }
+    .metric {
+      background: #0d1016; border: 1px solid var(--border); border-radius: 8px; padding: 5px 6px; min-width: 0;
+    }
+    .metric.ok { border-color: rgba(61,214,140,.25); }
+    .metric.warn { border-color: rgba(232,196,104,.35); }
+    .metric.bad { border-color: rgba(240,113,120,.4); }
+    .metric-row { display: flex; gap: 5px; align-items: stretch; min-height: 46px; }
+    .metric-info { flex: 0 0 46%; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+    .metric-head { display: flex; align-items: center; gap: 4px; }
+    .metric .label { font-size: .58rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .metric-line { font-size: .72rem; font-weight: 700; line-height: 1.25; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .metric-line .dim { color: var(--muted); font-weight: 500; }
+    .status {
+      width: 13px; height: 13px; border-radius: 50%; display: inline-flex; align-items: center;
+      justify-content: center; font-size: .55rem; font-weight: 800; flex-shrink: 0;
+    }
+    .status.ok { background: rgba(61,214,140,.18); color: var(--green); }
+    .status.warn { background: rgba(232,196,104,.18); color: var(--yellow); }
+    .status.bad { background: rgba(240,113,120,.18); color: var(--red); }
+    .metric-chart { flex: 1; min-width: 0; display: flex; align-items: flex-end; }
+    .metric-chart canvas { width: 100%; height: 46px; display: block; }
     .server-details { border-top: 1px solid var(--border); padding: 12px; display: none; }
     .server-details.open { display: block; }
     .charts { display: grid; gap: 10px; margin-bottom: 12px; }
@@ -50,13 +66,20 @@
     .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
     .bar > i.warn { background: var(--yellow); } .bar > i.bad { background: var(--red); }
     .section-title { font-size: .8rem; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .05em; }
+    .docker-list { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+    .docker-row {
+      display: grid; grid-template-columns: 13px 1fr auto; gap: 6px; align-items: center;
+      font-size: .72rem; padding: 5px 6px; background: #0d1016; border: 1px solid var(--border); border-radius: 6px;
+    }
+    .docker-row .dname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .docker-row .dmeta { color: var(--muted); white-space: nowrap; font-size: .65rem; }
+    .docker-bars { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 3px; }
+    .docker-bars .bar { height: 5px; }
     #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; }
     .row { display: grid; grid-template-columns: 58px 1fr 14px; gap: 6px; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
     .row.running { border-color: rgba(61,214,140,.35); }
     .name { font-weight: 600; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .time { font-size: .65rem; color: var(--muted); }
-    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); justify-self: end; }
-    .dot.on { background: var(--green); box-shadow: 0 0 6px rgba(61,214,140,.5); }
     button.action { border: none; border-radius: 6px; padding: 6px 4px; font-size: .7rem; font-weight: 700; cursor: pointer; }
     button.action:disabled { opacity: .45; cursor: wait; }
     button.start { background: var(--accent); color: #fff; }
@@ -82,6 +105,8 @@
     }
     .api-key-hint { font-size: .7rem; color: var(--muted); margin-top: 6px; }
     .api-key-hint.ok { color: var(--green); }
+    .legend { font-size: .62rem; color: var(--muted); margin-top: 4px; }
+    .legend i { display: inline-block; width: 10px; height: 2px; margin-right: 3px; vertical-align: middle; }
   </style>
 </head>
 <body>
@@ -126,37 +151,53 @@
 
     <div id="server-card">
       <div class="server-summary" onclick="toggleServerDetails()">
-        <div class="metric">
-          <div class="label">CPU</div>
-          <div class="value" id="m-cpu">—</div>
-          <div class="sub" id="m-cpu-sub">—</div>
-          <canvas id="spark-cpu" width="120" height="32"></canvas>
+        <div class="metric" id="metric-cpu">
+          <div class="metric-row">
+            <div class="metric-info">
+              <div class="metric-head"><span class="label">CPU</span><span class="status" id="st-cpu">✓</span></div>
+              <div class="metric-line" id="m-cpu-line">—</div>
+            </div>
+            <div class="metric-chart"><canvas id="spark-cpu" width="100" height="46"></canvas></div>
+          </div>
         </div>
-        <div class="metric">
-          <div class="label">RAM</div>
-          <div class="value" id="m-ram">—</div>
-          <div class="sub" id="m-ram-sub">—</div>
-          <canvas id="spark-ram" width="120" height="32"></canvas>
+        <div class="metric" id="metric-ram">
+          <div class="metric-row">
+            <div class="metric-info">
+              <div class="metric-head"><span class="label">RAM</span><span class="status" id="st-ram">✓</span></div>
+              <div class="metric-line" id="m-ram-line">—</div>
+            </div>
+            <div class="metric-chart"><canvas id="spark-ram" width="100" height="46"></canvas></div>
+          </div>
         </div>
-        <div class="metric">
-          <div class="label">Load</div>
-          <div class="value" id="m-load">—</div>
-          <div class="sub" id="m-load-sub">—</div>
-          <canvas id="spark-load" width="120" height="32"></canvas>
+        <div class="metric" id="metric-disk">
+          <div class="metric-row">
+            <div class="metric-info">
+              <div class="metric-head"><span class="label">Disk</span><span class="status" id="st-disk">✓</span></div>
+              <div class="metric-line" id="m-disk-line">—</div>
+            </div>
+            <div class="metric-chart"><canvas id="spark-disk" width="100" height="46"></canvas></div>
+          </div>
         </div>
-        <div class="metric">
-          <div class="label">Disk</div>
-          <div class="value" id="m-disk">—</div>
-          <div class="sub" id="m-disk-sub">—</div>
-          <canvas id="spark-disk" width="120" height="32"></canvas>
+        <div class="metric" id="metric-net">
+          <div class="metric-row">
+            <div class="metric-info">
+              <div class="metric-head"><span class="label">Network</span><span class="status ok" id="st-net">✓</span></div>
+              <div class="metric-line" id="m-net-line">—</div>
+            </div>
+            <div class="metric-chart"><canvas id="spark-net" width="100" height="46"></canvas></div>
+          </div>
         </div>
       </div>
       <div id="server-details" class="server-details">
         <div class="charts">
-          <div class="chart-box"><h3>CPU % · 0–100</h3><canvas id="chart-cpu" width="560" height="64"></canvas></div>
+          <div class="chart-box">
+            <h3>CPU % (blue) · Load % of capacity (orange)</h3>
+            <canvas id="chart-cpu" width="560" height="64"></canvas>
+            <div class="legend"><i style="background:#5b8cff"></i>CPU <i style="background:#f0a060;margin-left:8px"></i>Load (load÷cores)</div>
+          </div>
           <div class="chart-box"><h3>RAM % · 0–100</h3><canvas id="chart-ram" width="560" height="64"></canvas></div>
-          <div class="chart-box"><h3>Load (1m)</h3><canvas id="chart-load" width="560" height="64"></canvas></div>
           <div class="chart-box"><h3>Disk % · 0–100</h3><canvas id="chart-disk" width="560" height="64"></canvas></div>
+          <div class="chart-box"><h3>Network throughput</h3><canvas id="chart-net" width="560" height="64"></canvas></div>
         </div>
         <div id="server-detail-grid" class="detail-grid"></div>
         <div class="api-key-block">
@@ -186,6 +227,7 @@
     let refreshTimer = null;
     let history = [];
     let cpuCores = 1;
+    let netPeak = 1024;
 
     function getStoredPassword() { return localStorage.getItem(AUTH_KEY) || ''; }
     function storePassword(pw) { localStorage.setItem(AUTH_KEY, pw); }
@@ -306,12 +348,29 @@
       showLogin();
     }
 
-    function pctClass(p) { return p >= 90 ? 'bad' : p >= 75 ? 'warn' : ''; }
-
-    function loadMax(values) {
-      const peak = values.length ? Math.max(...values) : 0;
-      return Math.max(cpuCores, peak * 1.15, 0.5);
+    function healthLevel(pct, loadMode) {
+      if (loadMode) {
+        if (pct >= 100) return 'bad';
+        if (pct >= 70) return 'warn';
+        return 'ok';
+      }
+      if (pct >= 90) return 'bad';
+      if (pct >= 75) return 'warn';
+      return 'ok';
     }
+
+    function statusIcon(level) {
+      return level === 'bad' ? '✕' : level === 'warn' ? '!' : '✓';
+    }
+
+    function applyStatus(metricId, statusId, level) {
+      const card = document.getElementById(metricId);
+      const st = document.getElementById(statusId);
+      if (card) card.className = 'metric ' + level;
+      if (st) { st.className = 'status ' + level; st.textContent = statusIcon(level); }
+    }
+
+    function pctClass(p) { return p >= 90 ? 'bad' : p >= 75 ? 'warn' : ''; }
 
     function drawGrid(ctx, w, h, maxY, percentMode) {
       ctx.strokeStyle = 'rgba(139,147,167,.15)';
@@ -324,48 +383,25 @@
           ctx.lineTo(w, y);
           ctx.stroke();
         });
-        ctx.fillStyle = 'rgba(139,147,167,.45)';
-        ctx.font = '8px system-ui,sans-serif';
-        ctx.fillText('100%', 2, 7);
-        ctx.fillText('50%', 2, h / 2 + 2);
-      } else {
-        const y = h - 2 - (cpuCores / maxY) * (h - 4);
-        if (y > 4 && y < h - 4) {
-          ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(w, y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = 'rgba(139,147,167,.45)';
-          ctx.font = '8px system-ui,sans-serif';
-          ctx.fillText(cpuCores + ' cores', 2, Math.max(8, y - 2));
-        }
       }
     }
 
-    function drawSparkline(canvasId, values, color, opts = {}) {
-      const c = document.getElementById(canvasId);
-      if (!c) return;
-      const ctx = c.getContext('2d');
-      const w = c.width, h = c.height;
-      ctx.clearRect(0, 0, w, h);
-      const max = opts.max ?? 100;
-      const min = 0;
-      drawGrid(ctx, w, h, max, opts.percent !== false);
+    function plotLine(ctx, values, w, h, max, color, dashed) {
       if (!values.length) return;
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
+      if (dashed) ctx.setLineDash([3, 2]); else ctx.setLineDash([]);
       ctx.beginPath();
       values.forEach((v, i) => {
         const x = (i / Math.max(values.length - 1, 1)) * (w - 2) + 1;
-        const y = h - 2 - ((Math.min(v, max) - min) / (max - min)) * (h - 4);
+        const y = h - 2 - (Math.min(v, max) / max) * (h - 4);
         i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       });
       ctx.stroke();
+      ctx.setLineDash([]);
     }
 
-    function drawChart(canvasId, values, color, opts = {}) {
+    function drawSparkline(canvasId, series, opts = {}) {
       const c = document.getElementById(canvasId);
       if (!c) return;
       const ctx = c.getContext('2d');
@@ -373,48 +409,106 @@
       ctx.clearRect(0, 0, w, h);
       const max = opts.max ?? 100;
       drawGrid(ctx, w, h, max, opts.percent !== false);
-      if (!values.length) return;
-      ctx.fillStyle = color + '33';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      values.forEach((v, i) => {
-        const x = (i / Math.max(values.length - 1, 1)) * (w - 4) + 2;
-        const y = h - 4 - (Math.min(v, max) / max) * (h - 8);
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      const list = Array.isArray(series[0]) ? series : [series];
+      const colors = opts.colors || ['#5b8cff'];
+      const dashed = opts.dashed || [];
+      list.forEach((values, idx) => plotLine(ctx, values, w, h, max, colors[idx] || colors[0], dashed[idx]));
+    }
+
+    function drawChart(canvasId, series, opts = {}) {
+      const c = document.getElementById(canvasId);
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+      const max = opts.max ?? 100;
+      drawGrid(ctx, w, h, max, opts.percent !== false);
+      const list = Array.isArray(series[0]) ? series : [series];
+      const colors = opts.colors || ['#5b8cff'];
+      const dashed = opts.dashed || [];
+      list.forEach((values, idx) => {
+        if (!values.length) return;
+        const color = colors[idx] || colors[0];
+        if (!dashed[idx]) {
+          ctx.fillStyle = color + '22';
+          ctx.beginPath();
+          values.forEach((v, i) => {
+            const x = (i / Math.max(values.length - 1, 1)) * (w - 4) + 2;
+            const y = h - 4 - (Math.min(v, max) / max) * (h - 8);
+            i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+          });
+          ctx.lineTo(w - 2, h - 2);
+          ctx.lineTo(2, h - 2);
+          ctx.closePath();
+          ctx.fill();
+        }
+        plotLine(ctx, values, w, h, max, color, dashed[idx]);
       });
-      ctx.stroke();
-      ctx.lineTo(w - 2, h - 2);
-      ctx.lineTo(2, h - 2);
-      ctx.closePath();
-      ctx.fill();
+    }
+
+    function netMax(values) {
+      const peak = values.length ? Math.max(...values) : 0;
+      return Math.max(peak * 1.2, 1024);
+    }
+
+    function renderDockerContainers(containers) {
+      if (!containers || !containers.length) return '<div class="full" style="color:var(--muted)">No running containers</div>';
+      return `<div class="full docker-list">${containers.map(c => {
+        const lvl = healthLevel(Math.max(c.cpu_percent, c.mem_percent), false);
+        return `<div class="docker-row">
+          <span class="status ${lvl}">${statusIcon(lvl)}</span>
+          <div>
+            <div class="dname" title="${esc(c.name)}">${esc(c.name)}</div>
+            <div class="docker-bars">
+              <div class="bar" title="CPU ${c.cpu_percent}%"><i class="${pctClass(c.cpu_percent)}" style="width:${Math.min(c.cpu_percent,100)}%"></i></div>
+              <div class="bar" title="RAM ${c.mem_percent}%"><i class="${pctClass(c.mem_percent)}" style="width:${Math.min(c.mem_percent,100)}%;background:var(--green)"></i></div>
+            </div>
+          </div>
+          <div class="dmeta">${c.cpu_percent.toFixed(1)}% CPU<br>${c.mem_usage}</div>
+        </div>`;
+      }).join('')}</div>`;
     }
 
     function renderSystem(s) {
       cpuCores = s.cpu.cores;
-      document.getElementById('m-cpu').textContent = s.cpu.percent + '%';
-      document.getElementById('m-cpu-sub').textContent = s.cpu.cores + ' cores';
-      document.getElementById('m-ram').textContent = s.memory.percent + '%';
-      document.getElementById('m-ram-sub').textContent = s.memory.used_human + ' / ' + s.memory.total_human;
-      document.getElementById('m-load').textContent = s.cpu.load_1.toFixed(2);
-      document.getElementById('m-load-sub').textContent = s.cpu.load_1.toFixed(2) + ' / ' + s.cpu.load_5.toFixed(2) + ' / ' + s.cpu.load_15.toFixed(2);
-      document.getElementById('m-disk').textContent = s.disk_root.percent + '%';
-      document.getElementById('m-disk-sub').textContent = s.disk_root.used_human + ' / ' + s.disk_root.total_human;
+      const loadPct = s.cpu.load_percent;
+      const cpuLvl = healthLevel(Math.max(s.cpu.percent, loadPct), true);
+      const ramLvl = healthLevel(s.memory.percent, false);
+      const diskLvl = healthLevel(s.disk_root.percent, false);
+
+      applyStatus('metric-cpu', 'st-cpu', cpuLvl);
+      applyStatus('metric-ram', 'st-ram', ramLvl);
+      applyStatus('metric-disk', 'st-disk', diskLvl);
+
+      document.getElementById('m-cpu-line').innerHTML =
+        `${s.cpu.percent}% <span class="dim">· ${s.cpu.cores}c · load ${loadPct}%</span>`;
+      document.getElementById('m-ram-line').innerHTML =
+        `${s.memory.percent}% <span class="dim">· ${s.memory.used_human}/${s.memory.total_human}</span>`;
+      document.getElementById('m-disk-line').innerHTML =
+        `${s.disk_root.percent}% <span class="dim">· ${s.disk_root.used_human}/${s.disk_root.total_human}</span>`;
+      document.getElementById('m-net-line').innerHTML =
+        `↓${s.network.rx_rate_human} <span class="dim">↑${s.network.tx_rate_human}</span>`;
 
       const cpuHist = history.map(p => p.cpu);
+      const loadHist = history.map(p => p.load_pct ?? 0);
       const ramHist = history.map(p => p.ram);
       const diskHist = history.map(p => p.disk);
-      const loadHist = history.map(p => p.load ?? 0);
-      const loadCeil = loadMax(loadHist);
+      const netHist = history.map(p => p.net ?? 0);
+      netPeak = netMax(netHist);
 
-      drawSparkline('spark-cpu', cpuHist.slice(-30), '#5b8cff', { max: 100, percent: true });
-      drawSparkline('spark-ram', ramHist.slice(-30), '#3dd68c', { max: 100, percent: true });
-      drawSparkline('spark-load', loadHist.slice(-30), '#f0a060', { max: loadCeil, percent: false });
-      drawSparkline('spark-disk', diskHist.slice(-30), '#e8c468', { max: 100, percent: true });
-      drawChart('chart-cpu', cpuHist, '#5b8cff', { max: 100, percent: true });
-      drawChart('chart-ram', ramHist, '#3dd68c', { max: 100, percent: true });
-      drawChart('chart-load', loadHist, '#f0a060', { max: loadCeil, percent: false });
-      drawChart('chart-disk', diskHist, '#e8c468', { max: 100, percent: true });
+      drawSparkline('spark-cpu', [cpuHist.slice(-30), loadHist.slice(-30)], {
+        max: 100, percent: true, colors: ['#5b8cff', '#f0a060'], dashed: [false, true],
+      });
+      drawSparkline('spark-ram', ramHist.slice(-30), { max: 100, percent: true, colors: ['#3dd68c'] });
+      drawSparkline('spark-disk', diskHist.slice(-30), { max: 100, percent: true, colors: ['#e8c468'] });
+      drawSparkline('spark-net', netHist.slice(-30), { max: netPeak, percent: false, colors: ['#9b8cff'] });
+
+      drawChart('chart-cpu', [cpuHist, loadHist], {
+        max: 100, percent: true, colors: ['#5b8cff', '#f0a060'], dashed: [false, true],
+      });
+      drawChart('chart-ram', ramHist, { max: 100, percent: true, colors: ['#3dd68c'] });
+      drawChart('chart-disk', diskHist, { max: 100, percent: true, colors: ['#e8c468'] });
+      drawChart('chart-net', netHist, { max: netPeak, percent: false, colors: ['#9b8cff'] });
 
       const statusEl = document.getElementById('settings-api-status');
       statusEl.textContent = s.agent.api_key_set
@@ -422,29 +516,22 @@
         : 'No API key saved yet — workers cannot start.';
       statusEl.className = 'api-key-hint' + (s.agent.api_key_set ? ' ok' : '');
 
-      const docker = s.docker.available
-        ? `<div><span>Running:</span> ${s.docker.running} / ${s.docker.total}</div>
-           <div><span>Stopped:</span> ${s.docker.stopped}</div>
-           <div class="full"><span>Version:</span> ${s.docker.version || '—'}</div>`
-        : '<div class="full">Docker not installed</div>';
+      const dockerSummary = s.docker.available
+        ? `${s.docker.running} running / ${s.docker.total} total · v${s.docker.version || '?'}`
+        : 'Docker not installed';
 
       document.getElementById('server-detail-grid').innerHTML = `
         <div class="full"><strong>${s.hostname}</strong> · ${s.ip}</div>
         <div class="full">${s.os} · kernel ${s.kernel}</div>
         <div><span>Uptime:</span> ${s.uptime_human}</div>
-        <div><span>Load (1/5/15m):</span> ${s.cpu.load_1} / ${s.cpu.load_5} / ${s.cpu.load_15}</div>
-        <div><span>CPU:</span> ${s.cpu.cores} cores · ${s.cpu.percent}%</div>
-        <div><span>RAM:</span> ${s.memory.used_human} / ${s.memory.total_human}</div>
+        <div><span>Load:</span> ${s.cpu.load_1} / ${s.cpu.load_5} / ${s.cpu.load_15} (${loadPct}% of ${s.cpu.cores} cores)</div>
+        <div class="full"><span>Network:</span> ↓ ${s.network.rx_rate_human} · ↑ ${s.network.tx_rate_human}</div>
         <div class="full"><span>Disk /:</span> ${s.disk_root.used_human} / ${s.disk_root.total_human} (${s.disk_root.free_human} free)</div>
         ${s.disk_scan_root ? `<div class="full"><span>Disk ${s.panel.scan_root}:</span> ${s.disk_scan_root.used_human} / ${s.disk_scan_root.total_human}</div>` : ''}
-        <div><span>Swap:</span> ${s.memory.swap_percent != null ? s.memory.swap_percent + '%' : '—'}</div>
         <div><span>Workers:</span> ${s.panel.running_workers} active</div>
-        <div class="full"><span>Agent CLI:</span> ${s.agent.version || 'not installed'}</div>
-        <div class="full section-title" style="margin-top:8px">Docker</div>
-        ${docker}
-        <div class="full bar-row"><span style="width:36px">CPU</span><div class="bar"><i class="${pctClass(s.cpu.percent)}" style="width:${s.cpu.percent}%"></i></div></div>
-        <div class="full bar-row"><span style="width:36px">RAM</span><div class="bar"><i class="${pctClass(s.memory.percent)}" style="width:${s.memory.percent}%"></i></div></div>
-        <div class="full bar-row"><span style="width:36px">Disk</span><div class="bar"><i class="${pctClass(s.disk_root.percent)}" style="width:${s.disk_root.percent}%"></i></div></div>
+        <div><span>Agent CLI:</span> ${s.agent.version || 'not installed'}</div>
+        <div class="full section-title" style="margin-top:8px">Docker · ${dockerSummary}</div>
+        ${renderDockerContainers(s.docker.containers)}
         <div class="full" style="color:var(--muted);font-size:.72rem;margin-top:6px">History: ${history.length} samples (~${Math.round(history.length * 2 / 60)} min) · refreshes every 2s</div>`;
     }
 

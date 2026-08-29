@@ -68,6 +68,7 @@ STATE_FILE = STATE_DIR / "workers.json"
 METRICS_HISTORY: deque = deque(maxlen=1800)
 _CPU_CACHE = {"percent": 0.0, "cores": 1, "at": 0.0}
 _DOCKER_CACHE = {"data": None, "at": 0.0}
+_NET_CACHE = {"rx": 0, "tx": 0, "at": 0.0}
 app = Flask(__name__)
 
 
@@ -331,6 +332,94 @@ def load_average() -> list[float]:
         return [float(x) for x in f.read().split()[:3]]
 
 
+def load_percent(load_1: float, cores: int) -> float:
+    if cores <= 0:
+        return 0.0
+    return round(min(999.0, (load_1 / cores) * 100), 1)
+
+
+def network_stats() -> dict:
+    now = time.time()
+    rx_total = tx_total = 0
+    with open("/proc/net/dev", encoding="utf-8") as f:
+        for line in f.readlines()[2:]:
+            parts = line.split()
+            if len(parts) < 10:
+                continue
+            iface = parts[0].rstrip(":")
+            if iface == "lo":
+                continue
+            rx_total += int(parts[1])
+            tx_total += int(parts[9])
+
+    rx_rate = tx_rate = 0.0
+    if _NET_CACHE["at"] > 0:
+        dt = now - _NET_CACHE["at"]
+        if dt > 0:
+            rx_rate = max(0.0, (rx_total - _NET_CACHE["rx"]) / dt)
+            tx_rate = max(0.0, (tx_total - _NET_CACHE["tx"]) / dt)
+
+    _NET_CACHE.update({"rx": rx_total, "tx": tx_total, "at": now})
+    total_rate = rx_rate + tx_rate
+    return {
+        "rx_bytes_total": rx_total,
+        "tx_bytes_total": tx_total,
+        "rx_rate": rx_rate,
+        "tx_rate": tx_rate,
+        "total_rate": total_rate,
+        "rx_rate_human": fmt_bytes(rx_rate) + "/s",
+        "tx_rate_human": fmt_bytes(tx_rate) + "/s",
+        "total_rate_human": fmt_bytes(total_rate) + "/s",
+    }
+
+
+def parse_docker_percent(value: str) -> float:
+    try:
+        return float(str(value).strip().rstrip("%"))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def docker_container_stats() -> list[dict]:
+    if not shutil.which("docker"):
+        return []
+    try:
+        result = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", "{{json .}}"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    containers: list[dict] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        cpu_percent = parse_docker_percent(item.get("CPUPerc", "0"))
+        mem_percent = parse_docker_percent(item.get("MemPerc", "0"))
+        containers.append(
+            {
+                "name": item.get("Name") or item.get("Container") or "unknown",
+                "cpu_percent": cpu_percent,
+                "mem_percent": mem_percent,
+                "mem_usage": item.get("MemUsage") or "—",
+                "net_io": item.get("NetIO") or "—",
+                "block_io": item.get("BlockIO") or "—",
+            }
+        )
+
+    containers.sort(key=lambda c: (c["cpu_percent"], c["mem_percent"]), reverse=True)
+    return containers
+
+
 def uptime_seconds() -> float:
     with open("/proc/uptime", encoding="utf-8") as f:
         return float(f.read().split()[0])
@@ -383,6 +472,7 @@ def docker_stats() -> dict:
         )
         running_n = len([x for x in running.stdout.splitlines() if x.strip()])
         total_n = len([x for x in all_ps.stdout.splitlines() if x.strip()])
+        containers = docker_container_stats()
         data = {
             "available": True,
             "version": (version.stdout or "").strip() or None,
@@ -390,22 +480,25 @@ def docker_stats() -> dict:
             "total": total_n,
             "stopped": max(0, total_n - running_n),
             "storage": [],
+            "containers": containers,
         }
         _DOCKER_CACHE.update({"data": data, "at": now})
         return data
     except (OSError, subprocess.SubprocessError):
-        return {"available": True, "running": None, "total": None, "stopped": None, "storage": []}
+        return {"available": True, "running": None, "total": None, "stopped": None, "storage": [], "containers": []}
 
 
 def record_metrics(snapshot: dict) -> None:
     docker = snapshot.get("docker") or {}
+    network = snapshot.get("network") or {}
     METRICS_HISTORY.append(
         {
             "t": time.time(),
             "cpu": snapshot["cpu"]["percent"],
+            "load_pct": snapshot["cpu"]["load_percent"],
             "ram": snapshot["memory"]["percent"],
             "disk": snapshot["disk_root"]["percent"],
-            "load": snapshot["cpu"]["load_1"],
+            "net": network.get("total_rate") or 0,
             "docker_running": docker.get("running") or 0,
         }
     )
@@ -421,6 +514,7 @@ def collect_system_info() -> dict:
     running_workers = [name for name, info in state.items() if info.get("pid") and is_running(info["pid"])]
     loads = load_average()
     cpu_percent, cpu_cores = cpu_usage_percent()
+    net = network_stats()
 
     result = {
         "hostname": socket.gethostname(),
@@ -435,6 +529,7 @@ def collect_system_info() -> dict:
             "load_1": loads[0],
             "load_5": loads[1],
             "load_15": loads[2],
+            "load_percent": load_percent(loads[0], cpu_cores),
         },
         "memory": {
             "used": mem["used"],
@@ -476,6 +571,7 @@ def collect_system_info() -> dict:
             "running_worker_names": running_workers,
         },
         "docker": docker_stats(),
+        "network": net,
         "history_points": len(METRICS_HISTORY),
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
