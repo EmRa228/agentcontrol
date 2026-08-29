@@ -151,6 +151,18 @@
     }
     .api-key-hint { font-size: .7rem; color: var(--muted); margin-top: 6px; }
     .api-key-hint.ok { color: var(--green); }
+    .settings-block {
+      margin-top: 12px; padding: 12px; background: #0d1016; border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .settings-block .section-title { margin: 0 0 8px; }
+    .settings-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+    .settings-row select, .settings-row input {
+      flex: 1; min-width: 180px; border: 1px solid var(--border); background: var(--bg);
+      color: var(--text); border-radius: 8px; padding: 9px 11px; font-size: .82rem;
+    }
+    .settings-note { font-size: .68rem; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+    .row.removing { opacity: 0; transform: scale(0.98); transition: opacity .15s, transform .15s; }
     .legend { font-size: .62rem; color: var(--muted); margin-top: 4px; }
     .legend i { display: inline-block; width: 10px; height: 2px; margin-right: 3px; vertical-align: middle; }
   </style>
@@ -255,6 +267,15 @@
           <div class="api-key-hint" id="settings-api-status">—</div>
           <p id="settings-msg" class="err"></p>
         </div>
+        <div class="settings-block">
+          <div class="section-title">Default agent model</div>
+          <div class="settings-note">Used in the Cursor redirect after Start. Pick non-fast Composer if you prefer (e.g. composer-2.5).</div>
+          <div class="settings-row">
+            <select id="settings-model"><option value="">Loading models…</option></select>
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveDefaultModel()">Save model</button>
+          </div>
+          <div class="api-key-hint" id="settings-model-status">—</div>
+        </div>
       </div>
     </div>
 
@@ -307,6 +328,7 @@
     let ctxProjectName = null;
     let longPressTimer = null;
     let longPressRow = null;
+    let modelsLoaded = false;
 
     function getStoredPassword() { return localStorage.getItem(AUTH_KEY) || ''; }
     function storePassword(pw) { localStorage.setItem(AUTH_KEY, pw); }
@@ -351,6 +373,7 @@
       document.getElementById('login-gate').classList.add('hidden');
       document.getElementById('app').classList.remove('hidden');
       if (!refreshTimer) refreshTimer = setInterval(refreshAll, 2000);
+      loadSettingsPanel();
       refreshAll();
     }
 
@@ -646,7 +669,9 @@
     }
 
     function toggleServerDetails() {
-      document.getElementById('server-details').classList.toggle('open');
+      const el = document.getElementById('server-details');
+      el.classList.toggle('open');
+      if (el.classList.contains('open')) loadSettingsPanel();
     }
 
     function esc(s) {
@@ -711,26 +736,84 @@
       ctxProjectName = null;
     }
 
+    function removeProjectRow(name) {
+      const row = [...list.querySelectorAll('.row')].find(r => r.dataset.name === name);
+      if (row) {
+        row.classList.add('removing');
+        setTimeout(() => {
+          row.remove();
+          if (!list.querySelector('.row')) {
+            list.innerHTML = '<p class="loading">No folders found</p>';
+          }
+        }, 150);
+      }
+      lastFoldersJson = '';
+    }
+
+    async function loadSettingsPanel() {
+      try {
+        const [settingsRes, modelsRes] = await Promise.all([
+          apiFetch('/api/settings'),
+          modelsLoaded ? null : apiFetch('/api/models'),
+        ]);
+        const settings = await settingsRes.json();
+        const select = document.getElementById('settings-model');
+        if (!modelsLoaded && modelsRes) {
+          const models = (await modelsRes.json()).models || [];
+          select.innerHTML = '<option value="">— Cursor default —</option>' + models.map(m =>
+            `<option value="${esc(m.id)}">${esc(m.label)} (${esc(m.id)})</option>`
+          ).join('');
+          modelsLoaded = true;
+        }
+        select.value = settings.default_model || '';
+        document.getElementById('settings-model-status').textContent = settings.default_model
+          ? 'Default model: ' + settings.default_model
+          : 'No default model — Cursor will use its own default.';
+      } catch (e) {}
+    }
+
+    async function saveDefaultModel() {
+      const model = document.getElementById('settings-model').value;
+      const status = document.getElementById('settings-model-status');
+      try {
+        const res = await apiFetch('/api/settings/model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model }),
+        });
+        const data = await res.json();
+        if (!res.ok) { status.textContent = data.error || 'Failed'; return; }
+        status.textContent = model ? 'Default model: ' + model : 'Cleared — using Cursor default.';
+        status.className = 'api-key-hint ok';
+      } catch (e) {
+        status.textContent = 'Failed to save model';
+      }
+    }
+
     async function hideProject(name) {
       closeCtxModal();
-      busy = true;
+      removeProjectRow(name);
       try {
         const res = await apiFetch('/api/hide/' + encodeURIComponent(name), { method: 'POST' });
         const data = await res.json();
         if (!res.ok) {
           msg.textContent = data.error || 'Hide failed';
           msg.className = 'error';
+          lastFoldersJson = '';
+          const foldRes = await apiFetch('/api/folders');
+          renderFolders((await foldRes.json()).folders);
           return;
         }
-        lastFoldersJson = '';
         msg.textContent = 'Hidden — delete .agentcontrol-ignore to restore';
         msg.className = '';
-        await refreshAll();
       } catch (e) {
         msg.textContent = 'Hide failed';
         msg.className = 'error';
-      } finally {
-        busy = false;
+        lastFoldersJson = '';
+        try {
+          const foldRes = await apiFetch('/api/folders');
+          renderFolders((await foldRes.json()).folders);
+        } catch (_) {}
       }
     }
 

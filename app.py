@@ -19,6 +19,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import urlopen
 
 import yaml
@@ -37,14 +38,20 @@ CONFIG_SEARCH = [
 ]
 
 
+CONFIG_FILE: Path | None = None
+
+
 def load_config() -> dict:
+    global CONFIG_FILE
     for path in CONFIG_SEARCH:
         if path.is_file():
             with open(path, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
+            CONFIG_FILE = path
             break
     else:
         cfg = {}
+        CONFIG_FILE = CONFIG_SEARCH[0]
 
     cfg.setdefault("port", int(os.environ.get("PORT", 30228)))
     cfg.setdefault("scan_root", os.environ.get("SCAN_ROOT", "/root"))
@@ -56,11 +63,25 @@ def load_config() -> dict:
     cfg.setdefault("agent_bin", os.environ.get("AGENT_BIN", ""))
     cfg.setdefault("worker_ready_timeout", int(os.environ.get("WORKER_READY_TIMEOUT", 45)))
     cfg.setdefault("auth_password_file", os.environ.get("AUTH_PASSWORD_FILE", "/etc/agentcontrol/auth-password"))
+    cfg.setdefault("default_model", os.environ.get("DEFAULT_MODEL", ""))
 
     if os.environ.get("PORT"):
         cfg["port"] = int(os.environ["PORT"])
 
     return cfg
+
+
+def save_config_patch(updates: dict) -> None:
+    path = CONFIG_FILE or CONFIG_SEARCH[0]
+    current: dict = {}
+    if path.is_file():
+        with open(path, encoding="utf-8") as f:
+            current = yaml.safe_load(f) or {}
+    current.update(updates)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(current, f, default_flow_style=False, sort_keys=False)
+    CFG.update(updates)
 
 
 CFG = load_config()
@@ -153,7 +174,43 @@ def worker_name(folder: str) -> str:
 
 
 def agent_url(folder: str) -> str:
-    return CURSOR_AGENTS_URL.format(worker_id=worker_id_for(folder))
+    worker_id = worker_id_for(folder)
+    model = (CFG.get("default_model") or "").strip()
+    if model:
+        return f"https://cursor.com/agents?model={quote(model)}#workerId={worker_id}"
+    return CURSOR_AGENTS_URL.format(worker_id=worker_id)
+
+
+def list_agent_models() -> list[dict]:
+    agent_bin = find_agent_bin()
+    if not agent_bin:
+        return []
+    env = os.environ.copy()
+    api_key = read_api_key()
+    if api_key:
+        env["CURSOR_API_KEY"] = api_key
+    try:
+        result = subprocess.run(
+            [agent_bin, "--list-models"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    models: list[dict] = []
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if not line or line.lower().startswith("available models"):
+            continue
+        if " - " in line:
+            model_id, label = line.split(" - ", 1)
+        else:
+            model_id, label = line, line
+        models.append({"id": model_id.strip(), "label": label.strip()})
+    return models
 
 
 def mgmt_port(name: str) -> int:
@@ -906,6 +963,9 @@ def start_worker(name: str) -> tuple[dict, int]:
     env["CURSOR_AGENT_WORKER_ID"] = worker_id
     env["CURSOR_API_KEY"] = api_key
     env["PATH"] = "/root/.local/bin:" + env.get("PATH", "")
+    default_model = (CFG.get("default_model") or "").strip()
+    if default_model:
+        env["CURSOR_MODEL"] = default_model
 
     log_file = STATE_DIR / f"{name}.log"
     cmd = [
@@ -1043,6 +1103,31 @@ def api_setup_api_key():
             return jsonify({"error": "unauthorized"}), 401
     write_api_key(api_key)
     return jsonify({"ok": True})
+
+
+@app.get("/api/models")
+def api_models():
+    return jsonify({"models": list_agent_models()})
+
+
+@app.get("/api/settings")
+def api_settings():
+    return jsonify(
+        {
+            "default_model": CFG.get("default_model") or "",
+            "idle_hours": round(CFG["idle_release_seconds"] / 3600, 1),
+            "scan_root": CFG["scan_root"],
+            "port": CFG["port"],
+        }
+    )
+
+
+@app.post("/api/settings/model")
+def api_settings_model():
+    data = request.get_json(silent=True) or {}
+    model = str(data.get("model", "")).strip()
+    save_config_patch({"default_model": model})
+    return jsonify({"ok": True, "default_model": model})
 
 
 @app.get("/api/folders")

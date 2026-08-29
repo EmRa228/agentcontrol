@@ -22,5 +22,8 @@ exclude_dirs:
 # Where PID/state files are stored
 state_dir: /var/lib/agentcontrol
 
+# Default model appended to Cursor redirect URL (e.g. composer-2.5, not composer-2.5-fast)
+default_model: ""
+
 # Path to agent CLI (empty = search PATH)
 agent_bin: ""
