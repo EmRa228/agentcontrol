@@ -127,7 +127,7 @@ setup_panel_password() {
   fi
   short="$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | head -c 5)"
   [[ -z "${short}" ]] && short="srv"
-  rand="$(tr -dc 'a-z0-9' </dev/urandom | head -c 5)"
+  rand="$(tr -dc 'a-z0-9' </dev/urandom | head -c 5 || true)"
   pw="${short}-${rand}"
   printf '%s' "${pw}" > "${AUTH_FILE}"
   chmod 600 "${AUTH_FILE}"
