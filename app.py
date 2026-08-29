@@ -23,6 +23,7 @@ from urllib.request import urlopen
 import yaml
 from flask import Flask, jsonify, render_template, request
 
+IGNORE_MARKER = ".agentcontrol-ignore"
 WORKER_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 CURSOR_AGENTS_URL = "https://cursor.com/agents#workerId={worker_id}"
 MGMT_PORT_BASE = 32000
@@ -404,6 +405,7 @@ def record_metrics(snapshot: dict) -> None:
             "cpu": snapshot["cpu"]["percent"],
             "ram": snapshot["memory"]["percent"],
             "disk": snapshot["disk_root"]["percent"],
+            "load": snapshot["cpu"]["load_1"],
             "docker_running": docker.get("running") or 0,
         }
     )
@@ -521,6 +523,10 @@ def reconcile_state() -> dict:
     return state
 
 
+def is_folder_ignored(path: Path) -> bool:
+    return (path / IGNORE_MARKER).is_file()
+
+
 def is_excluded(name: str) -> bool:
     if name in CFG.get("exclude_dirs", []):
         return True
@@ -545,7 +551,7 @@ def list_folders() -> list[dict]:
     state = reconcile_state()
     folders = []
     for entry in root.iterdir():
-        if not entry.is_dir() or is_excluded(entry.name):
+        if not entry.is_dir() or is_excluded(entry.name) or is_folder_ignored(entry):
             continue
         name = entry.name
         info = state.get(name, {})
@@ -807,6 +813,16 @@ def api_folders():
 def api_start(name: str):
     result, code = start_worker(name)
     return jsonify(result), code
+
+
+@app.post("/api/hide/<name>")
+def api_hide(name: str):
+    path = folder_path(name)
+    if not path:
+        return jsonify({"error": "folder not found"}), 404
+    marker = path / IGNORE_MARKER
+    marker.write_text("Hidden from AgentControl. Delete this file to show again.\n", encoding="utf-8")
+    return jsonify({"status": "hidden", "name": name, "marker": str(marker)})
 
 
 @app.post("/api/stop/<name>")
