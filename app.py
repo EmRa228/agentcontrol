@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import secrets
 import signal
 import shutil
@@ -380,19 +381,111 @@ def parse_docker_percent(value: str) -> float:
         return 0.0
 
 
-def docker_container_stats() -> list[dict]:
+def parse_docker_size_bytes(text: str) -> int:
+    text = str(text).strip().upper()
+    match = re.match(r"([\d.]+)\s*([A-Z]+)", text)
+    if not match:
+        return 0
+    value = float(match.group(1))
+    unit = match.group(2)
+    multipliers = {
+        "B": 1,
+        "KB": 1000,
+        "KIB": 1024,
+        "MB": 1000**2,
+        "MIB": 1024**2,
+        "GB": 1000**3,
+        "GIB": 1024**3,
+        "TB": 1000**4,
+        "TIB": 1024**4,
+    }
+    return int(value * multipliers.get(unit, 1))
+
+
+def parse_docker_mem_used_bytes(mem_usage: str) -> int:
+    if not mem_usage or mem_usage == "—":
+        return 0
+    return parse_docker_size_bytes(mem_usage.split("/")[0].strip())
+
+
+def docker_inspect_labels() -> dict[str, dict]:
     if not shutil.which("docker"):
-        return []
+        return {}
     try:
         result = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format", "{{json .}}"],
+            [
+                "docker",
+                "ps",
+                "-q",
+                "--format",
+                "{{.ID}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+        ids = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if not ids:
+            return {}
+        inspect = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                *ids,
+                "--format",
+                "{{.Name}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}",
+            ],
             capture_output=True,
             text=True,
             timeout=8,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return []
+        return {}
+
+    labels: dict[str, dict] = {}
+    for line in inspect.stdout.splitlines():
+        parts = line.strip().split("|", 2)
+        if not parts:
+            continue
+        name = parts[0].lstrip("/")
+        labels[name] = {
+            "compose_project": parts[1] if len(parts) > 1 and parts[1] else None,
+            "compose_service": parts[2] if len(parts) > 2 and parts[2] else None,
+        }
+    return labels
+
+
+def enrich_container_shares(containers: list[dict]) -> tuple[dict, list[dict]]:
+    total_cpu = sum(c["cpu_percent"] for c in containers)
+    total_mem = sum(c["mem_bytes"] for c in containers)
+    totals = {
+        "cpu_percent": round(total_cpu, 2),
+        "mem_bytes": total_mem,
+        "mem_human": fmt_bytes(total_mem),
+    }
+    for container in containers:
+        container["cpu_share"] = round((container["cpu_percent"] / total_cpu) * 100, 1) if total_cpu > 0 else 0.0
+        container["mem_share"] = round((container["mem_bytes"] / total_mem) * 100, 1) if total_mem > 0 else 0.0
+    return totals, containers
+
+
+def docker_grouped_stats() -> dict:
+    if not shutil.which("docker"):
+        return {"containers": [], "groups": [], "totals": {"cpu_percent": 0, "mem_bytes": 0, "mem_human": "0 B"}}
+
+    labels = docker_inspect_labels()
+    try:
+        result = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", "{{json .}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"containers": [], "groups": [], "totals": {"cpu_percent": 0, "mem_bytes": 0, "mem_human": "0 B"}}
 
     containers: list[dict] = []
     for line in result.stdout.splitlines():
@@ -403,21 +496,66 @@ def docker_container_stats() -> list[dict]:
             item = json.loads(line)
         except json.JSONDecodeError:
             continue
-        cpu_percent = parse_docker_percent(item.get("CPUPerc", "0"))
-        mem_percent = parse_docker_percent(item.get("MemPerc", "0"))
+        name = item.get("Name") or item.get("Container") or "unknown"
+        meta = labels.get(name, {})
+        mem_usage = item.get("MemUsage") or "—"
         containers.append(
             {
-                "name": item.get("Name") or item.get("Container") or "unknown",
-                "cpu_percent": cpu_percent,
-                "mem_percent": mem_percent,
-                "mem_usage": item.get("MemUsage") or "—",
+                "name": name,
+                "service": meta.get("compose_service") or name,
+                "compose_project": meta.get("compose_project"),
+                "cpu_percent": parse_docker_percent(item.get("CPUPerc", "0")),
+                "mem_percent": parse_docker_percent(item.get("MemPerc", "0")),
+                "mem_bytes": parse_docker_mem_used_bytes(mem_usage),
+                "mem_usage": mem_usage,
                 "net_io": item.get("NetIO") or "—",
-                "block_io": item.get("BlockIO") or "—",
             }
         )
 
-    containers.sort(key=lambda c: (c["cpu_percent"], c["mem_percent"]), reverse=True)
-    return containers
+    totals, containers = enrich_container_shares(containers)
+    grouped: dict[str, dict] = {}
+    for container in containers:
+        project = container.get("compose_project")
+        if project:
+            group_id = f"compose:{project}"
+            group_type = "compose"
+            group_label = project
+        else:
+            group_id = f"standalone:{container['name']}"
+            group_type = "standalone"
+            group_label = container["name"]
+
+        if group_id not in grouped:
+            grouped[group_id] = {
+                "id": group_id,
+                "label": group_label,
+                "type": group_type,
+                "containers": [],
+                "cpu_percent": 0.0,
+                "mem_bytes": 0,
+            }
+        group = grouped[group_id]
+        group["containers"].append(container)
+        group["cpu_percent"] += container["cpu_percent"]
+        group["mem_bytes"] += container["mem_bytes"]
+
+    groups: list[dict] = []
+    for group in grouped.values():
+        group["cpu_percent"] = round(group["cpu_percent"], 2)
+        group["mem_human"] = fmt_bytes(group["mem_bytes"])
+        group["container_count"] = len(group["containers"])
+        group["cpu_share"] = round((group["cpu_percent"] / totals["cpu_percent"]) * 100, 1) if totals["cpu_percent"] > 0 else 0.0
+        group["mem_share"] = round((group["mem_bytes"] / totals["mem_bytes"]) * 100, 1) if totals["mem_bytes"] > 0 else 0.0
+        group["containers"].sort(key=lambda c: (c["cpu_percent"], c["mem_bytes"]), reverse=True)
+        groups.append(group)
+
+    groups.sort(key=lambda g: (g["cpu_percent"], g["mem_bytes"]), reverse=True)
+    containers.sort(key=lambda c: (c["cpu_percent"], c["mem_bytes"]), reverse=True)
+    return {"containers": containers, "groups": groups, "totals": totals}
+
+
+def docker_container_stats() -> list[dict]:
+    return docker_grouped_stats()["containers"]
 
 
 def uptime_seconds() -> float:
@@ -472,7 +610,7 @@ def docker_stats() -> dict:
         )
         running_n = len([x for x in running.stdout.splitlines() if x.strip()])
         total_n = len([x for x in all_ps.stdout.splitlines() if x.strip()])
-        containers = docker_container_stats()
+        grouped = docker_grouped_stats()
         data = {
             "available": True,
             "version": (version.stdout or "").strip() or None,
@@ -480,12 +618,23 @@ def docker_stats() -> dict:
             "total": total_n,
             "stopped": max(0, total_n - running_n),
             "storage": [],
-            "containers": containers,
+            "containers": grouped["containers"],
+            "groups": grouped["groups"],
+            "totals": grouped["totals"],
         }
         _DOCKER_CACHE.update({"data": data, "at": now})
         return data
     except (OSError, subprocess.SubprocessError):
-        return {"available": True, "running": None, "total": None, "stopped": None, "storage": [], "containers": []}
+        return {
+            "available": True,
+            "running": None,
+            "total": None,
+            "stopped": None,
+            "storage": [],
+            "containers": [],
+            "groups": [],
+            "totals": {"cpu_percent": 0, "mem_bytes": 0, "mem_human": "0 B"},
+        }
 
 
 def record_metrics(snapshot: dict) -> None:
@@ -916,6 +1065,9 @@ def api_hide(name: str):
     path = folder_path(name)
     if not path:
         return jsonify({"error": "folder not found"}), 404
+    state = reconcile_state()
+    if name in state:
+        stop_worker(name)
     marker = path / IGNORE_MARKER
     marker.write_text("Hidden from AgentControl. Delete this file to show again.\n", encoding="utf-8")
     return jsonify({"status": "hidden", "name": name, "marker": str(marker)})

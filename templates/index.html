@@ -67,29 +67,75 @@
     .bar > i.warn { background: var(--yellow); } .bar > i.bad { background: var(--red); }
     .section-title { font-size: .8rem; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .05em; }
     .docker-list { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
-    .docker-row {
-      display: grid; grid-template-columns: 13px 1fr auto; gap: 6px; align-items: center;
-      font-size: .72rem; padding: 5px 6px; background: #0d1016; border: 1px solid var(--border); border-radius: 6px;
+    .docker-totals { font-size: .7rem; color: var(--muted); margin: 4px 0 8px; }
+    .docker-group {
+      background: #0d1016; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
     }
-    .docker-row .dname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .docker-row .dmeta { color: var(--muted); white-space: nowrap; font-size: .65rem; }
-    .docker-bars { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 3px; }
-    .docker-bars .bar { height: 5px; }
+    .docker-group-head {
+      display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+      padding: 8px 10px; cursor: pointer; user-select: none;
+    }
+    .docker-group-head:hover { background: rgba(255,255,255,.02); }
+    .docker-group-title { font-size: .78rem; font-weight: 700; }
+    .docker-group-sub { font-size: .62rem; color: var(--muted); margin-top: 2px; }
+    .docker-group-pct { font-size: .68rem; color: var(--muted); text-align: right; white-space: nowrap; }
+    .docker-group-pct strong { color: var(--text); }
+    .share-bars { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+    .share-row { display: grid; grid-template-columns: 34px 1fr 38px; gap: 6px; align-items: center; font-size: .62rem; color: var(--muted); }
+    .share-row .bar { height: 7px; }
+    .share-row .pct { text-align: right; color: var(--text); font-weight: 600; }
+    .docker-group-body { border-top: 1px solid var(--border); padding: 6px 8px 8px; display: none; }
+    .docker-group.open .docker-group-body { display: block; }
+    .docker-group-chevron { color: var(--muted); font-size: .7rem; margin-left: 6px; }
+    .docker-item {
+      padding: 6px 4px; border-top: 1px solid rgba(37,43,56,.6); font-size: .68rem;
+    }
+    .docker-item:first-child { border-top: none; }
+    .docker-item-name { font-weight: 600; margin-bottom: 4px; }
     #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; }
-    .row { display: grid; grid-template-columns: 58px 1fr 14px; gap: 6px; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+    .row {
+      display: grid; grid-template-columns: 58px 1fr; gap: 6px; align-items: center;
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+      touch-action: manipulation; user-select: none;
+    }
     .row.running { border-color: rgba(61,214,140,.35); }
+    .row.pressing { opacity: .85; border-color: var(--accent); }
     .name { font-weight: 600; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .time { font-size: .65rem; color: var(--muted); }
     button.action { border: none; border-radius: 6px; padding: 6px 4px; font-size: .7rem; font-weight: 700; cursor: pointer; }
     button.action:disabled { opacity: .45; cursor: wait; }
     button.start { background: var(--accent); color: #fff; }
     button.stop { background: rgba(240,113,120,.15); color: var(--red); }
-    button.btn-hide {
-      width: 14px; height: 14px; padding: 0; font-size: .5rem; line-height: 1;
-      color: var(--muted); background: transparent; border: 1px solid transparent;
-      border-radius: 2px; opacity: .3; cursor: pointer; justify-self: end;
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(11,13,18,.88); display: flex;
+      align-items: center; justify-content: center; padding: 16px; z-index: 60;
     }
-    button.btn-hide:hover { opacity: .75; border-color: var(--border); }
+    .modal {
+      width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 16px;
+    }
+    .modal h3 { font-size: .95rem; margin-bottom: 10px; }
+    .modal-steps { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .modal-steps li {
+      display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--muted);
+    }
+    .modal-steps li.active { color: var(--text); }
+    .modal-steps li.done { color: var(--green); }
+    .modal-steps li.error { color: var(--red); }
+    .step-dot {
+      width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border);
+      display: inline-flex; align-items: center; justify-content: center; font-size: .6rem; flex-shrink: 0;
+    }
+    .modal-steps li.active .step-dot { border-color: var(--accent); }
+    .modal-steps li.done .step-dot { border-color: var(--green); background: rgba(61,214,140,.15); }
+    .modal-steps li.error .step-dot { border-color: var(--red); }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .ctx-item {
+      width: 100%; text-align: left; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+      background: #0d1016; color: var(--text); font-size: .82rem; cursor: pointer;
+    }
+    .ctx-item.danger { color: var(--red); border-color: rgba(240,113,120,.35); }
+    .ctx-item:hover { background: rgba(255,255,255,.03); }
     #msg { margin-top: 10px; text-align: center; color: var(--muted); font-size: .78rem; min-height: 1.2em; }
     .error { color: var(--red); }
     .loading { text-align: center; color: var(--muted); padding: 20px; font-size: .85rem; grid-column: 1 / -1; }
@@ -217,6 +263,33 @@
     <p id="msg"></p>
   </div>
 
+  <div id="start-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="start-modal-title">Starting worker</h3>
+      <ul class="modal-steps" id="start-steps">
+        <li data-step="request"><span class="step-dot">1</span>Send start request</li>
+        <li data-step="launch"><span class="step-dot">2</span>Launch worker process</li>
+        <li data-step="connect"><span class="step-dot">3</span>Connect to Cursor cloud</li>
+        <li data-step="redirect"><span class="step-dot">4</span>Open Cursor</li>
+      </ul>
+      <p id="start-modal-msg" class="err" style="min-height:1.2em"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost btn-sm hidden" id="start-modal-close" onclick="closeStartModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ctx-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="ctx-modal-title">Project</h3>
+      <p style="font-size:.78rem;color:var(--muted);margin-bottom:12px" id="ctx-modal-hint">Long-press or right-click a project for options.</p>
+      <button type="button" class="ctx-item danger" id="ctx-hide-btn">Hide from list</button>
+      <div class="modal-actions" style="margin-top:12px">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="closeCtxModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const AUTH_KEY = 'agentcontrol_auth_' + location.host;
     const list = document.getElementById('list');
@@ -228,6 +301,12 @@
     let history = [];
     let cpuCores = 1;
     let netPeak = 1024;
+    let modalOpen = false;
+    let expandedDocker = new Set();
+    let lastFoldersJson = '';
+    let ctxProjectName = null;
+    let longPressTimer = null;
+    let longPressRow = null;
 
     function getStoredPassword() { return localStorage.getItem(AUTH_KEY) || ''; }
     function storePassword(pw) { localStorage.setItem(AUTH_KEY, pw); }
@@ -451,22 +530,53 @@
       return Math.max(peak * 1.2, 1024);
     }
 
-    function renderDockerContainers(containers) {
-      if (!containers || !containers.length) return '<div class="full" style="color:var(--muted)">No running containers</div>';
-      return `<div class="full docker-list">${containers.map(c => {
-        const lvl = healthLevel(Math.max(c.cpu_percent, c.mem_percent), false);
-        return `<div class="docker-row">
-          <span class="status ${lvl}">${statusIcon(lvl)}</span>
-          <div>
-            <div class="dname" title="${esc(c.name)}">${esc(c.name)}</div>
-            <div class="docker-bars">
-              <div class="bar" title="CPU ${c.cpu_percent}%"><i class="${pctClass(c.cpu_percent)}" style="width:${Math.min(c.cpu_percent,100)}%"></i></div>
-              <div class="bar" title="RAM ${c.mem_percent}%"><i class="${pctClass(c.mem_percent)}" style="width:${Math.min(c.mem_percent,100)}%;background:var(--green)"></i></div>
+    function renderShareBars(cpuShare, memShare) {
+      return `<div class="share-bars">
+        <div class="share-row"><span>CPU</span><div class="bar"><i class="${pctClass(cpuShare)}" style="width:${Math.min(cpuShare,100)}%"></i></div><span class="pct">${cpuShare.toFixed(1)}%</span></div>
+        <div class="share-row"><span>RAM</span><div class="bar"><i class="${pctClass(memShare)}" style="width:${Math.min(memShare,100)}%;background:var(--green)"></i></div><span class="pct">${memShare.toFixed(1)}%</span></div>
+      </div>`;
+    }
+
+    function renderDockerGroups(docker) {
+      if (!docker.available) return '<div class="full" style="color:var(--muted)">Docker not installed</div>';
+      const groups = docker.groups || [];
+      if (!groups.length) return '<div class="full" style="color:var(--muted)">No running containers</div>';
+      const totals = docker.totals || {};
+      const head = `<div class="full docker-totals">Docker total: <strong>${(totals.cpu_percent||0).toFixed(1)}% CPU</strong> · <strong>${totals.mem_human||'0 B'} RAM</strong> — shares below are % of all Docker usage</div>`;
+      const body = groups.map(g => {
+        const open = expandedDocker.has(g.id) ? ' open' : '';
+        const chev = expandedDocker.has(g.id) ? '▾' : '▸';
+        const kind = g.type === 'compose' ? `compose · ${g.container_count} containers` : 'standalone';
+        const items = (g.containers || []).map(c => `
+          <div class="docker-item">
+            <div class="docker-item-name">${esc(c.service || c.name)}</div>
+            ${renderShareBars(c.cpu_share || 0, c.mem_share || 0)}
+            <div style="font-size:.62rem;color:var(--muted);margin-top:4px">${c.cpu_percent.toFixed(1)}% host CPU · ${c.mem_usage}</div>
+          </div>`).join('');
+        return `<div class="docker-group${open}" data-docker-group="${esc(g.id)}">
+          <div class="docker-group-head" data-docker-toggle="${esc(g.id)}">
+            <div>
+              <div class="docker-group-title">${esc(g.label)} <span class="docker-group-chevron">${chev}</span></div>
+              <div class="docker-group-sub">${kind}</div>
+              ${renderShareBars(g.cpu_share || 0, g.mem_share || 0)}
             </div>
+            <div class="docker-group-pct"><strong>${g.cpu_share.toFixed(1)}%</strong> CPU<br><strong>${g.mem_share.toFixed(1)}%</strong> RAM</div>
           </div>
-          <div class="dmeta">${c.cpu_percent.toFixed(1)}% CPU<br>${c.mem_usage}</div>
+          <div class="docker-group-body">${items}</div>
         </div>`;
-      }).join('')}</div>`;
+      }).join('');
+      return `<div class="full docker-list">${head}${body}</div>`;
+    }
+
+    function toggleDockerGroup(id) {
+      if (expandedDocker.has(id)) expandedDocker.delete(id); else expandedDocker.add(id);
+      document.querySelectorAll('.docker-group').forEach(el => {
+        const gid = el.dataset.dockerGroup;
+        const open = expandedDocker.has(gid);
+        el.classList.toggle('open', open);
+        const chev = el.querySelector('.docker-group-chevron');
+        if (chev) chev.textContent = open ? '▾' : '▸';
+      });
     }
 
     function renderSystem(s) {
@@ -531,7 +641,7 @@
         <div><span>Workers:</span> ${s.panel.running_workers} active</div>
         <div><span>Agent CLI:</span> ${s.agent.version || 'not installed'}</div>
         <div class="full section-title" style="margin-top:8px">Docker · ${dockerSummary}</div>
-        ${renderDockerContainers(s.docker.containers)}
+        ${renderDockerGroups(s.docker)}
         <div class="full" style="color:var(--muted);font-size:.72rem;margin-top:6px">History: ${history.length} samples (~${Math.round(history.length * 2 / 60)} min) · refreshes every 2s</div>`;
     }
 
@@ -544,47 +654,166 @@
     }
 
     function renderFolders(folders) {
-      if (!folders.length) { list.innerHTML = '<p class="loading">No folders found</p>'; return; }
+      if (!folders.length) { list.innerHTML = '<p class="loading">No folders found</p>'; lastFoldersJson = '[]'; return; }
+      const json = JSON.stringify(folders.map(f => ({ n: f.name, r: f.running, t: f.mtime_relative })));
+      if (json === lastFoldersJson && list.querySelector('.row')) return;
+      lastFoldersJson = json;
       list.innerHTML = folders.map(f => {
-        const n = JSON.stringify(f.name);
-        const btn = f.running
-          ? `<button class="action stop" onclick="stopAgent(${n})">Stop</button>`
-          : `<button class="action start" onclick="startAgent(${n})">Start</button>`;
-        return `<div class="row ${f.running ? 'running' : ''}">${btn}<div><div class="name" title="${esc(f.path)}">${esc(f.name)}</div><div class="time">${esc(f.mtime_relative)}</div></div><button class="btn-hide" title="Hide project (creates .agentcontrol-ignore)" onclick="hideProject(${n}, event)">×</button></div>`;
+        const running = f.running ? ' running' : '';
+        const action = f.running
+          ? '<button type="button" class="action stop" data-action="stop">Stop</button>'
+          : '<button type="button" class="action start" data-action="start">Start</button>';
+        return `<div class="row${running}" data-name="${esc(f.name)}" data-path="${esc(f.path)}">${action}<div><div class="name">${esc(f.name)}</div><div class="time">${esc(f.mtime_relative)}</div></div></div>`;
       }).join('');
     }
 
-    async function hideProject(name, ev) {
-      ev.stopPropagation();
-      if (!confirm('Hide "' + name + '" from the list?\n\nCreates .agentcontrol-ignore in the folder. Delete that file to show it again.')) return;
+    function setStartStep(step, state) {
+      document.querySelectorAll('#start-steps li').forEach(li => {
+        li.classList.remove('active', 'done', 'error');
+        const key = li.dataset.step;
+        const order = ['request', 'launch', 'connect', 'redirect'];
+        const si = order.indexOf(step);
+        const ki = order.indexOf(key);
+        if (state === 'error' && key === step) li.classList.add('error');
+        else if (ki < si) li.classList.add('done');
+        else if (ki === si) li.classList.add(state === 'done' ? 'done' : 'active');
+      });
+    }
+
+    function openStartModal(name) {
+      modalOpen = true;
+      document.getElementById('start-modal-title').textContent = 'Starting ' + name;
+      document.getElementById('start-modal-msg').textContent = '';
+      document.getElementById('start-modal-close').classList.add('hidden');
+      document.getElementById('start-modal').classList.remove('hidden');
+      setStartStep('request', 'active');
+    }
+
+    function closeStartModal() {
+      document.getElementById('start-modal').classList.add('hidden');
+      modalOpen = false;
+      busy = false;
+      lastFoldersJson = '';
+      refreshAll();
+    }
+
+    function openCtxModal(name) {
+      ctxProjectName = name;
+      modalOpen = true;
+      document.getElementById('ctx-modal-title').textContent = name;
+      document.getElementById('ctx-modal-hint').textContent = 'Creates .agentcontrol-ignore in the project folder. Delete that file to restore.';
+      document.getElementById('ctx-modal').classList.remove('hidden');
+    }
+
+    function closeCtxModal() {
+      document.getElementById('ctx-modal').classList.add('hidden');
+      modalOpen = false;
+      ctxProjectName = null;
+    }
+
+    async function hideProject(name) {
+      closeCtxModal();
+      busy = true;
       try {
         const res = await apiFetch('/api/hide/' + encodeURIComponent(name), { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) { msg.textContent = data.error || 'Hide failed'; msg.className = 'error'; return; }
+        if (!res.ok) {
+          msg.textContent = data.error || 'Hide failed';
+          msg.className = 'error';
+          return;
+        }
+        lastFoldersJson = '';
         msg.textContent = 'Hidden — delete .agentcontrol-ignore to restore';
         msg.className = '';
-        refreshAll();
-      } catch (e) {}
+        await refreshAll();
+      } catch (e) {
+        msg.textContent = 'Hide failed';
+        msg.className = 'error';
+      } finally {
+        busy = false;
+      }
     }
 
+    function bindProjectList() {
+      if (list.dataset.bound) return;
+      list.dataset.bound = '1';
+
+      list.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const row = btn.closest('.row');
+        const name = row?.dataset.name;
+        if (!name || busy) return;
+        if (btn.dataset.action === 'start') startAgent(name);
+        if (btn.dataset.action === 'stop') stopAgent(name);
+      });
+
+      list.addEventListener('contextmenu', (e) => {
+        const row = e.target.closest('.row');
+        if (!row) return;
+        e.preventDefault();
+        openCtxModal(row.dataset.name);
+      });
+
+      const clearPress = () => {
+        if (longPressTimer) clearTimeout(longPressTimer);
+        longPressTimer = null;
+        if (longPressRow) longPressRow.classList.remove('pressing');
+        longPressRow = null;
+      };
+
+      list.addEventListener('touchstart', (e) => {
+        const row = e.target.closest('.row');
+        if (!row || e.target.closest('[data-action]')) return;
+        clearPress();
+        longPressRow = row;
+        row.classList.add('pressing');
+        longPressTimer = setTimeout(() => {
+          if (navigator.vibrate) navigator.vibrate(20);
+          openCtxModal(row.dataset.name);
+          clearPress();
+        }, 550);
+      }, { passive: true });
+
+      list.addEventListener('touchend', clearPress);
+      list.addEventListener('touchmove', clearPress);
+      list.addEventListener('touchcancel', clearPress);
+    }
+
+    document.getElementById('ctx-hide-btn').addEventListener('click', () => {
+      if (ctxProjectName) hideProject(ctxProjectName);
+    });
+
+    document.getElementById('server-detail-grid').addEventListener('click', (e) => {
+      const head = e.target.closest('[data-docker-toggle]');
+      if (!head) return;
+      e.stopPropagation();
+      toggleDockerGroup(head.dataset.dockerToggle);
+    });
+
     async function refreshAll() {
-      if (busy || document.getElementById('app').classList.contains('hidden')) return;
+      if (document.getElementById('app').classList.contains('hidden')) return;
+      const skipFolders = busy || modalOpen;
       try {
-        const [sysRes, histRes, foldRes] = await Promise.all([
-          apiFetch('/api/system'),
-          apiFetch('/api/system/history'),
-          apiFetch('/api/folders'),
-        ]);
-        const sys = await sysRes.json();
-        const hist = await histRes.json();
+        const reqs = [apiFetch('/api/system'), apiFetch('/api/system/history')];
+        if (!skipFolders) reqs.push(apiFetch('/api/folders'));
+        const results = await Promise.all(reqs);
+        const sys = await results[0].json();
+        const hist = await results[1].json();
         history = hist.points || [];
         renderSystem(sys);
-        renderFolders((await foldRes.json()).folders);
+        if (!skipFolders && results[2]) {
+          renderFolders((await results[2].json()).folders);
+        }
       } catch (e) {
         if (e.message === 'unauthorized') return;
         if (e.message === 'setup') return;
-        msg.textContent = 'Refresh failed: ' + (e.message || 'unknown');
-        msg.className = 'error';
+        if (!modalOpen) {
+          msg.textContent = 'Refresh failed: ' + (e.message || 'unknown');
+          msg.className = 'error';
+        }
       }
     }
 
@@ -619,38 +848,69 @@
     }
 
     async function startAgent(name) {
+      if (busy) return;
       busy = true;
-      msg.textContent = 'Starting ' + name + '…';
-      document.querySelectorAll('button.action').forEach(b => b.disabled = true);
+      openStartModal(name);
+      const msgEl = document.getElementById('start-modal-msg');
       try {
+        setStartStep('request', 'active');
         const res = await apiFetch('/api/start/' + encodeURIComponent(name), { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) { msg.textContent = data.error || 'Start failed'; msg.className = 'error'; return; }
-        msg.textContent = 'Connecting to Cursor…';
-        await refreshAll();
-        try {
-          const ready = await waitReady(name);
-          window.location.href = ready.agent_url || data.agent_url;
-        } catch (e) {
-          msg.textContent = 'Worker started. Open Cursor if redirect fails.';
-          msg.className = 'error';
+        if (!res.ok) {
+          setStartStep('request', 'error');
+          msgEl.textContent = data.error || 'Start failed';
+          document.getElementById('start-modal-close').classList.remove('hidden');
+          return;
         }
+        setStartStep('request', 'done');
+        setStartStep('launch', 'done');
+        setStartStep('connect', 'active');
+        msgEl.textContent = 'Waiting for Cursor connection…';
+
+        const ready = await waitReady(name);
+        setStartStep('connect', 'done');
+        setStartStep('redirect', 'active');
+        msgEl.textContent = 'Opening Cursor…';
+        await new Promise(r => setTimeout(r, 400));
+        window.location.href = ready.agent_url || data.agent_url;
+      } catch (e) {
+        if (e.message === 'stopped') {
+          setStartStep('connect', 'error');
+          msgEl.textContent = 'Worker stopped unexpectedly.';
+        } else if (e.message === 'timeout') {
+          setStartStep('connect', 'error');
+          msgEl.textContent = 'Timed out — worker may still be starting. Try again in a moment.';
+        } else if (e.message !== 'unauthorized') {
+          setStartStep('connect', 'error');
+          msgEl.textContent = 'Connection failed: ' + (e.message || 'unknown');
+        }
+        document.getElementById('start-modal-close').classList.remove('hidden');
       } finally {
-        busy = false;
-        document.querySelectorAll('button.action').forEach(b => b.disabled = false);
-        refreshAll();
+        if (!document.getElementById('start-modal').classList.contains('hidden')) {
+          // keep busy until redirect or close
+        } else {
+          busy = false;
+        }
       }
     }
 
     async function stopAgent(name) {
+      if (busy) return;
+      busy = true;
       msg.textContent = 'Stopping…';
       try {
         const res = await apiFetch('/api/stop/' + encodeURIComponent(name), { method: 'POST' });
-        if (res.ok) msg.textContent = 'Stopped';
-        refreshAll();
-      } catch (e) {}
+        if (res.ok) {
+          msg.textContent = 'Stopped';
+          lastFoldersJson = '';
+        }
+        await refreshAll();
+      } catch (e) {} finally {
+        busy = false;
+      }
     }
 
+    bindProjectList();
     boot();
   </script>
 </body>
