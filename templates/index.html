@@ -328,7 +328,7 @@
     let ctxProjectName = null;
     let longPressTimer = null;
     let longPressRow = null;
-    let modelsLoaded = false;
+    let modelsLoaded = false; // refreshed when settings panel opens
 
     function getStoredPassword() { return localStorage.getItem(AUTH_KEY) || ''; }
     function storePassword(pw) { localStorage.setItem(AUTH_KEY, pw); }
@@ -754,18 +754,16 @@
       try {
         const [settingsRes, modelsRes] = await Promise.all([
           apiFetch('/api/settings'),
-          modelsLoaded ? null : apiFetch('/api/models'),
+          apiFetch('/api/models'),
         ]);
         const settings = await settingsRes.json();
         const select = document.getElementById('settings-model');
-        if (!modelsLoaded && modelsRes) {
-          const models = (await modelsRes.json()).models || [];
-          select.innerHTML = '<option value="">— Cursor default —</option>' + models.map(m =>
-            `<option value="${esc(m.id)}">${esc(m.label)} (${esc(m.id)})</option>`
-          ).join('');
-          modelsLoaded = true;
-        }
-        select.value = settings.default_model || '';
+        const models = (await modelsRes.json()).models || [];
+        const current = select.value;
+        select.innerHTML = '<option value="">— Cursor default —</option>' + models.map(m =>
+          `<option value="${esc(m.id)}">${esc(m.label)} (${esc(m.id)})</option>`
+        ).join('');
+        select.value = settings.default_model || current || '';
         document.getElementById('settings-model-status').textContent = settings.default_model
           ? 'Default model: ' + settings.default_model
           : 'No default model — Cursor will use its own default.';
