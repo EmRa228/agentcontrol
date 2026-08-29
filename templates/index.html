@@ -1,68 +1,97 @@
 <!DOCTYPE html>
-<html lang="fa" dir="rtl">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AgentControl</title>
   <style>
     :root {
-      --bg: #0f1117; --row: #1a1d27; --border: #2a2f3d; --text: #e8eaef;
-      --muted: #8b93a7; --accent: #6c8cff; --green: #3dd68c;
-      --yellow: #ebc88d; --red: #f07178;
+      --bg: #0b0d12; --card: #141820; --border: #252b38; --text: #eef1f6;
+      --muted: #8b93a7; --accent: #5b8cff; --green: #3dd68c; --yellow: #e8c468; --red: #f07178;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 0.75rem; }
-    .wrap { max-width: 560px; margin: 0 auto; }
-    header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.6rem; }
-    h1 { font-size: 1.15rem; font-weight: 600; }
-    .sub { color: var(--muted); font-size: 0.75rem; margin-top: 0.15rem; }
-    .refresh { border: 1px solid var(--border); background: var(--row); color: var(--text); border-radius: 8px; padding: 0.45rem 0.7rem; font-size: 0.75rem; cursor: pointer; white-space: nowrap; }
-    #login-gate { position: fixed; inset: 0; background: rgba(15,17,23,0.96); display: flex; align-items: center; justify-content: center; z-index: 20; padding: 1rem; }
-    #login-gate.hidden { display: none; }
-    .login-box { width: 100%; max-width: 320px; background: var(--row); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; }
-    .login-box h2 { font-size: 1rem; margin-bottom: 0.35rem; }
-    .login-box p { color: var(--muted); font-size: 0.75rem; margin-bottom: 0.75rem; line-height: 1.5; }
-    .login-box input { width: 100%; border: 1px solid var(--border); background: #11141d; color: var(--text); border-radius: 8px; padding: 0.65rem 0.75rem; font-size: 0.9rem; margin-bottom: 0.6rem; }
-    .login-box button { width: 100%; border: none; border-radius: 8px; padding: 0.65rem; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; }
-    .login-error { color: var(--red); font-size: 0.75rem; min-height: 1.1em; margin-top: 0.4rem; }
-    #sys { background: var(--row); border: 1px solid var(--border); border-radius: 10px; padding: 0.65rem 0.7rem; margin-bottom: 0.6rem; font-size: 0.74rem; line-height: 1.55; }
-    #sys .title { font-size: 0.78rem; font-weight: 700; margin-bottom: 0.35rem; color: var(--accent); }
-    #sys .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; }
-    #sys .full { grid-column: 1 / -1; }
-    #sys .warn { color: var(--yellow); } #sys .bad { color: var(--red); } #sys .ok { color: var(--green); }
-    .bar-wrap { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.25rem; }
-    .bar-row { display: flex; align-items: center; gap: 0.45rem; }
-    .bar-label { width: 2.2rem; color: var(--muted); font-size: 0.7rem; }
-    .bar { flex: 1; height: 7px; background: #11141d; border-radius: 999px; overflow: hidden; }
-    .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
-    .bar > span.warn { background: var(--yellow); } .bar > span.bad { background: var(--red); }
-    .bar-val { width: 2.5rem; text-align: left; font-size: 0.7rem; color: var(--muted); }
-    #list { display: flex; flex-direction: column; gap: 0.35rem; }
-    .row { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 0.5rem; background: var(--row); border: 1px solid var(--border); border-radius: 10px; padding: 0.45rem 0.55rem; }
-    .row.running { border-color: rgba(61,214,140,0.35); }
-    .name { font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .meta { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
-    .time { font-size: 0.72rem; color: var(--muted); }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); justify-self: end; }
-    .dot.on { background: var(--green); box-shadow: 0 0 6px rgba(61,214,140,0.6); }
-    button.action { border: none; border-radius: 8px; padding: 0.5rem 0.35rem; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
-    button.action:disabled { opacity: 0.45; cursor: wait; }
+    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 12px; }
+    .wrap { max-width: 620px; margin: 0 auto; }
+    .hidden { display: none !important; }
+    .gate { position: fixed; inset: 0; background: rgba(11,13,18,.97); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+    .panel { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+    .panel h2 { font-size: 1.1rem; margin-bottom: 6px; }
+    .panel p { color: var(--muted); font-size: .82rem; line-height: 1.45; margin-bottom: 12px; }
+    .panel label { display: block; font-size: .75rem; color: var(--muted); margin: 10px 0 4px; }
+    .panel input { width: 100%; border: 1px solid var(--border); background: #0d1016; color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: .9rem; }
+    .btn { border: none; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; font-size: .85rem; }
+    .btn-primary { background: var(--accent); color: #fff; width: 100%; margin-top: 12px; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .err { color: var(--red); font-size: .78rem; min-height: 1.2em; margin-top: 8px; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+    h1 { font-size: 1.15rem; }
+    .sub { color: var(--muted); font-size: .75rem; margin-top: 2px; }
+  .live { font-size: .7rem; color: var(--green); }
+    #server-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+    .server-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 12px; cursor: pointer; }
+    .metric { background: #0d1016; border: 1px solid var(--border); border-radius: 10px; padding: 8px; min-width: 0; }
+    .metric .label { font-size: .65rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .metric .value { font-size: 1rem; font-weight: 700; margin-top: 2px; }
+    .metric canvas { width: 100%; height: 28px; margin-top: 6px; display: block; }
+    .server-details { border-top: 1px solid var(--border); padding: 12px; display: none; }
+    .server-details.open { display: block; }
+    .charts { display: grid; gap: 10px; margin-bottom: 12px; }
+    .chart-box { background: #0d1016; border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+    .chart-box h3 { font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
+    .chart-box canvas { width: 100%; height: 64px; display: block; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: .78rem; }
+    .detail-grid .full { grid-column: 1 / -1; }
+    .detail-grid span { color: var(--muted); }
+    .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .bar { flex: 1; height: 8px; background: #0a0c10; border-radius: 999px; overflow: hidden; }
+    .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+    .bar > i.warn { background: var(--yellow); } .bar > i.bad { background: var(--red); }
+    .section-title { font-size: .8rem; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .05em; }
+    #list { display: flex; flex-direction: column; gap: 6px; }
+    .row { display: grid; grid-template-columns: 72px 1fr 10px; gap: 8px; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+    .row.running { border-color: rgba(61,214,140,.35); }
+    .name { font-weight: 600; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .time { font-size: .72rem; color: var(--muted); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.on { background: var(--green); box-shadow: 0 0 6px rgba(61,214,140,.5); }
+    button.action { border: none; border-radius: 8px; padding: 8px 6px; font-size: .78rem; font-weight: 700; cursor: pointer; }
+    button.action:disabled { opacity: .45; cursor: wait; }
     button.start { background: var(--accent); color: #fff; }
-    button.stop { background: rgba(240,113,120,0.18); color: var(--red); }
-    #msg { margin-top: 0.65rem; text-align: center; color: var(--muted); font-size: 0.78rem; min-height: 1.2em; }
+    button.stop { background: rgba(240,113,120,.15); color: var(--red); }
+    #msg { margin-top: 10px; text-align: center; color: var(--muted); font-size: .78rem; min-height: 1.2em; }
     .error { color: var(--red); }
-    .loading { text-align: center; color: var(--muted); padding: 1.5rem; font-size: 0.85rem; }
-    #app.hidden { display: none; }
+    .loading { text-align: center; color: var(--muted); padding: 20px; font-size: .85rem; }
+    .settings-box { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
   </style>
 </head>
 <body>
-  <div id="login-gate" class="hidden">
-    <div class="login-box">
-      <h2>AgentControl</h2>
-      <p>پسورد این سرور را وارد کن. در مرورگر ذخیره می‌شود و دوباره لازم نیست.</p>
+  <div id="setup-gate" class="gate hidden">
+    <div class="panel">
+      <h2>First-time setup</h2>
+      <p id="setup-desc">Configure this server.</p>
+      <div id="setup-password-step">
+        <label>Panel password</label>
+        <input id="setup-password" type="password" placeholder="Choose a password" autocomplete="new-password">
+        <label>Confirm password</label>
+        <input id="setup-password2" type="password" placeholder="Repeat password" autocomplete="new-password">
+      </div>
+      <div id="setup-api-step" class="hidden">
+        <label>Cursor personal API key</label>
+        <input id="setup-api-key" type="password" placeholder="crsr_..." autocomplete="off">
+        <p>From <a href="https://cursor.com/settings" target="_blank" rel="noopener" style="color:var(--accent)">Cursor Settings → API Keys</a>. Stored on the server only.</p>
+      </div>
+      <button class="btn btn-primary" type="button" onclick="submitSetup()">Continue</button>
+      <p id="setup-error" class="err"></p>
+    </div>
+  </div>
+
+  <div id="login-gate" class="gate hidden">
+    <div class="panel">
+      <h2>Sign in</h2>
+      <p>Password is saved in this browser for this server.</p>
       <input id="login-password" type="password" placeholder="Panel password" autocomplete="current-password">
-      <button type="button" onclick="submitLogin()">ورود</button>
-      <p id="login-error" class="login-error"></p>
+      <button class="btn btn-primary" type="button" onclick="submitLogin()">Sign in</button>
+      <p id="login-error" class="err"></p>
     </div>
   </div>
 
@@ -70,30 +99,51 @@
     <header>
       <div>
         <h1>AgentControl</h1>
-        <p class="sub">پورت {{ port }} · {{ scan_root }}</p>
+        <p class="sub">Port {{ port }} · {{ scan_root }}</p>
       </div>
-      <button class="refresh" onclick="refreshAll()">↻ به‌روزرسانی</button>
+      <div class="live" id="live-indicator">● live</div>
     </header>
-    <div id="sys"><p class="loading">در حال خواندن وضعیت سرور…</p></div>
-    <div id="list"><p class="loading">در حال بارگذاری پروژه‌ها…</p></div>
+
+    <div id="server-card">
+      <div class="server-summary" onclick="toggleServerDetails()">
+        <div class="metric"><div class="label">CPU</div><div class="value" id="m-cpu">—</div><canvas id="spark-cpu" width="120" height="28"></canvas></div>
+        <div class="metric"><div class="label">RAM</div><div class="value" id="m-ram">—</div><canvas id="spark-ram" width="120" height="28"></canvas></div>
+        <div class="metric"><div class="label">Disk</div><div class="value" id="m-disk">—</div><canvas id="spark-disk" width="120" height="28"></canvas></div>
+        <div class="metric"><div class="label">Docker</div><div class="value" id="m-docker">—</div><canvas id="spark-docker" width="120" height="28"></canvas></div>
+      </div>
+      <div id="server-details" class="server-details">
+        <div class="charts">
+          <div class="chart-box"><h3>CPU % (last hour, in-memory)</h3><canvas id="chart-cpu" width="560" height="64"></canvas></div>
+          <div class="chart-box"><h3>RAM % (last hour)</h3><canvas id="chart-ram" width="560" height="64"></canvas></div>
+          <div class="chart-box"><h3>Disk % (last hour)</h3><canvas id="chart-disk" width="560" height="64"></canvas></div>
+        </div>
+        <div id="server-detail-grid" class="detail-grid"></div>
+        <div class="settings-box">
+          <div class="section-title">Cursor API key</div>
+          <input id="settings-api-key" type="password" placeholder="Update API key (crsr_...)">
+          <button class="btn btn-ghost" type="button" style="margin-top:8px;width:100%" onclick="saveApiKey()">Save API key</button>
+          <p id="settings-msg" class="err"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Projects</div>
+    <div id="list"><p class="loading">Loading projects…</p></div>
     <p id="msg"></p>
   </div>
 
   <script>
     const AUTH_KEY = 'agentcontrol_auth_' + location.host;
     const list = document.getElementById('list');
-    const sys = document.getElementById('sys');
     const msg = document.getElementById('msg');
-    const appEl = document.getElementById('app');
-    const loginGate = document.getElementById('login-gate');
-    const loginError = document.getElementById('login-error');
-    let busy = false;
-    let authRequired = true;
+    let setupNeedsPassword = false;
+    let setupNeedsApiKey = false;
+    let refreshTimer = null;
+    let history = [];
 
     function getStoredPassword() { return localStorage.getItem(AUTH_KEY) || ''; }
     function storePassword(pw) { localStorage.setItem(AUTH_KEY, pw); }
     function clearPassword() { localStorage.removeItem(AUTH_KEY); }
-
     function authHeaders() {
       const pw = getStoredPassword();
       return pw ? { 'X-AgentControl-Auth': pw } : {};
@@ -102,29 +152,80 @@
     async function apiFetch(url, opts = {}) {
       opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
       const res = await fetch(url, opts);
-      if (res.status === 401) {
-        clearPassword();
-        showLogin('پسورد اشتباه است');
-        throw new Error('unauthorized');
+      if (res.status === 401) { clearPassword(); showLogin('Wrong password'); throw new Error('unauthorized'); }
+      if (res.status === 403) {
+        const data = await res.json().catch(() => ({}));
+        if (data.needs_password) { showSetup(); throw new Error('setup'); }
       }
       return res;
     }
 
-    function showLogin(errorText) {
-      appEl.classList.add('hidden');
-      loginGate.classList.remove('hidden');
-      if (errorText) loginError.textContent = errorText;
+    function showSetup() {
+      document.getElementById('setup-gate').classList.remove('hidden');
+      document.getElementById('login-gate').classList.add('hidden');
+      document.getElementById('app').classList.add('hidden');
+      document.getElementById('setup-password-step').classList.toggle('hidden', !setupNeedsPassword);
+      document.getElementById('setup-api-step').classList.toggle('hidden', setupNeedsPassword || !setupNeedsApiKey);
+      document.getElementById('setup-desc').textContent = setupNeedsPassword
+        ? 'Create a panel password for this server.'
+        : 'Add your Cursor API key to start workers.';
+    }
+
+    function showLogin(err) {
+      document.getElementById('login-gate').classList.remove('hidden');
+      document.getElementById('setup-gate').classList.add('hidden');
+      document.getElementById('app').classList.add('hidden');
+      if (err) document.getElementById('login-error').textContent = err;
     }
 
     function showApp() {
-      loginGate.classList.add('hidden');
-      appEl.classList.remove('hidden');
-      loginError.textContent = '';
+      document.getElementById('setup-gate').classList.add('hidden');
+      document.getElementById('login-gate').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      if (!refreshTimer) refreshTimer = setInterval(refreshAll, 2000);
+      refreshAll();
+    }
+
+    async function submitSetup() {
+      const errEl = document.getElementById('setup-error');
+      errEl.textContent = '';
+      try {
+        if (setupNeedsPassword) {
+          const pw = document.getElementById('setup-password').value;
+          const pw2 = document.getElementById('setup-password2').value;
+          const res = await fetch('/api/setup/password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pw, confirm: pw2 }),
+          });
+          const data = await res.json();
+          if (!res.ok) { errEl.textContent = data.error || 'Failed'; return; }
+          storePassword(pw);
+          setupNeedsPassword = false;
+          const st = await (await fetch('/api/setup/status')).json();
+          setupNeedsApiKey = st.needs_api_key;
+          if (setupNeedsApiKey) { showSetup(); return; }
+        }
+        if (setupNeedsApiKey) {
+          const key = document.getElementById('setup-api-key').value.trim();
+          const res = await fetch('/api/setup/api-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ api_key: key }),
+          });
+          const data = await res.json();
+          if (!res.ok) { errEl.textContent = data.error || 'Failed'; return; }
+          setupNeedsApiKey = false;
+        }
+        showApp();
+      } catch (e) {
+        errEl.textContent = 'Setup failed';
+      }
     }
 
     async function submitLogin() {
       const pw = document.getElementById('login-password').value.trim();
-      if (!pw) { loginError.textContent = 'پسورد را وارد کن'; return; }
+      if (!pw) return;
       storePassword(pw);
       try {
         const res = await apiFetch('/api/auth/login', {
@@ -132,122 +233,171 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: pw }),
         });
-        const data = await res.json();
-        if (!res.ok) {
-          clearPassword();
-          loginError.textContent = 'پسورد اشتباه است';
-          return;
-        }
+        if (!res.ok) { clearPassword(); document.getElementById('login-error').textContent = 'Wrong password'; return; }
         showApp();
-        refreshAll();
-      } catch (e) {
-        loginError.textContent = 'خطا در ورود';
-      }
+      } catch (e) {}
     }
 
-    document.getElementById('login-password').addEventListener('keydown', e => {
-      if (e.key === 'Enter') submitLogin();
-    });
+    document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') submitLogin(); });
 
     async function boot() {
-      try {
-        const statusRes = await fetch('/api/auth/status');
-        const status = await statusRes.json();
-        authRequired = !!status.auth_required;
-        if (!authRequired) {
-          showApp();
-          refreshAll();
-          return;
-        }
-        if (getStoredPassword()) {
+      const st = await (await fetch('/api/setup/status')).json();
+      setupNeedsPassword = st.needs_password;
+      setupNeedsApiKey = st.needs_api_key;
+      if (setupNeedsPassword || setupNeedsApiKey) { showSetup(); return; }
+      if (getStoredPassword()) {
+        try {
           const res = await apiFetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ password: getStoredPassword() }),
           });
-          if (res.ok) { showApp(); refreshAll(); return; }
-          clearPassword();
-        }
-        showLogin();
-      } catch (e) {
-        showLogin();
+          if (res.ok) { showApp(); return; }
+        } catch (e) {}
+        clearPassword();
       }
+      showLogin();
     }
 
-    function setMsg(text, isError) {
-      msg.textContent = text;
-      msg.className = isError ? 'error' : '';
+    function pctClass(p) { return p >= 90 ? 'bad' : p >= 75 ? 'warn' : ''; }
+
+    function drawSparkline(canvasId, values, color) {
+      const c = document.getElementById(canvasId);
+      if (!c || !values.length) return;
+      const ctx = c.getContext('2d');
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+      const max = 100, min = 0;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      values.forEach((v, i) => {
+        const x = (i / Math.max(values.length - 1, 1)) * (w - 2) + 1;
+        const y = h - 2 - ((v - min) / (max - min)) * (h - 4);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.stroke();
     }
 
-    function barClass(p) {
-      if (p >= 90) return 'bad';
-      if (p >= 75) return 'warn';
-      return '';
+    function drawChart(canvasId, values, color) {
+      const c = document.getElementById(canvasId);
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+      if (!values.length) return;
+      ctx.fillStyle = color + '33';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      values.forEach((v, i) => {
+        const x = (i / Math.max(values.length - 1, 1)) * (w - 4) + 2;
+        const y = h - 4 - (v / 100) * (h - 8);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.stroke();
+      ctx.lineTo(w - 2, h - 2);
+      ctx.lineTo(2, h - 2);
+      ctx.closePath();
+      ctx.fill();
     }
 
     function renderSystem(s) {
-      const apiWarn = s.agent.api_key_set
-        ? '<span class="ok">API key ✓</span>'
-        : '<span class="warn">API key تنظیم نشده</span>';
-      const docker = s.docker_running == null ? '—' : s.docker_running;
-      const workers = s.panel.running_workers
-        ? `<span class="ok">${s.panel.running_worker_names.join(', ')}</span>`
-        : 'هیچ‌کدام';
-      sys.innerHTML = `
-        <div class="title">وضعیت سرور · ${s.hostname}</div>
-        <div class="grid">
-          <div class="full">${s.os} · kernel ${s.kernel}</div>
-          <div>IP: ${s.ip}</div>
-          <div>آپتایم: ${s.uptime_human}</div>
-          <div>Load: ${s.cpu.load_1} / ${s.cpu.load_5} / ${s.cpu.load_15}</div>
-          <div>CPU: ${s.cpu.cores} هسته · ${s.cpu.percent}%</div>
-          <div>RAM: ${s.memory.used_human} / ${s.memory.total_human}</div>
-          <div class="full">دیسک /: ${s.disk_root.used_human} / ${s.disk_root.total_human} (${s.disk_root.free_human} آزاد)</div>
-          ${s.disk_scan_root ? `<div class="full">دیسک ${s.panel.scan_root}: ${s.disk_scan_root.used_human} / ${s.disk_scan_root.total_human}</div>` : ''}
-          ${s.memory.swap_percent != null ? `<div>Swap: ${s.memory.swap_used_human} (${s.memory.swap_percent}%)</div>` : '<div>Swap: —</div>'}
-          <div>Docker: ${docker} container</div>
-          <div>Worker فعال: ${workers}</div>
-          <div class="full">Agent: ${s.agent.version || 'نصب نیست'} · ${apiWarn}</div>
-          <div class="full">Idle timeout: ${s.panel.idle_hours}h · پروژه‌ها: ${s.panel.project_count}</div>
-        </div>
-        <div class="bar-wrap">
-          ${bar('CPU', s.cpu.percent)}
-          ${bar('RAM', s.memory.percent)}
-          ${bar('Disk', s.disk_root.percent)}
-        </div>`;
+      document.getElementById('m-cpu').textContent = s.cpu.percent + '%';
+      document.getElementById('m-ram').textContent = s.memory.percent + '%';
+      document.getElementById('m-disk').textContent = s.disk_root.percent + '%';
+      const dk = s.docker.available ? (s.docker.running + ' run') : 'N/A';
+      document.getElementById('m-docker').textContent = dk;
+
+      const cpuHist = history.map(p => p.cpu);
+      const ramHist = history.map(p => p.ram);
+      const diskHist = history.map(p => p.disk);
+      const dockHist = history.map(p => p.docker_running);
+      drawSparkline('spark-cpu', cpuHist.slice(-30), '#5b8cff');
+      drawSparkline('spark-ram', ramHist.slice(-30), '#3dd68c');
+      drawSparkline('spark-disk', diskHist.slice(-30), '#e8c468');
+      drawSparkline('spark-docker', dockHist.slice(-30), '#9b8cff');
+      drawChart('chart-cpu', cpuHist, '#5b8cff');
+      drawChart('chart-ram', ramHist, '#3dd68c');
+      drawChart('chart-disk', diskHist, '#e8c468');
+
+      const docker = s.docker.available
+        ? `<div><span>Running:</span> ${s.docker.running} / ${s.docker.total}</div>
+           <div><span>Stopped:</span> ${s.docker.stopped}</div>
+           <div class="full"><span>Version:</span> ${s.docker.version || '—'}</div>
+           ${(s.docker.storage || []).map(x => `<div class="full"><span>${x.type}:</span> ${x.size} (${x.reclaimable} reclaimable)</div>`).join('')}`
+        : '<div class="full">Docker not installed</div>';
+
+      document.getElementById('server-detail-grid').innerHTML = `
+        <div class="full"><strong>${s.hostname}</strong> · ${s.ip}</div>
+        <div class="full">${s.os} · kernel ${s.kernel}</div>
+        <div><span>Uptime:</span> ${s.uptime_human}</div>
+        <div><span>Load:</span> ${s.cpu.load_1} / ${s.cpu.load_5} / ${s.cpu.load_15}</div>
+        <div><span>CPU:</span> ${s.cpu.cores} cores</div>
+        <div><span>RAM:</span> ${s.memory.used_human} / ${s.memory.total_human}</div>
+        <div class="full"><span>Disk /:</span> ${s.disk_root.used_human} / ${s.disk_root.total_human} (${s.disk_root.free_human} free)</div>
+        ${s.disk_scan_root ? `<div class="full"><span>Disk ${s.panel.scan_root}:</span> ${s.disk_scan_root.used_human} / ${s.disk_scan_root.total_human}</div>` : ''}
+        <div><span>Swap:</span> ${s.memory.swap_percent != null ? s.memory.swap_percent + '%' : '—'}</div>
+        <div><span>Workers:</span> ${s.panel.running_workers} active</div>
+        <div class="full"><span>Agent CLI:</span> ${s.agent.version || 'not installed'} · API key ${s.agent.api_key_set ? '✓' : '✗'}</div>
+        <div class="full section-title" style="margin-top:8px">Docker</div>
+        ${docker}
+        <div class="full bar-row"><span style="width:36px">CPU</span><div class="bar"><i class="${pctClass(s.cpu.percent)}" style="width:${s.cpu.percent}%"></i></div></div>
+        <div class="full bar-row"><span style="width:36px">RAM</span><div class="bar"><i class="${pctClass(s.memory.percent)}" style="width:${s.memory.percent}%"></i></div></div>
+        <div class="full bar-row"><span style="width:36px">Disk</span><div class="bar"><i class="${pctClass(s.disk_root.percent)}" style="width:${s.disk_root.percent}%"></i></div></div>
+        <div class="full" style="color:var(--muted);font-size:.72rem;margin-top:6px">History: ${history.length} samples (~${Math.round(history.length * 2 / 60)} min) · refreshes every 2s</div>`;
     }
 
-    function bar(label, percent) {
-      const cls = barClass(percent);
-      return `<div class="bar-row"><span class="bar-label">${label}</span><div class="bar"><span class="${cls}" style="width:${percent}%"></span></div><span class="bar-val">${percent}%</span></div>`;
+    function toggleServerDetails() {
+      document.getElementById('server-details').classList.toggle('open');
     }
 
     function renderFolders(folders) {
-      if (!folders.length) {
-        list.innerHTML = '<p class="loading">پوشه‌ای پیدا نشد</p>';
-        return;
-      }
+      if (!folders.length) { list.innerHTML = '<p class="loading">No folders found</p>'; return; }
       list.innerHTML = folders.map(f => {
         const btn = f.running
           ? `<button class="action stop" onclick="stopAgent('${f.name}')">Stop</button>`
           : `<button class="action start" onclick="startAgent('${f.name}')">Start</button>`;
-        return `<div class="row ${f.running ? 'running' : ''}" data-name="${f.name}">${btn}<div class="meta"><span class="name">${f.name}</span><span class="time">${f.mtime_relative}</span></div><span class="dot ${f.running ? 'on' : ''}"></span></div>`;
+        return `<div class="row ${f.running ? 'running' : ''}">${btn}<div><div class="name">${f.name}</div><div class="time">${f.mtime_relative}</div></div><span class="dot ${f.running ? 'on' : ''}"></span></div>`;
       }).join('');
     }
 
     async function refreshAll() {
-      if (busy) return;
-      setMsg('');
+      if (busy || document.getElementById('app').classList.contains('hidden')) return;
       try {
-        const [sysRes, foldRes] = await Promise.all([
+        const [sysRes, histRes, foldRes] = await Promise.all([
           apiFetch('/api/system'),
+          apiFetch('/api/system/history'),
           apiFetch('/api/folders'),
         ]);
-        renderSystem(await sysRes.json());
+        const sys = await sysRes.json();
+        const hist = await histRes.json();
+        history = hist.points || [];
+        renderSystem(sys);
         renderFolders((await foldRes.json()).folders);
       } catch (e) {
-        if (e.message !== 'unauthorized') setMsg('خطا در به‌روزرسانی', true);
+        if (e.message !== 'unauthorized' && e.message !== 'setup') {
+          document.getElementById('msg').textContent = 'Refresh failed';
+          document.getElementById('msg').className = 'error';
+        }
       }
+    }
+
+    async function saveApiKey() {
+      const key = document.getElementById('settings-api-key').value.trim();
+      const msg = document.getElementById('settings-msg');
+      if (!key) { msg.textContent = 'Enter an API key'; return; }
+      try {
+        const res = await apiFetch('/api/setup/api-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: key }),
+        });
+        const data = await res.json();
+        msg.textContent = res.ok ? 'API key saved' : (data.error || 'Failed');
+        msg.style.color = res.ok ? 'var(--green)' : 'var(--red)';
+        if (res.ok) document.getElementById('settings-api-key').value = '';
+      } catch (e) { msg.textContent = 'Failed'; }
     }
 
     async function waitReady(name, timeoutMs = 45000) {
@@ -255,7 +405,7 @@
       while (Date.now() - start < timeoutMs) {
         const res = await apiFetch('/api/ready/' + encodeURIComponent(name));
         const data = await res.json();
-        if (!data.running) throw new Error('worker stopped');
+        if (!data.running) throw new Error('stopped');
         if (data.ready) return data;
         await new Promise(r => setTimeout(r, 1500));
       }
@@ -264,23 +414,21 @@
 
     async function startAgent(name) {
       busy = true;
-      setMsg('در حال استارت ' + name + '…');
+      msg.textContent = 'Starting ' + name + '…';
       document.querySelectorAll('button.action').forEach(b => b.disabled = true);
       try {
         const res = await apiFetch('/api/start/' + encodeURIComponent(name), { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) { setMsg(data.error || 'استارت ناموفق', true); return; }
-        setMsg('در حال اتصال به Cursor…');
+        if (!res.ok) { msg.textContent = data.error || 'Start failed'; msg.className = 'error'; return; }
+        msg.textContent = 'Connecting to Cursor…';
         await refreshAll();
         try {
           const ready = await waitReady(name);
-          setMsg('متصل شد — هدایت…');
           window.location.href = ready.agent_url || data.agent_url;
         } catch (e) {
-          setMsg('worker بالا آمد؛ اگر خطا دیدی API key را چک کن.', true);
+          msg.textContent = 'Worker started. Open Cursor if redirect fails.';
+          msg.className = 'error';
         }
-      } catch (e) {
-        if (e.message !== 'unauthorized') setMsg('استارت ناموفق', true);
       } finally {
         busy = false;
         document.querySelectorAll('button.action').forEach(b => b.disabled = false);
@@ -289,16 +437,12 @@
     }
 
     async function stopAgent(name) {
-      setMsg('در حال توقف ' + name + '…');
+      msg.textContent = 'Stopping…';
       try {
         const res = await apiFetch('/api/stop/' + encodeURIComponent(name), { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) { setMsg(data.error || 'توقف ناموفق', true); return; }
-        setMsg('متوقف شد');
+        if (res.ok) msg.textContent = 'Stopped';
         refreshAll();
-      } catch (e) {
-        if (e.message !== 'unauthorized') setMsg('توقف ناموفق', true);
-      }
+      } catch (e) {}
     }
 
     boot();

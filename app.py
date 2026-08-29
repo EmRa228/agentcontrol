@@ -14,6 +14,7 @@ import socket
 import subprocess
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import URLError
@@ -63,6 +64,8 @@ def load_config() -> dict:
 CFG = load_config()
 STATE_DIR = Path(CFG["state_dir"])
 STATE_FILE = STATE_DIR / "workers.json"
+METRICS_HISTORY: deque = deque(maxlen=1800)
+_CPU_CACHE = {"percent": 0.0, "cores": 1, "at": 0.0}
 app = Flask(__name__)
 
 
@@ -96,14 +99,42 @@ def password_ok(candidate: str) -> bool:
     return secrets.compare_digest(candidate, expected)
 
 
+def write_panel_password(password: str) -> None:
+    path = Path(CFG["auth_password_file"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(password.strip(), encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def write_api_key(key: str) -> None:
+    path = Path(CFG["api_key_file"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(key.strip(), encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def api_key_configured() -> bool:
+    return bool(read_api_key())
+
+
 @app.before_request
 def require_panel_auth():
-    if request.endpoint in {"health", "api_auth_login", "api_auth_status", "index"}:
+    open_endpoints = {
+        "health",
+        "index",
+        "api_auth_login",
+        "api_auth_status",
+        "api_setup_status",
+        "api_setup_password",
+    }
+    if request.endpoint in open_endpoints:
+        return None
+    if request.endpoint == "api_setup_api_key" and not api_key_configured():
         return None
     if not request.path.startswith("/api/"):
         return None
     if not auth_enabled():
-        return None
+        return jsonify({"error": "setup_required", "needs_password": True}), 403
     if password_ok(extract_auth_token()):
         return None
     return jsonify({"error": "unauthorized"}), 401
@@ -144,24 +175,24 @@ def find_agent_bin() -> str | None:
     return None
 
 
-def relative_time_fa(ts: float) -> str:
+def relative_time_en(ts: float) -> str:
     delta = max(0, time.time() - ts)
     if delta < 45:
-        return "همین الان"
+        return "just now"
     if delta < 3600:
         m = int(delta / 60)
-        return f"{m} دقیقه پیش"
+        return f"{m}m ago"
     if delta < 86400:
         h = int(delta / 3600)
-        return f"{h} ساعت پیش"
+        return f"{h}h ago"
     if delta < 2592000:
         d = int(delta / 86400)
-        return f"{d} روز پیش"
+        return f"{d}d ago"
     if delta < 31536000:
         mo = int(delta / 2592000)
-        return f"{mo} ماه پیش"
+        return f"{mo}mo ago"
     y = int(delta / 31536000)
-    return f"{y} سال پیش"
+    return f"{y}y ago"
 
 
 def read_api_key() -> str | None:
@@ -184,19 +215,19 @@ def fmt_bytes(num: int | float) -> str:
     return f"{size:.1f} TB"
 
 
-def fmt_duration_fa(seconds: float) -> str:
+def fmt_duration_en(seconds: float) -> str:
     seconds = int(seconds)
     days, rem = divmod(seconds, 86400)
     hours, rem = divmod(rem, 3600)
     minutes, _ = divmod(rem, 60)
     parts = []
     if days:
-        parts.append(f"{days} روز")
+        parts.append(f"{days}d")
     if hours:
-        parts.append(f"{hours} ساعت")
+        parts.append(f"{hours}h")
     if minutes or not parts:
-        parts.append(f"{minutes} دقیقه")
-    return " و ".join(parts)
+        parts.append(f"{minutes}m")
+    return " ".join(parts)
 
 
 def read_os_name() -> str:
@@ -232,7 +263,11 @@ def primary_ip() -> str:
         return "—"
 
 
-def cpu_usage_percent(sample_seconds: float = 0.35) -> tuple[float, int]:
+def cpu_usage_percent(sample_seconds: float = 0.25) -> tuple[float, int]:
+    now = time.time()
+    if now - _CPU_CACHE["at"] < 1.5 and _CPU_CACHE["at"] > 0:
+        return _CPU_CACHE["percent"], _CPU_CACHE["cores"]
+
     def read_cpu() -> tuple[int, int]:
         with open("/proc/stat", encoding="utf-8") as f:
             parts = f.readline().split()[1:]
@@ -246,10 +281,13 @@ def cpu_usage_percent(sample_seconds: float = 0.35) -> tuple[float, int]:
     total2, idle2 = read_cpu()
     total_delta = total2 - total1
     idle_delta = idle2 - idle1
+    cores = os.cpu_count() or 1
     if total_delta <= 0:
-        return 0.0, os.cpu_count() or 1
-    usage = max(0.0, min(100.0, (1 - idle_delta / total_delta) * 100))
-    return round(usage, 1), os.cpu_count() or 1
+        percent = _CPU_CACHE["percent"]
+    else:
+        percent = round(max(0.0, min(100.0, (1 - idle_delta / total_delta) * 100)), 1)
+    _CPU_CACHE.update({"percent": percent, "cores": cores, "at": time.time()})
+    return percent, cores
 
 
 def memory_stats() -> dict:
@@ -313,23 +351,69 @@ def agent_version() -> str | None:
         return None
 
 
-def docker_running_count() -> int | None:
+def docker_stats() -> dict:
     if not shutil.which("docker"):
-        return None
+        return {"available": False}
     try:
-        result = subprocess.run(
+        running = subprocess.run(
             ["docker", "ps", "-q"],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
-        if result.returncode != 0:
-            return None
-        lines = [line for line in result.stdout.splitlines() if line.strip()]
-        return len(lines)
+        all_ps = subprocess.run(
+            ["docker", "ps", "-aq"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        version = subprocess.run(
+            ["docker", "version", "--format", "{{.Server.Version}}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        df = subprocess.run(
+            ["docker", "system", "df", "--format", "{{.Type}}|{{.Size}}|{{.Reclaimable}}"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        running_n = len([x for x in running.stdout.splitlines() if x.strip()])
+        total_n = len([x for x in all_ps.stdout.splitlines() if x.strip()])
+        storage = []
+        if df.returncode == 0:
+            for line in df.stdout.splitlines():
+                parts = line.split("|")
+                if len(parts) >= 2:
+                    storage.append({"type": parts[0], "size": parts[1], "reclaimable": parts[2] if len(parts) > 2 else ""})
+        return {
+            "available": True,
+            "version": (version.stdout or "").strip() or None,
+            "running": running_n,
+            "total": total_n,
+            "stopped": max(0, total_n - running_n),
+            "storage": storage,
+        }
     except (OSError, subprocess.SubprocessError):
-        return None
+        return {"available": True, "running": None, "total": None, "stopped": None, "storage": []}
+
+
+def record_metrics(snapshot: dict) -> None:
+    docker = snapshot.get("docker") or {}
+    METRICS_HISTORY.append(
+        {
+            "t": time.time(),
+            "cpu": snapshot["cpu"]["percent"],
+            "ram": snapshot["memory"]["percent"],
+            "disk": snapshot["disk_root"]["percent"],
+            "docker_running": docker.get("running") or 0,
+        }
+    )
 
 
 def collect_system_info() -> dict:
@@ -343,13 +427,13 @@ def collect_system_info() -> dict:
     loads = load_average()
     cpu_percent, cpu_cores = cpu_usage_percent()
 
-    return {
+    result = {
         "hostname": socket.gethostname(),
         "ip": primary_ip(),
         "os": read_os_name(),
         "kernel": platform.release(),
         "uptime_seconds": uptime_seconds(),
-        "uptime_human": fmt_duration_fa(uptime_seconds()),
+        "uptime_human": fmt_duration_en(uptime_seconds()),
         "cpu": {
             "percent": cpu_percent,
             "cores": cpu_cores,
@@ -396,9 +480,12 @@ def collect_system_info() -> dict:
             "running_workers": len(running_workers),
             "running_worker_names": running_workers,
         },
-        "docker_running": docker_running_count(),
+        "docker": docker_stats(),
+        "history_points": len(METRICS_HISTORY),
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
+    record_metrics(result)
+    return result
 
 
 def ensure_state_dir() -> None:
@@ -482,7 +569,7 @@ def list_folders() -> list[dict]:
                 "started_at": info.get("started_at"),
                 "pid": pid if running else None,
                 "mtime": mtime,
-                "mtime_relative": relative_time_fa(mtime),
+                "mtime_relative": relative_time_en(mtime),
             }
         )
 
@@ -665,7 +752,53 @@ def api_auth_login():
 
 @app.get("/api/auth/status")
 def api_auth_status():
-    return jsonify({"auth_required": auth_enabled()})
+    return jsonify(
+        {
+            "auth_required": auth_enabled(),
+            "api_key_set": api_key_configured(),
+            "needs_password": not auth_enabled(),
+            "needs_api_key": not api_key_configured(),
+        }
+    )
+
+
+@app.get("/api/setup/status")
+def api_setup_status():
+    return jsonify(
+        {
+            "needs_password": not auth_enabled(),
+            "needs_api_key": not api_key_configured(),
+            "ready": auth_enabled() and api_key_configured(),
+        }
+    )
+
+
+@app.post("/api/setup/password")
+def api_setup_password():
+    if auth_enabled():
+        return jsonify({"error": "password already configured"}), 400
+    data = request.get_json(silent=True) or {}
+    password = str(data.get("password", "")).strip()
+    confirm = str(data.get("confirm", "")).strip()
+    if len(password) < 4:
+        return jsonify({"error": "password must be at least 4 characters"}), 400
+    if password != confirm:
+        return jsonify({"error": "passwords do not match"}), 400
+    write_panel_password(password)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/setup/api-key")
+def api_setup_api_key():
+    data = request.get_json(silent=True) or {}
+    api_key = str(data.get("api_key", "")).strip()
+    if not api_key:
+        return jsonify({"error": "api_key required"}), 400
+    if api_key_configured():
+        if not auth_enabled() or not password_ok(extract_auth_token()):
+            return jsonify({"error": "unauthorized"}), 401
+    write_api_key(api_key)
+    return jsonify({"ok": True})
 
 
 @app.get("/api/folders")
@@ -733,6 +866,11 @@ def api_status():
 @app.get("/api/system")
 def api_system():
     return jsonify(collect_system_info())
+
+
+@app.get("/api/system/history")
+def api_system_history():
+    return jsonify({"points": list(METRICS_HISTORY)})
 
 
 @app.get("/health")

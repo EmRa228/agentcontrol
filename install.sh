@@ -125,14 +125,7 @@ setup_panel_password() {
     log "Keeping existing panel password: ${AUTH_FILE}"
     return
   fi
-  short="$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | head -c 5)"
-  [[ -z "${short}" ]] && short="srv"
-  rand="$(tr -dc 'a-z0-9' </dev/urandom | head -c 5 || true)"
-  pw="${short}-${rand}"
-  printf '%s' "${pw}" > "${AUTH_FILE}"
-  chmod 600 "${AUTH_FILE}"
-  PANEL_PASSWORD_CREATED="${pw}"
-  log "Panel password created: ${pw}"
+  log "Panel password not set — configure it in the web UI on first visit"
 }
 
 install_app() {
@@ -176,11 +169,7 @@ main() {
   echo ""
   echo "Done."
   echo "Panel: http://${IP:-localhost}:30228"
-  if [[ -n "${PANEL_PASSWORD_CREATED:-}" ]]; then
-    echo "Panel password: ${PANEL_PASSWORD_CREATED}"
-  elif [[ -s "${CONFIG_DIR}/auth-password" ]]; then
-    echo "Panel password: (see ${CONFIG_DIR}/auth-password)"
-  fi
+  echo "Set panel password and Cursor API key in the web UI on first visit."
   echo "API key: ${CONFIG_DIR}/api-key"
   echo "Logs:    journalctl -u agentcontrol -f"
 }
