@@ -1,15 +1,15 @@
 [Unit]
-Description=agentstart - Cursor agent worker launcher
+Description=agentcontrol - Cursor agent worker launcher
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/agentstart
+WorkingDirectory=/opt/agentcontrol
 Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EnvironmentFile=-/etc/agentstart/env
-ExecStart=/opt/agentstart/venv/bin/python /opt/agentstart/app.py
+EnvironmentFile=-/etc/agentcontrol/env
+ExecStart=/opt/agentcontrol/venv/bin/python /opt/agentcontrol/app.py
 Restart=always
 RestartSec=5
 

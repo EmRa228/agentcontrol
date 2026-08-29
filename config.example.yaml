@@ -1,12 +1,12 @@
-# Copy to /etc/agentstart/config.yaml (or ./config.yaml for local dev)
+# Copy to /etc/agentcontrol/config.yaml (or ./config.yaml for local dev)
 
 port: 30228
 scan_root: /root
 idle_release_seconds: 43200  # 12 hours
 
-api_key_file: /etc/agentstart/api-key
+api_key_file: /etc/agentcontrol/api-key
 
-auth_password_file: /etc/agentstart/auth-password
+auth_password_file: /etc/agentcontrol/auth-password
 
 # Skip hidden dirs (names starting with any of these prefixes)
 exclude_prefixes:
@@ -20,7 +20,7 @@ exclude_dirs:
   - suspect-
 
 # Where PID/state files are stored
-state_dir: /var/lib/agentstart
+state_dir: /var/lib/agentcontrol
 
 # Path to agent CLI (empty = search PATH)
 agent_bin: ""

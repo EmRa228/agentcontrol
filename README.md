@@ -9,13 +9,13 @@ Mobile-friendly UI with per-server password protection.
 ## What it does
 
 - Lists project folders under a configurable root (default `/root`)
-- **Start** → launches `agent worker` and opens `cursor.com/agents#workerId=...`
+- **Start** → launches `agent worker` as `agentcontrol-<folder>` and opens `cursor.com/agents#workerId=...`
 - **Stop** → terminates the worker process
 - Shows server stats (CPU, RAM, disk, uptime, Docker, active workers)
 - Stable worker ID per folder (deterministic UUID)
 - Auto idle-release after **12 hours**
-- Always-on via **systemd**
-- **Per-server password** — stored in browser `localStorage` (one login per server per browser)
+- Always-on via **systemd** (`agentcontrol.service`)
+- **Per-server password** — stored in browser `localStorage`
 
 ## Requirements
 
@@ -27,73 +27,75 @@ Mobile-friendly UI with per-server password protection.
 ## Quick install (idempotent)
 
 ```bash
-sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentstart && CURSOR_API_KEY=YOUR_CURSOR_KEY /opt/agentstart/bootstrap.sh'
+sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && CURSOR_API_KEY=YOUR_CURSOR_KEY /opt/agentcontrol/bootstrap.sh'
 ```
 
-Update or change API key / password later:
+Update later:
 
 ```bash
-sudo CURSOR_API_KEY=YOUR_KEY PANEL_PASSWORD=your-panel-pass /opt/agentstart/bootstrap.sh
+sudo CURSOR_API_KEY=YOUR_KEY PANEL_PASSWORD=your-pass /opt/agentcontrol/bootstrap.sh
 ```
 
-`bootstrap.sh` is safe to run multiple times:
-- `git pull` if repo exists (no clone error)
-- updates API key when `CURSOR_API_KEY` is set
-- updates panel password when `PANEL_PASSWORD` is set
-- restarts the systemd service
+Fresh reinstall (removes legacy `agentstart`):
+
+```bash
+sudo CURSOR_API_KEY=YOUR_KEY bash -c '
+systemctl stop agentstart agentcontrol 2>/dev/null || true
+rm -rf /opt/agentstart /opt/agentcontrol
+rm -f /etc/systemd/system/agentstart.service
+git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol
+/opt/agentcontrol/bootstrap.sh
+'
+```
 
 Open from phone: `http://SERVER_IP:30228`
 
 ## Panel password
 
-On first install a **unique simple password** is generated per server, e.g. `cmtg-uk-a3f9k`.
-
 ```bash
-sudo cat /etc/agentstart/auth-password
+sudo cat /etc/agentcontrol/auth-password
 ```
 
 Set manually:
 
 ```bash
-echo "my-password" | sudo tee /etc/agentstart/auth-password
-sudo chmod 600 /etc/agentstart/auth-password
+echo "my-password" | sudo tee /etc/agentcontrol/auth-password
+sudo chmod 600 /etc/agentcontrol/auth-password
 ```
 
-The browser saves the password in **localStorage** (keyed by host:port) so you only enter it once per server per browser.
+Saved in browser **localStorage** (one login per server per browser).
 
 ## Cursor API key
 
 ```bash
-echo "YOUR_CURSOR_PERSONAL_API_KEY" | sudo tee /etc/agentstart/api-key
-sudo chmod 600 /etc/agentstart/api-key
-sudo systemctl restart agentstart
+echo "YOUR_CURSOR_PERSONAL_API_KEY" | sudo tee /etc/agentcontrol/api-key
+sudo chmod 600 /etc/agentcontrol/api-key
+sudo systemctl restart agentcontrol
 ```
-
-Without this key, workers cannot connect to Cursor.
 
 ## Configuration
 
-File: `/etc/agentstart/config.yaml`
+File: `/etc/agentcontrol/config.yaml`
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `port` | `30228` | HTTP port |
-| `scan_root` | `/root` | Folder scan path |
-| `idle_release_seconds` | `43200` | 12h worker idle timeout |
-| `api_key_file` | `/etc/agentstart/api-key` | Cursor API key |
-| `auth_password_file` | `/etc/agentstart/auth-password` | Panel password |
-| `exclude_prefixes` | `["."]` | Skip hidden dirs |
-| `exclude_dirs` | `[]` | Skip by name |
+| Key | Default |
+|-----|---------|
+| `port` | `30228` |
+| `scan_root` | `/root` |
+| `idle_release_seconds` | `43200` |
+| `api_key_file` | `/etc/agentcontrol/api-key` |
+| `auth_password_file` | `/etc/agentcontrol/auth-password` |
+| `state_dir` | `/var/lib/agentcontrol` |
 
 ## Service
 
 ```bash
-systemctl status agentstart
-systemctl restart agentstart
-journalctl -u agentstart -f
+systemctl status agentcontrol
+systemctl restart agentcontrol
+journalctl -u agentcontrol -f
 ```
 
-Worker logs: `/var/lib/agentstart/<folder>.log`
+Worker logs: `/var/lib/agentcontrol/<folder>.log`  
+Worker names in Cursor: `agentcontrol-<folder>`
 
 ## API
 
@@ -106,17 +108,9 @@ Worker logs: `/var/lib/agentstart/<folder>.log`
 | GET | `/api/folders` | yes |
 | POST | `/api/start/<name>` | yes |
 | POST | `/api/stop/<name>` | yes |
-| GET | `/api/ready/<name>` | yes |
 | GET | `/health` | no |
 
-Authenticated requests send header: `X-AgentControl-Auth: <password>`
-
-## Security notes (public repo)
-
-- This repo contains **no secrets**
-- Never commit `/etc/agentstart/api-key` or `auth-password`
-- Panel password is basic protection — use VPN/firewall for production
-- Default port `30228` — restrict access if possible
+Header: `X-AgentControl-Auth: <password>`
 
 ## License
 
@@ -126,11 +120,8 @@ MIT — see [LICENSE](LICENSE)
 
 ## فارسی
 
-پنل سبک برای مدیریت Cursor Agent روی سرور لینوکس.
-
 ```bash
-sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentstart && CURSOR_API_KEY=کلید_شما /opt/agentstart/bootstrap.sh'
+sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && CURSOR_API_KEY=کلید_شما /opt/agentcontrol/bootstrap.sh'
 ```
 
-پسورد پنل: `sudo cat /etc/agentstart/auth-password`  
-در مرورگر یک‌بار وارد می‌کنی و در localStorage می‌ماند.
+پسورد: `sudo cat /etc/agentcontrol/auth-password`

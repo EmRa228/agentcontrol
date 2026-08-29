@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agentstart — lightweight panel to start/stop Cursor agent workers."""
+"""agentcontrol — lightweight panel to start/stop Cursor agent workers."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ MGMT_PORT_BASE = 32000
 MGMT_PORT_RANGE = 800
 
 CONFIG_SEARCH = [
-    Path("/etc/agentstart/config.yaml"),
+    Path("/etc/agentcontrol/config.yaml"),
     Path(__file__).resolve().parent / "config.yaml",
     Path(__file__).resolve().parent / "config.example.yaml",
 ]
@@ -46,13 +46,13 @@ def load_config() -> dict:
     cfg.setdefault("port", int(os.environ.get("PORT", 30228)))
     cfg.setdefault("scan_root", os.environ.get("SCAN_ROOT", "/root"))
     cfg.setdefault("idle_release_seconds", int(os.environ.get("IDLE_RELEASE_SECONDS", 43200)))
-    cfg.setdefault("api_key_file", os.environ.get("API_KEY_FILE", "/etc/agentstart/api-key"))
+    cfg.setdefault("api_key_file", os.environ.get("API_KEY_FILE", "/etc/agentcontrol/api-key"))
     cfg.setdefault("exclude_prefixes", ["."])
     cfg.setdefault("exclude_dirs", [])
-    cfg.setdefault("state_dir", os.environ.get("STATE_DIR", "/var/lib/agentstart"))
+    cfg.setdefault("state_dir", os.environ.get("STATE_DIR", "/var/lib/agentcontrol"))
     cfg.setdefault("agent_bin", os.environ.get("AGENT_BIN", ""))
     cfg.setdefault("worker_ready_timeout", int(os.environ.get("WORKER_READY_TIMEOUT", 45)))
-    cfg.setdefault("auth_password_file", os.environ.get("AUTH_PASSWORD_FILE", "/etc/agentstart/auth-password"))
+    cfg.setdefault("auth_password_file", os.environ.get("AUTH_PASSWORD_FILE", "/etc/agentcontrol/auth-password"))
 
     if os.environ.get("PORT"):
         cfg["port"] = int(os.environ["PORT"])
@@ -110,7 +110,11 @@ def require_panel_auth():
 
 
 def worker_id_for(folder: str) -> str:
-    return str(uuid.uuid5(WORKER_NAMESPACE, folder))
+    return str(uuid.uuid5(WORKER_NAMESPACE, f"agentcontrol:{folder}"))
+
+
+def worker_name(folder: str) -> str:
+    return f"agentcontrol-{folder}"
 
 
 def agent_url(folder: str) -> str:
@@ -545,7 +549,7 @@ def start_worker(name: str) -> tuple[dict, int]:
     api_key = read_api_key()
     if not api_key:
         return {
-            "error": "Cursor API key missing. Set it: echo YOUR_KEY | sudo tee /etc/agentstart/api-key"
+            "error": "Cursor API key missing. Set it: echo YOUR_KEY | sudo tee /etc/agentcontrol/api-key"
         }, 500
 
     state = reconcile_state()
@@ -579,7 +583,7 @@ def start_worker(name: str) -> tuple[dict, int]:
         "--worker-dir",
         str(path),
         "--name",
-        name,
+        worker_name(name),
         "--idle-release-timeout",
         str(CFG["idle_release_seconds"]),
         "--management-addr",

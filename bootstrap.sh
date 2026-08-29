@@ -2,8 +2,8 @@
 # Idempotent entrypoint — safe to run multiple times (install or update).
 set -euo pipefail
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/agentstart}"
-REPO_URL="${AGENTSTART_REPO:-https://github.com/EmRa228/agentcontrol.git}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/agentcontrol}"
+REPO_URL="${AGENTCONTROL_REPO:-https://github.com/EmRa228/agentcontrol.git}"
 
 export INSTALL_DIR
 
@@ -16,7 +16,8 @@ fi
 
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   log "Updating existing repo in ${INSTALL_DIR}"
-  git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || git -C "${INSTALL_DIR}" pull
+  git -C "${INSTALL_DIR}" fetch origin main
+  git -C "${INSTALL_DIR}" reset --hard origin/main
 elif [[ -f "${INSTALL_DIR}/install.sh" ]]; then
   log "Using existing ${INSTALL_DIR}"
 else
@@ -26,4 +27,5 @@ else
 fi
 
 cd "${INSTALL_DIR}"
+chmod +x bootstrap.sh install.sh
 exec ./install.sh

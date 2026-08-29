@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/agentstart}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/agentstart}"
-STATE_DIR="${STATE_DIR:-/var/lib/agentstart}"
-REPO_URL="${AGENTSTART_REPO:-https://github.com/EmRa228/agentcontrol.git}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/agentcontrol}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/agentcontrol}"
+STATE_DIR="${STATE_DIR:-/var/lib/agentcontrol}"
+REPO_URL="${AGENTCONTROL_REPO:-https://github.com/EmRa228/agentcontrol.git}"
 
 export PATH="/root/.local/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
 
@@ -15,6 +15,26 @@ need_root() {
     echo "Run as root: sudo $0"
     exit 1
   fi
+}
+
+remove_legacy() {
+  systemctl stop agentstart 2>/dev/null || true
+  systemctl disable agentstart 2>/dev/null || true
+  rm -f /etc/systemd/system/agentstart.service
+
+  if [[ -d /etc/agentstart ]] && [[ ! -d "${CONFIG_DIR}" ]]; then
+    log "Migrating /etc/agentstart → ${CONFIG_DIR}"
+    cp -a /etc/agentstart "${CONFIG_DIR}"
+  fi
+  if [[ -d /var/lib/agentstart ]] && [[ ! -d "${STATE_DIR}" ]]; then
+    log "Migrating /var/lib/agentstart → ${STATE_DIR}"
+    cp -a /var/lib/agentstart "${STATE_DIR}"
+  fi
+  if [[ -d /opt/agentstart ]] && [[ "${INSTALL_DIR}" != "/opt/agentstart" ]]; then
+    log "Removing legacy /opt/agentstart"
+    rm -rf /opt/agentstart
+  fi
+  systemctl daemon-reload
 }
 
 install_packages() {
@@ -39,11 +59,13 @@ ensure_repo() {
 
   if [[ "${SCRIPT_DIR}" == "${INSTALL_DIR}" ]] && [[ -d "${INSTALL_DIR}/.git" ]]; then
     log "Pulling latest code"
-    git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || git -C "${INSTALL_DIR}" pull || true
+    git -C "${INSTALL_DIR}" fetch origin main
+    git -C "${INSTALL_DIR}" reset --hard origin/main
   elif [[ ! -f "${INSTALL_DIR}/app.py" ]]; then
     if [[ -d "${INSTALL_DIR}/.git" ]]; then
       log "Updating ${INSTALL_DIR}"
-      git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || git -C "${INSTALL_DIR}" pull
+      git -C "${INSTALL_DIR}" fetch origin main
+      git -C "${INSTALL_DIR}" reset --hard origin/main
     else
       log "Cloning ${REPO_URL} → ${INSTALL_DIR}"
       mkdir -p "$(dirname "${INSTALL_DIR}")"
@@ -114,7 +136,7 @@ setup_panel_password() {
 }
 
 install_app() {
-  log "Installing agentstart to ${INSTALL_DIR}"
+  log "Installing agentcontrol to ${INSTALL_DIR}"
 
   if [[ ! -d "${INSTALL_DIR}/venv" ]]; then
     python3 -m venv "${INSTALL_DIR}/venv"
@@ -134,14 +156,15 @@ install_app() {
     sed -i "s|^agent_bin:.*|agent_bin: ${AGENT_PATH}|" "${CONFIG_DIR}/config.yaml"
   fi
 
-  cp "${INSTALL_DIR}/agentstart.service" /etc/systemd/system/agentstart.service
+  cp "${INSTALL_DIR}/agentcontrol.service" /etc/systemd/system/agentcontrol.service
   systemctl daemon-reload
-  systemctl enable agentstart
-  systemctl restart agentstart
+  systemctl enable agentcontrol
+  systemctl restart agentcontrol
 }
 
 main() {
   need_root
+  remove_legacy
   install_packages
   install_cursor_agent
   ensure_repo
@@ -159,7 +182,7 @@ main() {
     echo "Panel password: (see ${CONFIG_DIR}/auth-password)"
   fi
   echo "API key: ${CONFIG_DIR}/api-key"
-  echo "Logs:    journalctl -u agentstart -f"
+  echo "Logs:    journalctl -u agentcontrol -f"
 }
 
 main "$@"
