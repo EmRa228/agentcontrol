@@ -136,6 +136,7 @@
     const AUTH_KEY = 'agentcontrol_auth_' + location.host;
     const list = document.getElementById('list');
     const msg = document.getElementById('msg');
+    let busy = false;
     let setupNeedsPassword = false;
     let setupNeedsApiKey = false;
     let refreshTimer = null;
@@ -153,9 +154,10 @@
       opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
       const res = await fetch(url, opts);
       if (res.status === 401) { clearPassword(); showLogin('Wrong password'); throw new Error('unauthorized'); }
-      if (res.status === 403) {
+        if (res.status === 403) {
         const data = await res.json().catch(() => ({}));
         if (data.needs_password) { showSetup(); throw new Error('setup'); }
+        throw new Error('forbidden');
       }
       return res;
     }
@@ -376,10 +378,10 @@
         renderSystem(sys);
         renderFolders((await foldRes.json()).folders);
       } catch (e) {
-        if (e.message !== 'unauthorized' && e.message !== 'setup') {
-          document.getElementById('msg').textContent = 'Refresh failed';
-          document.getElementById('msg').className = 'error';
-        }
+        if (e.message === 'unauthorized') return;
+        if (e.message === 'setup') return;
+        msg.textContent = 'Refresh failed: ' + (e.message || 'unknown');
+        msg.className = 'error';
       }
     }
 
