@@ -112,6 +112,11 @@ Worker names in Cursor: `agentcontrol-<folder>`
 
 Header: `X-AgentControl-Auth: <password>`
 
+## Multi-server fleet (Cloudflare Workers)
+
+Manage **all servers from one URL** — no central VPS, no Tunnel.  
+See **[fleet/README.md](fleet/README.md)** for deploy steps (`wrangler login` → KV → `FLEET_PASSWORD` → `npm run deploy`).
+
 ## License
 
 MIT — see [LICENSE](LICENSE)

@@ -1,0 +1,136 @@
+# AgentControl Fleet (Cloudflare Workers)
+
+One dashboard for all your AgentControl servers. No central VPS — runs on **Cloudflare Workers** + **KV**.
+
+Each server stays as-is (public IP + port + panel password). You add them from the fleet UI.
+
+## What you need
+
+- A [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is enough to start)
+- [Node.js](https://nodejs.org/) 18+ on your laptop
+- Each AgentControl server reachable at `http://YOUR_IP:30228` from the internet
+
+## Quick install (~5 minutes)
+
+### 1. Install Wrangler and log in
+
+```bash
+cd fleet
+npm install
+npx wrangler login
+```
+
+This opens the browser and links Wrangler to your Cloudflare account.  
+Docs: [https://developers.cloudflare.com/workers/wrangler/commands/#login](https://developers.cloudflare.com/workers/wrangler/commands/#login)
+
+### 2. Create a KV namespace
+
+```bash
+npx wrangler kv namespace create KV
+```
+
+Copy the `id` from the output and paste it into `wrangler.jsonc`:
+
+```jsonc
+"kv_namespaces": [
+  {
+    "binding": "KV",
+    "id": "paste-your-id-here"
+  }
+]
+```
+
+Docs: [https://developers.cloudflare.com/kv/get-started/](https://developers.cloudflare.com/kv/get-started/)
+
+### 3. Set the fleet login password
+
+This protects the fleet dashboard (separate from each server’s password):
+
+```bash
+npx wrangler secret put FLEET_PASSWORD
+```
+
+Enter a strong password when prompted.
+
+Docs: [https://developers.cloudflare.com/workers/configuration/secrets/](https://developers.cloudflare.com/workers/configuration/secrets/)
+
+### 4. Deploy
+
+```bash
+npm run deploy
+```
+
+Wrangler prints a `*.workers.dev` URL, for example:
+
+`https://agentcontrol-fleet.your-subdomain.workers.dev`
+
+Docs: [https://developers.cloudflare.com/workers/get-started/guide/#7-deploy-your-project](https://developers.cloudflare.com/workers/get-started/guide/#7-deploy-your-project)
+
+### 5. Custom subdomain (optional)
+
+1. Cloudflare Dashboard → **Workers & Pages** → your worker → **Settings** → **Domains & Routes**
+2. **Add** → **Custom domain** → e.g. `fleet.example.com`
+3. DNS must be on Cloudflare (orange cloud)
+
+Docs: [https://developers.cloudflare.com/workers/configuration/routing/custom-domains/](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
+
+### 6. Use the fleet
+
+1. Open your fleet URL
+2. Sign in with **FLEET_PASSWORD**
+3. **Add server**:
+   - **Name**: anything (e.g. `uk-prod`)
+   - **URL**: `http://193.163.201.14:30228`
+   - **Panel password**: same password you use on that server’s AgentControl UI
+4. Expand a server card → **Start** / **Stop** projects
+
+The fleet polls every 4 seconds. No push or event storage.
+
+## Local development
+
+```bash
+# Set secrets for local dev (once)
+npx wrangler secret put FLEET_PASSWORD
+
+# Run locally
+npm run dev
+```
+
+Open the URL Wrangler prints (usually `http://localhost:8787`).
+
+Docs: [https://developers.cloudflare.com/workers/wrangler/commands/#dev](https://developers.cloudflare.com/workers/wrangler/commands/#dev)
+
+## Update after git pull
+
+```bash
+cd fleet
+npm install   # if package.json changed
+npm run deploy
+```
+
+## Security notes
+
+- Server panel passwords are stored in **KV** (only your Worker can read them).
+- Use a strong **FLEET_PASSWORD** and HTTPS (workers.dev or custom domain).
+- Each AgentControl server should use its own panel password.
+- Fleet Worker calls your servers over **HTTP** — use only on trusted networks or add HTTPS to AgentControl later.
+
+## Troubleshooting
+
+| Problem | Fix |
+|--------|-----|
+| `FLEET_PASSWORD secret is not set` | Run `npx wrangler secret put FLEET_PASSWORD` and redeploy |
+| `cannot reach server` | Check firewall allows port 30228 from the internet |
+| `wrong server password` | Use the same password as the single-server AgentControl login |
+| `REPLACE_WITH_KV_NAMESPACE_ID` | Create KV namespace and update `wrangler.jsonc` |
+
+## Architecture
+
+```
+Browser → fleet.yourdomain.com (Worker)
+              ↓ HTTP + X-AgentControl-Auth
+         http://server1:30228/api/...
+         http://server2:30228/api/...
+```
+
+No Cloudflare Tunnel. No config changes on individual servers.

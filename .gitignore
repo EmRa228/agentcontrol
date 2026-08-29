@@ -6,3 +6,5 @@ config.yaml
 *.log
 auth-password
 **/auth-password
+fleet/node_modules/
+fleet/.wrangler/

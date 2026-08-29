@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentControl Fleet</title>
+  <style>
+    :root {
+      --bg: #0b0d12; --card: #141820; --border: #252b38; --text: #eef1f6;
+      --muted: #8b93a7; --accent: #5b8cff; --green: #3dd68c; --yellow: #e8c468; --red: #f07178;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 14px; }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    .hidden { display: none !important; }
+    .gate { min-height: 70vh; display: flex; align-items: center; justify-content: center; }
+    .panel { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+    .panel h1 { font-size: 1.1rem; margin-bottom: 6px; }
+    .panel p { color: var(--muted); font-size: .82rem; margin-bottom: 12px; line-height: 1.45; }
+    input, select { width: 100%; border: 1px solid var(--border); background: #0d1016; color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: .88rem; }
+    label { display: block; font-size: .72rem; color: var(--muted); margin: 10px 0 4px; }
+    .btn { border: none; border-radius: 8px; padding: 9px 14px; font-weight: 600; cursor: pointer; font-size: .82rem; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-sm { padding: 6px 10px; font-size: .75rem; }
+    .btn-danger { background: rgba(240,113,120,.15); color: var(--red); border: 1px solid rgba(240,113,120,.3); }
+    .err { color: var(--red); font-size: .78rem; min-height: 1.2em; margin-top: 8px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+    h1 { font-size: 1.2rem; }
+    .sub { color: var(--muted); font-size: .75rem; }
+    .live { color: var(--green); font-size: .72rem; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+    .server {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    }
+    .server.offline { border-color: rgba(240,113,120,.35); }
+    .server-head { padding: 10px 12px; cursor: pointer; }
+    .server-head:hover { background: rgba(255,255,255,.02); }
+    .server-title { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+    .server-name { font-weight: 700; font-size: .92rem; }
+    .server-url { font-size: .68rem; color: var(--muted); margin-top: 2px; word-break: break-all; }
+    .badge { font-size: .62rem; padding: 2px 6px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+    .badge.ok { background: rgba(61,214,140,.15); color: var(--green); }
+    .badge.bad { background: rgba(240,113,120,.15); color: var(--red); }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+    .m { background: #0d1016; border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; }
+    .m .k { font-size: .58rem; color: var(--muted); text-transform: uppercase; }
+    .m .v { font-size: .78rem; font-weight: 700; margin-top: 1px; }
+    .server-body { border-top: 1px solid var(--border); padding: 8px 10px 10px; display: none; }
+    .server.open .server-body { display: block; }
+    .projects { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+    .proj {
+      display: grid; grid-template-columns: 52px 1fr auto; gap: 6px; align-items: center;
+      padding: 5px 6px; background: #0d1016; border: 1px solid var(--border); border-radius: 6px;
+    }
+    .proj.running { border-color: rgba(61,214,140,.3); }
+    .proj-name { font-size: .78rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .proj-time { font-size: .62rem; color: var(--muted); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .dot.on { background: var(--green); }
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(11,13,18,.9); display: flex; align-items: center;
+      justify-content: center; padding: 16px; z-index: 50;
+    }
+    .modal { width: 100%; max-width: 400px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    .modal h2 { font-size: 1rem; margin-bottom: 10px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+    #msg { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 10px; min-height: 1.2em; }
+    .warn { color: var(--yellow); }
+  </style>
+</head>
+<body>
+  <div id="login" class="gate">
+    <div class="panel">
+      <h1>AgentControl Fleet</h1>
+      <p>Enter the fleet password you set with <code>wrangler secret put FLEET_PASSWORD</code>.</p>
+      <label>Fleet password</label>
+      <input id="login-pw" type="password" autocomplete="current-password" placeholder="Fleet password">
+      <button class="btn btn-primary" type="button" style="width:100%;margin-top:12px" onclick="doLogin()">Sign in</button>
+      <p id="login-err" class="err"></p>
+    </div>
+  </div>
+
+  <div id="app" class="wrap hidden">
+    <header>
+      <div>
+        <h1>AgentControl Fleet</h1>
+        <p class="sub">All servers in one view</p>
+      </div>
+      <div class="live" id="live">● live</div>
+    </header>
+    <div class="toolbar">
+      <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="refreshNow()">Refresh</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="logout()">Sign out</button>
+    </div>
+    <div id="servers" class="grid"><p class="sub">Loading…</p></div>
+    <p id="msg"></p>
+  </div>
+
+  <div id="add-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Add server</h2>
+      <p class="sub" style="margin-bottom:10px">Use the same URL and panel password as the single-server AgentControl UI.</p>
+      <label>Name</label>
+      <input id="add-name" placeholder="e.g. production-uk">
+      <label>URL</label>
+      <input id="add-url" placeholder="http://1.2.3.4:30228">
+      <label>Panel password</label>
+      <input id="add-password" type="password" placeholder="AgentControl password">
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" type="button" onclick="closeAddModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" type="button" onclick="addServer()">Add</button>
+      </div>
+      <p id="add-err" class="err"></p>
+    </div>
+  </div>
+
+  <div id="start-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 id="start-title">Starting…</h2>
+      <p id="start-msg" class="sub" style="margin-top:8px">Connecting to Cursor…</p>
+      <div class="modal-actions" style="margin-top:14px">
+        <button class="btn btn-ghost btn-sm hidden" id="start-close" type="button" onclick="closeStartModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const AUTH_KEY = 'agentcontrol_fleet_pw';
+    const expanded = new Set();
+    let timer = null;
+    let busy = false;
+
+    function pw() { return sessionStorage.getItem(AUTH_KEY) || ''; }
+    function setPw(v) { sessionStorage.setItem(AUTH_KEY, v); }
+    function clearPw() { sessionStorage.removeItem(AUTH_KEY); }
+
+    async function api(path, opts = {}) {
+      opts.headers = {
+        'Content-Type': 'application/json',
+        'X-Fleet-Password': pw(),
+        ...(opts.headers || {}),
+      };
+      const res = await fetch(path, opts);
+      if (res.status === 401) {
+        clearPw();
+        showLogin();
+        throw new Error('unauthorized');
+      }
+      return res;
+    }
+
+    function showLogin() {
+      document.getElementById('login').classList.remove('hidden');
+      document.getElementById('app').classList.add('hidden');
+      if (timer) clearInterval(timer);
+      timer = null;
+    }
+
+    function showApp() {
+      document.getElementById('login').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      if (!timer) timer = setInterval(refreshNow, 4000);
+      refreshNow();
+    }
+
+    async function doLogin() {
+      const password = document.getElementById('login-pw').value;
+      const err = document.getElementById('login-err');
+      err.textContent = '';
+      setPw(password);
+      try {
+        const res = await api('/api/login', { method: 'POST', body: JSON.stringify({ password }) });
+        const data = await res.json();
+        if (!res.ok) { clearPw(); err.textContent = data.error || 'Failed'; return; }
+        showApp();
+      } catch (e) {
+        err.textContent = 'Login failed';
+        clearPw();
+      }
+    }
+
+    document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+    function logout() { clearPw(); showLogin(); }
+
+    function healthClass(p) {
+      if (p == null) return '';
+      if (p >= 90) return 'bad';
+      if (p >= 75) return 'warn';
+      return 'ok';
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    }
+
+    function renderServers(snapshots) {
+      const el = document.getElementById('servers');
+      if (!snapshots.length) {
+        el.innerHTML = '<p class="sub">No servers yet. Click <strong>Add server</strong>.</p>';
+        return;
+      }
+      el.innerHTML = snapshots.map(s => {
+        const open = expanded.has(s.id) ? ' open' : '';
+        const offline = !s.online ? ' offline' : '';
+        const badge = s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">${esc(s.error || 'offline')}</span>`;
+        const sum = s.summary || {};
+        const metrics = s.online ? `
+          <div class="metrics">
+            <div class="m"><div class="k">CPU</div><div class="v">${sum.cpu ?? '—'}%</div></div>
+            <div class="m"><div class="k">RAM</div><div class="v">${sum.ram ?? '—'}%</div></div>
+            <div class="m"><div class="k">Disk</div><div class="v">${sum.disk ?? '—'}%</div></div>
+            <div class="m"><div class="k">Workers</div><div class="v">${sum.workers ?? 0}</div></div>
+          </div>` : `<p class="sub" style="margin-top:8px">${esc(s.error || 'Unreachable')}</p>`;
+        const folders = (s.folders || []).map(f => {
+          const enc = encodeURIComponent(f.name);
+          const btn = f.running
+            ? `<button class="btn btn-sm btn-danger" data-stop="${esc(s.id)}" data-proj="${enc}">Stop</button>`
+            : `<button class="btn btn-sm btn-primary" data-start="${esc(s.id)}" data-proj="${enc}">Start</button>`;
+          return `<div class="proj ${f.running ? 'running' : ''}">
+            ${btn}
+            <div><div class="proj-name">${esc(f.name)}</div><div class="proj-time">${esc(f.mtime_relative || '')}</div></div>
+            <span class="dot ${f.running ? 'on' : ''}"></span>
+          </div>`;
+        }).join('');
+        return `<div class="server${open}${offline}" data-id="${esc(s.id)}">
+          <div class="server-head" data-toggle="${esc(s.id)}">
+            <div class="server-title">
+              <div><div class="server-name">${esc(s.name)}</div><div class="server-url">${esc(s.url)}</div></div>
+              ${badge}
+            </div>
+            ${metrics}
+          </div>
+          <div class="server-body">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <span class="sub">${(s.folders || []).length} projects</span>
+              <button class="btn btn-ghost btn-sm" data-remove="${esc(s.id)}" type="button">Remove</button>
+            </div>
+            <div class="projects">${folders || '<p class="sub">No projects</p>'}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    document.getElementById('servers').addEventListener('click', async (e) => {
+      const t = e.target.closest('[data-toggle]');
+      if (t) {
+        const id = t.dataset.toggle;
+        if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+        document.querySelectorAll('.server').forEach(el => el.classList.toggle('open', expanded.has(el.dataset.id)));
+        return;
+      }
+      const start = e.target.closest('[data-start]');
+      if (start && !busy) {
+        startWorker(start.dataset.start, decodeURIComponent(start.dataset.proj));
+        return;
+      }
+      const stop = e.target.closest('[data-stop]');
+      if (stop && !busy) {
+        stopWorker(stop.dataset.stop, decodeURIComponent(stop.dataset.proj));
+        return;
+      }
+      const rem = e.target.closest('[data-remove]');
+      if (rem && confirm('Remove this server from fleet?')) {
+        await api('/api/servers/' + rem.dataset.remove, { method: 'DELETE' });
+        expanded.delete(rem.dataset.remove);
+        refreshNow();
+      }
+    });
+
+    async function refreshNow() {
+      if (busy || document.getElementById('app').classList.contains('hidden')) return;
+      try {
+        const res = await api('/api/fleet/snapshot');
+        const data = await res.json();
+        renderServers(data.servers || []);
+        document.getElementById('msg').textContent = '';
+      } catch (e) {
+        if (e.message !== 'unauthorized') {
+          document.getElementById('msg').textContent = 'Refresh failed';
+          document.getElementById('msg').className = 'warn';
+        }
+      }
+    }
+
+    function openAddModal() {
+      document.getElementById('add-modal').classList.remove('hidden');
+      document.getElementById('add-err').textContent = '';
+    }
+    function closeAddModal() { document.getElementById('add-modal').classList.add('hidden'); }
+
+    async function addServer() {
+      const err = document.getElementById('add-err');
+      err.textContent = '';
+      const body = {
+        name: document.getElementById('add-name').value.trim(),
+        url: document.getElementById('add-url').value.trim(),
+        password: document.getElementById('add-password').value,
+      };
+      try {
+        const res = await api('/api/servers', { method: 'POST', body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) { err.textContent = data.error || 'Failed'; return; }
+        closeAddModal();
+        document.getElementById('add-name').value = '';
+        document.getElementById('add-url').value = '';
+        document.getElementById('add-password').value = '';
+        refreshNow();
+      } catch (e) { err.textContent = 'Failed'; }
+    }
+
+    function openStartModal(title) {
+      document.getElementById('start-title').textContent = title;
+      document.getElementById('start-msg').textContent = 'Sending start request…';
+      document.getElementById('start-close').classList.add('hidden');
+      document.getElementById('start-modal').classList.remove('hidden');
+      busy = true;
+    }
+    function closeStartModal() {
+      document.getElementById('start-modal').classList.add('hidden');
+      busy = false;
+      refreshNow();
+    }
+
+    async function waitReady(serverId, project) {
+      const start = Date.now();
+      while (Date.now() - start < 50000) {
+        const res = await api(`/api/fleet/${serverId}/ready/${encodeURIComponent(project)}`);
+        const data = await res.json();
+        if (!data.running) throw new Error('stopped');
+        if (data.ready) return data;
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      throw new Error('timeout');
+    }
+
+    async function startWorker(serverId, project) {
+      openStartModal('Starting ' + project);
+      const msgEl = document.getElementById('start-msg');
+      try {
+        const res = await api(`/api/fleet/${serverId}/start/${encodeURIComponent(project)}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { msgEl.textContent = data.error || 'Start failed'; document.getElementById('start-close').classList.remove('hidden'); return; }
+        msgEl.textContent = 'Waiting for Cursor…';
+        const ready = await waitReady(serverId, project);
+        msgEl.textContent = 'Opening Cursor…';
+        window.open(ready.agent_url || data.agent_url, '_blank');
+        closeStartModal();
+      } catch (e) {
+        msgEl.textContent = e.message === 'timeout' ? 'Timed out — worker may still be starting.' : (e.message || 'Failed');
+        document.getElementById('start-close').classList.remove('hidden');
+      }
+    }
+
+    async function stopWorker(serverId, project) {
+      busy = true;
+      document.getElementById('msg').textContent = 'Stopping…';
+      try {
+        await api(`/api/fleet/${serverId}/stop/${encodeURIComponent(project)}`, { method: 'POST' });
+        document.getElementById('msg').textContent = 'Stopped';
+        refreshNow();
+      } catch (e) {} finally { busy = false; }
+    }
+
+    if (pw()) {
+      api('/api/servers').then(r => { if (r.ok) showApp(); else showLogin(); }).catch(() => showLogin());
+    }
+  </script>
+</body>
+</html>
