@@ -1,0 +1,26 @@
+# Copy to /etc/agentstart/config.yaml (or ./config.yaml for local dev)
+
+port: 30228
+scan_root: /root
+idle_release_seconds: 43200  # 12 hours
+
+api_key_file: /etc/agentstart/api-key
+
+auth_password_file: /etc/agentstart/auth-password
+
+# Skip hidden dirs (names starting with any of these prefixes)
+exclude_prefixes:
+  - "."
+
+# Skip these directory names exactly
+exclude_dirs:
+  - incident-2026-06-27-1224
+  - incident-cleanup-2026-06-27-1323
+  - incident-final-2026-06-27-1317
+  - suspect-
+
+# Where PID/state files are stored
+state_dir: /var/lib/agentstart
+
+# Path to agent CLI (empty = search PATH)
+agent_bin: ""

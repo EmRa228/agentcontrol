@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentControl</title>
+  <style>
+    :root {
+      --bg: #0f1117; --row: #1a1d27; --border: #2a2f3d; --text: #e8eaef;
+      --muted: #8b93a7; --accent: #6c8cff; --green: #3dd68c;
+      --yellow: #ebc88d; --red: #f07178;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 0.75rem; }
+    .wrap { max-width: 560px; margin: 0 auto; }
+    header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.6rem; }
+    h1 { font-size: 1.15rem; font-weight: 600; }
+    .sub { color: var(--muted); font-size: 0.75rem; margin-top: 0.15rem; }
+    .refresh { border: 1px solid var(--border); background: var(--row); color: var(--text); border-radius: 8px; padding: 0.45rem 0.7rem; font-size: 0.75rem; cursor: pointer; white-space: nowrap; }
+    #login-gate { position: fixed; inset: 0; background: rgba(15,17,23,0.96); display: flex; align-items: center; justify-content: center; z-index: 20; padding: 1rem; }
+    #login-gate.hidden { display: none; }
+    .login-box { width: 100%; max-width: 320px; background: var(--row); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; }
+    .login-box h2 { font-size: 1rem; margin-bottom: 0.35rem; }
+    .login-box p { color: var(--muted); font-size: 0.75rem; margin-bottom: 0.75rem; line-height: 1.5; }
+    .login-box input { width: 100%; border: 1px solid var(--border); background: #11141d; color: var(--text); border-radius: 8px; padding: 0.65rem 0.75rem; font-size: 0.9rem; margin-bottom: 0.6rem; }
+    .login-box button { width: 100%; border: none; border-radius: 8px; padding: 0.65rem; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; }
+    .login-error { color: var(--red); font-size: 0.75rem; min-height: 1.1em; margin-top: 0.4rem; }
+    #sys { background: var(--row); border: 1px solid var(--border); border-radius: 10px; padding: 0.65rem 0.7rem; margin-bottom: 0.6rem; font-size: 0.74rem; line-height: 1.55; }
+    #sys .title { font-size: 0.78rem; font-weight: 700; margin-bottom: 0.35rem; color: var(--accent); }
+    #sys .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; }
+    #sys .full { grid-column: 1 / -1; }
+    #sys .warn { color: var(--yellow); } #sys .bad { color: var(--red); } #sys .ok { color: var(--green); }
+    .bar-wrap { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.25rem; }
+    .bar-row { display: flex; align-items: center; gap: 0.45rem; }
+    .bar-label { width: 2.2rem; color: var(--muted); font-size: 0.7rem; }
+    .bar { flex: 1; height: 7px; background: #11141d; border-radius: 999px; overflow: hidden; }
+    .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+    .bar > span.warn { background: var(--yellow); } .bar > span.bad { background: var(--red); }
+    .bar-val { width: 2.5rem; text-align: left; font-size: 0.7rem; color: var(--muted); }
+    #list { display: flex; flex-direction: column; gap: 0.35rem; }
+    .row { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 0.5rem; background: var(--row); border: 1px solid var(--border); border-radius: 10px; padding: 0.45rem 0.55rem; }
+    .row.running { border-color: rgba(61,214,140,0.35); }
+    .name { font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .meta { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+    .time { font-size: 0.72rem; color: var(--muted); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); justify-self: end; }
+    .dot.on { background: var(--green); box-shadow: 0 0 6px rgba(61,214,140,0.6); }
+    button.action { border: none; border-radius: 8px; padding: 0.5rem 0.35rem; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
+    button.action:disabled { opacity: 0.45; cursor: wait; }
+    button.start { background: var(--accent); color: #fff; }
+    button.stop { background: rgba(240,113,120,0.18); color: var(--red); }
+    #msg { margin-top: 0.65rem; text-align: center; color: var(--muted); font-size: 0.78rem; min-height: 1.2em; }
+    .error { color: var(--red); }
+    .loading { text-align: center; color: var(--muted); padding: 1.5rem; font-size: 0.85rem; }
+    #app.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="login-gate" class="hidden">
+    <div class="login-box">
+      <h2>AgentControl</h2>
+      <p>پسورد این سرور را وارد کن. در مرورگر ذخیره می‌شود و دوباره لازم نیست.</p>
+      <input id="login-password" type="password" placeholder="Panel password" autocomplete="current-password">
+      <button type="button" onclick="submitLogin()">ورود</button>
+      <p id="login-error" class="login-error"></p>
+    </div>
+  </div>
+
+  <div id="app" class="wrap hidden">
+    <header>
+      <div>
+        <h1>AgentControl</h1>
+        <p class="sub">پورت {{ port }} · {{ scan_root }}</p>
+      </div>
+      <button class="refresh" onclick="refreshAll()">↻ به‌روزرسانی</button>
+    </header>
+    <div id="sys"><p class="loading">در حال خواندن وضعیت سرور…</p></div>
+    <div id="list"><p class="loading">در حال بارگذاری پروژه‌ها…</p></div>
+    <p id="msg"></p>
+  </div>
+
+  <script>
+    const AUTH_KEY = 'agentcontrol_auth_' + location.host;
+    const list = document.getElementById('list');
+    const sys = document.getElementById('sys');
+    const msg = document.getElementById('msg');
+    const appEl = document.getElementById('app');
+    const loginGate = document.getElementById('login-gate');
+    const loginError = document.getElementById('login-error');
+    let busy = false;
+    let authRequired = true;
+
+    function getStoredPassword() { return localStorage.getItem(AUTH_KEY) || ''; }
+    function storePassword(pw) { localStorage.setItem(AUTH_KEY, pw); }
+    function clearPassword() { localStorage.removeItem(AUTH_KEY); }
+
+    function authHeaders() {
+      const pw = getStoredPassword();
+      return pw ? { 'X-AgentControl-Auth': pw } : {};
+    }
+
+    async function apiFetch(url, opts = {}) {
+      opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
+      const res = await fetch(url, opts);
+      if (res.status === 401) {
+        clearPassword();
+        showLogin('پسورد اشتباه است');
+        throw new Error('unauthorized');
+      }
+      return res;
+    }
+
+    function showLogin(errorText) {
+      appEl.classList.add('hidden');
+      loginGate.classList.remove('hidden');
+      if (errorText) loginError.textContent = errorText;
+    }
+
+    function showApp() {
+      loginGate.classList.add('hidden');
+      appEl.classList.remove('hidden');
+      loginError.textContent = '';
+    }
+
+    async function submitLogin() {
+      const pw = document.getElementById('login-password').value.trim();
+      if (!pw) { loginError.textContent = 'پسورد را وارد کن'; return; }
+      storePassword(pw);
+      try {
+        const res = await apiFetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pw }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          clearPassword();
+          loginError.textContent = 'پسورد اشتباه است';
+          return;
+        }
+        showApp();
+        refreshAll();
+      } catch (e) {
+        loginError.textContent = 'خطا در ورود';
+      }
+    }
+
+    document.getElementById('login-password').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitLogin();
+    });
+
+    async function boot() {
+      try {
+        const statusRes = await fetch('/api/auth/status');
+        const status = await statusRes.json();
+        authRequired = !!status.auth_required;
+        if (!authRequired) {
+          showApp();
+          refreshAll();
+          return;
+        }
+        if (getStoredPassword()) {
+          const res = await apiFetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: getStoredPassword() }),
+          });
+          if (res.ok) { showApp(); refreshAll(); return; }
+          clearPassword();
+        }
+        showLogin();
+      } catch (e) {
+        showLogin();
+      }
+    }
+
+    function setMsg(text, isError) {
+      msg.textContent = text;
+      msg.className = isError ? 'error' : '';
+    }
+
+    function barClass(p) {
+      if (p >= 90) return 'bad';
+      if (p >= 75) return 'warn';
+      return '';
+    }
+
+    function renderSystem(s) {
+      const apiWarn = s.agent.api_key_set
+        ? '<span class="ok">API key ✓</span>'
+        : '<span class="warn">API key تنظیم نشده</span>';
+      const docker = s.docker_running == null ? '—' : s.docker_running;
+      const workers = s.panel.running_workers
+        ? `<span class="ok">${s.panel.running_worker_names.join(', ')}</span>`
+        : 'هیچ‌کدام';
+      sys.innerHTML = `
+        <div class="title">وضعیت سرور · ${s.hostname}</div>
+        <div class="grid">
+          <div class="full">${s.os} · kernel ${s.kernel}</div>
+          <div>IP: ${s.ip}</div>
+          <div>آپتایم: ${s.uptime_human}</div>
+          <div>Load: ${s.cpu.load_1} / ${s.cpu.load_5} / ${s.cpu.load_15}</div>
+          <div>CPU: ${s.cpu.cores} هسته · ${s.cpu.percent}%</div>
+          <div>RAM: ${s.memory.used_human} / ${s.memory.total_human}</div>
+          <div class="full">دیسک /: ${s.disk_root.used_human} / ${s.disk_root.total_human} (${s.disk_root.free_human} آزاد)</div>
+          ${s.disk_scan_root ? `<div class="full">دیسک ${s.panel.scan_root}: ${s.disk_scan_root.used_human} / ${s.disk_scan_root.total_human}</div>` : ''}
+          ${s.memory.swap_percent != null ? `<div>Swap: ${s.memory.swap_used_human} (${s.memory.swap_percent}%)</div>` : '<div>Swap: —</div>'}
+          <div>Docker: ${docker} container</div>
+          <div>Worker فعال: ${workers}</div>
+          <div class="full">Agent: ${s.agent.version || 'نصب نیست'} · ${apiWarn}</div>
+          <div class="full">Idle timeout: ${s.panel.idle_hours}h · پروژه‌ها: ${s.panel.project_count}</div>
+        </div>
+        <div class="bar-wrap">
+          ${bar('CPU', s.cpu.percent)}
+          ${bar('RAM', s.memory.percent)}
+          ${bar('Disk', s.disk_root.percent)}
+        </div>`;
+    }
+
+    function bar(label, percent) {
+      const cls = barClass(percent);
+      return `<div class="bar-row"><span class="bar-label">${label}</span><div class="bar"><span class="${cls}" style="width:${percent}%"></span></div><span class="bar-val">${percent}%</span></div>`;
+    }
+
+    function renderFolders(folders) {
+      if (!folders.length) {
+        list.innerHTML = '<p class="loading">پوشه‌ای پیدا نشد</p>';
+        return;
+      }
+      list.innerHTML = folders.map(f => {
+        const btn = f.running
+          ? `<button class="action stop" onclick="stopAgent('${f.name}')">Stop</button>`
+          : `<button class="action start" onclick="startAgent('${f.name}')">Start</button>`;
+        return `<div class="row ${f.running ? 'running' : ''}" data-name="${f.name}">${btn}<div class="meta"><span class="name">${f.name}</span><span class="time">${f.mtime_relative}</span></div><span class="dot ${f.running ? 'on' : ''}"></span></div>`;
+      }).join('');
+    }
+
+    async function refreshAll() {
+      if (busy) return;
+      setMsg('');
+      try {
+        const [sysRes, foldRes] = await Promise.all([
+          apiFetch('/api/system'),
+          apiFetch('/api/folders'),
+        ]);
+        renderSystem(await sysRes.json());
+        renderFolders((await foldRes.json()).folders);
+      } catch (e) {
+        if (e.message !== 'unauthorized') setMsg('خطا در به‌روزرسانی', true);
+      }
+    }
+
+    async function waitReady(name, timeoutMs = 45000) {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const res = await apiFetch('/api/ready/' + encodeURIComponent(name));
+        const data = await res.json();
+        if (!data.running) throw new Error('worker stopped');
+        if (data.ready) return data;
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      throw new Error('timeout');
+    }
+
+    async function startAgent(name) {
+      busy = true;
+      setMsg('در حال استارت ' + name + '…');
+      document.querySelectorAll('button.action').forEach(b => b.disabled = true);
+      try {
+        const res = await apiFetch('/api/start/' + encodeURIComponent(name), { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { setMsg(data.error || 'استارت ناموفق', true); return; }
+        setMsg('در حال اتصال به Cursor…');
+        await refreshAll();
+        try {
+          const ready = await waitReady(name);
+          setMsg('متصل شد — هدایت…');
+          window.location.href = ready.agent_url || data.agent_url;
+        } catch (e) {
+          setMsg('worker بالا آمد؛ اگر خطا دیدی API key را چک کن.', true);
+        }
+      } catch (e) {
+        if (e.message !== 'unauthorized') setMsg('استارت ناموفق', true);
+      } finally {
+        busy = false;
+        document.querySelectorAll('button.action').forEach(b => b.disabled = false);
+        refreshAll();
+      }
+    }
+
+    async function stopAgent(name) {
+      setMsg('در حال توقف ' + name + '…');
+      try {
+        const res = await apiFetch('/api/stop/' + encodeURIComponent(name), { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { setMsg(data.error || 'توقف ناموفق', true); return; }
+        setMsg('متوقف شد');
+        refreshAll();
+      } catch (e) {
+        if (e.message !== 'unauthorized') setMsg('توقف ناموفق', true);
+      }
+    }
+
+    boot();
+  </script>
+</body>
+</html>
