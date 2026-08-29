@@ -66,6 +66,7 @@ STATE_DIR = Path(CFG["state_dir"])
 STATE_FILE = STATE_DIR / "workers.json"
 METRICS_HISTORY: deque = deque(maxlen=1800)
 _CPU_CACHE = {"percent": 0.0, "cores": 1, "at": 0.0}
+_DOCKER_CACHE = {"data": None, "at": 0.0}
 app = Flask(__name__)
 
 
@@ -352,6 +353,9 @@ def agent_version() -> str | None:
 
 
 def docker_stats() -> dict:
+    now = time.time()
+    if _DOCKER_CACHE["data"] is not None and now - _DOCKER_CACHE["at"] < 10:
+        return _DOCKER_CACHE["data"]
     if not shutil.which("docker"):
         return {"available": False}
     try:
@@ -359,46 +363,35 @@ def docker_stats() -> dict:
             ["docker", "ps", "-q"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=4,
             check=False,
         )
         all_ps = subprocess.run(
             ["docker", "ps", "-aq"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=4,
             check=False,
         )
         version = subprocess.run(
             ["docker", "version", "--format", "{{.Server.Version}}"],
             capture_output=True,
             text=True,
-            timeout=5,
-            check=False,
-        )
-        df = subprocess.run(
-            ["docker", "system", "df", "--format", "{{.Type}}|{{.Size}}|{{.Reclaimable}}"],
-            capture_output=True,
-            text=True,
-            timeout=8,
+            timeout=3,
             check=False,
         )
         running_n = len([x for x in running.stdout.splitlines() if x.strip()])
         total_n = len([x for x in all_ps.stdout.splitlines() if x.strip()])
-        storage = []
-        if df.returncode == 0:
-            for line in df.stdout.splitlines():
-                parts = line.split("|")
-                if len(parts) >= 2:
-                    storage.append({"type": parts[0], "size": parts[1], "reclaimable": parts[2] if len(parts) > 2 else ""})
-        return {
+        data = {
             "available": True,
             "version": (version.stdout or "").strip() or None,
             "running": running_n,
             "total": total_n,
             "stopped": max(0, total_n - running_n),
-            "storage": storage,
+            "storage": [],
         }
+        _DOCKER_CACHE.update({"data": data, "at": now})
+        return data
     except (OSError, subprocess.SubprocessError):
         return {"available": True, "running": None, "total": None, "stopped": None, "storage": []}
 
