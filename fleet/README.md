@@ -101,6 +101,8 @@ Docs: [https://developers.cloudflare.com/workers/configuration/routing/custom-do
 
 The fleet polls every 4 seconds. No push or event storage.
 
+**Live updates use SSE** (`GET /api/fleet/stream`) — one long-lived connection per browser tab instead of polling `/api/fleet/snapshot` every few seconds. This saves Cloudflare Worker request quota. The **Refresh** button still uses a one-shot snapshot.
+
 ## Local development
 
 ```bash

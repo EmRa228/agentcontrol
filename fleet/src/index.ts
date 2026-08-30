@@ -116,6 +116,120 @@ function publicServer(s: StoredServer) {
   return { id: s.id, name: s.name, url: s.url, addedAt: s.addedAt };
 }
 
+const STREAM_INTERVAL_MS = 4000;
+const STREAM_HEARTBEAT_MS = 15000;
+
+async function snapshotOneServer(server: StoredServer) {
+  const base = { id: server.id, name: server.name, url: server.url };
+  try {
+    const [sysRes, foldRes] = await Promise.all([
+      proxyAgent(server, "/api/system"),
+      proxyAgent(server, "/api/folders"),
+    ]);
+    if (sysRes.status === 401 || foldRes.status === 401) {
+      return { ...base, online: false, error: "auth failed" };
+    }
+    if (!sysRes.ok || !foldRes.ok) {
+      return {
+        ...base,
+        online: false,
+        error: `HTTP ${sysRes.status}/${foldRes.status}`,
+      };
+    }
+    const system = (await sysRes.json()) as Record<string, unknown>;
+    const foldersPayload = (await foldRes.json()) as { folders?: unknown[] };
+    const folders = foldersPayload.folders || [];
+    const cpu = system.cpu as { percent?: number; load_percent?: number; cores?: number } | undefined;
+    const memory = system.memory as { percent?: number } | undefined;
+    const disk = system.disk_root as { percent?: number } | undefined;
+    const panel = system.panel as { running_workers?: number; project_count?: number } | undefined;
+    return {
+      ...base,
+      online: true,
+      summary: {
+        cpu: cpu?.percent ?? null,
+        load_pct: cpu?.load_percent ?? null,
+        cores: cpu?.cores ?? null,
+        ram: memory?.percent ?? null,
+        disk: disk?.percent ?? null,
+        workers: panel?.running_workers ?? 0,
+        projects: panel?.project_count ?? folders.length,
+      },
+      system,
+      folders,
+    };
+  } catch (e) {
+    return { ...base, online: false, error: String(e) };
+  }
+}
+
+async function buildFleetSnapshot(kv: KVNamespace) {
+  const servers = await readServers(kv);
+  const snapshots = await Promise.all(servers.map(snapshotOneServer));
+  return { servers: snapshots, at: Date.now() };
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("aborted"));
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new Error("aborted"));
+      },
+      { once: true },
+    );
+  });
+}
+
+function fleetStreamResponse(request: Request, env: Env): Response {
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+
+  const pump = async () => {
+    let lastHeartbeat = Date.now();
+    try {
+      while (!request.signal.aborted) {
+        const payload = await buildFleetSnapshot(env.KV);
+        await writer.write(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+
+        const now = Date.now();
+        if (now - lastHeartbeat >= STREAM_HEARTBEAT_MS) {
+          await writer.write(encoder.encode(`: ping ${now}\n\n`));
+          lastHeartbeat = now;
+        }
+
+        await sleep(STREAM_INTERVAL_MS, request.signal);
+      }
+    } catch {
+      // client disconnected or sleep aborted
+    } finally {
+      try {
+        await writer.close();
+      } catch {
+        /* already closed */
+      }
+    }
+  };
+
+  void pump();
+
+  return new Response(readable, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname;
 
@@ -179,54 +293,12 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({ ok: true });
   }
 
+  if (path === "/api/fleet/stream" && request.method === "GET") {
+    return fleetStreamResponse(request, env);
+  }
+
   if (path === "/api/fleet/snapshot" && request.method === "GET") {
-    const servers = await readServers(env.KV);
-    const snapshots = await Promise.all(
-      servers.map(async (server) => {
-        const base = { id: server.id, name: server.name, url: server.url };
-        try {
-          const [sysRes, foldRes] = await Promise.all([
-            proxyAgent(server, "/api/system"),
-            proxyAgent(server, "/api/folders"),
-          ]);
-          if (sysRes.status === 401 || foldRes.status === 401) {
-            return { ...base, online: false, error: "auth failed" };
-          }
-          if (!sysRes.ok || !foldRes.ok) {
-            return {
-              ...base,
-              online: false,
-              error: `HTTP ${sysRes.status}/${foldRes.status}`,
-            };
-          }
-          const system = (await sysRes.json()) as Record<string, unknown>;
-          const foldersPayload = (await foldRes.json()) as { folders?: unknown[] };
-          const folders = foldersPayload.folders || [];
-          const cpu = system.cpu as { percent?: number; load_percent?: number; cores?: number } | undefined;
-          const memory = system.memory as { percent?: number } | undefined;
-          const disk = system.disk_root as { percent?: number } | undefined;
-          const panel = system.panel as { running_workers?: number; project_count?: number } | undefined;
-          return {
-            ...base,
-            online: true,
-            summary: {
-              cpu: cpu?.percent ?? null,
-              load_pct: cpu?.load_percent ?? null,
-              cores: cpu?.cores ?? null,
-              ram: memory?.percent ?? null,
-              disk: disk?.percent ?? null,
-              workers: panel?.running_workers ?? 0,
-              projects: panel?.project_count ?? folders.length,
-            },
-            system,
-            folders,
-          };
-        } catch (e) {
-          return { ...base, online: false, error: String(e) };
-        }
-      }),
-    );
-    return json({ servers: snapshots, at: Date.now() });
+    return json(await buildFleetSnapshot(env.KV));
   }
 
   const startMatch = path.match(/^\/api\/fleet\/([^/]+)\/start\/([^/]+)$/);
