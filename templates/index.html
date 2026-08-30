@@ -172,6 +172,19 @@
       background: var(--card); color: var(--text); font-size: .75rem;
     }
     .xray-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .xray-status-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .xray-pill {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+      font-size: .68rem; border: 1px solid var(--border); background: rgba(255,255,255,.03);
+    }
+    .xray-pill.ok { border-color: rgba(80,200,120,.35); color: var(--green); }
+    .xray-pill.bad { border-color: rgba(255,100,100,.35); color: #ff8f8f; }
+    .xray-pill.warn { border-color: rgba(240,160,96,.35); color: #f0a060; }
+    .xray-log {
+      margin-top: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+      background: rgba(0,0,0,.25); font-family: ui-monospace, monospace; font-size: .62rem;
+      line-height: 1.45; max-height: 180px; overflow: auto; white-space: pre-wrap; color: #c9d3e7;
+    }
     .row.removing { opacity: 0; transform: scale(0.98); transition: opacity .15s, transform .15s; }
     .legend { font-size: .62rem; color: var(--muted); margin-top: 4px; }
     .legend i { display: inline-block; width: 10px; height: 2px; margin-right: 3px; vertical-align: middle; }
@@ -314,8 +327,11 @@
             <button class="btn btn-primary btn-sm" type="button" onclick="saveXrayClient()">Save &amp; apply</button>
             <button class="btn btn-ghost btn-sm" type="button" onclick="testXrayClient()">Test proxy</button>
             <button class="btn btn-ghost btn-sm" type="button" onclick="importXrayClient()">Import from xray</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="refreshXrayStatus(true)">Refresh status</button>
           </div>
+          <div class="xray-status-row" id="xray-pills"></div>
           <div class="api-key-hint" id="xray-status">—</div>
+          <pre class="xray-log hidden" id="xray-log"></pre>
         </div>
       </div>
     </div>
@@ -800,12 +816,70 @@
       lastFoldersJson = '';
     }
 
+    function pill(label, ok, warn) {
+      const cls = ok ? 'ok' : (warn ? 'warn' : 'bad');
+      const dot = ok ? '●' : (warn ? '◐' : '○');
+      return `<span class="xray-pill ${cls}">${dot} ${esc(label)}</span>`;
+    }
+
+    function renderXrayStatus(data) {
+      const settings = data.settings || {};
+      const pills = [];
+      if (!settings.enabled) {
+        pills.push(pill('Direct mode (no proxy)', true, false));
+      } else {
+        pills.push(pill(settings.listening ? `Proxy listening :${settings.proxy_port}` : `Proxy down :${settings.proxy_port}`, settings.listening, false));
+        pills.push(pill(data.xray_active ? 'xray running' : 'xray not running', data.xray_active, false));
+        const api = data.cursor_api_test || data.cursor_test;
+        if (api) {
+          pills.push(pill(api.ok ? `Cursor API OK (${api.elapsed_ms || '?'}ms)` : 'Cursor API failed', api.ok, false));
+        } else if (data.at) {
+          pills.push(pill('No recent proxy test', false, true));
+        }
+      }
+      document.getElementById('xray-pills').innerHTML = pills.join('');
+
+      const parts = [];
+      if (settings.proxy_url) parts.push('Proxy: ' + settings.proxy_url);
+      if (data.at) parts.push('Checked: ' + new Date(data.at).toLocaleString());
+      const api = data.cursor_api_test || data.cursor_test;
+      if (api && !api.ok) parts.push('Error: ' + (api.error || 'test failed'));
+      document.getElementById('xray-status').textContent = parts.join(' · ') || '—';
+      document.getElementById('xray-status').className = 'api-key-hint' + (api && api.ok ? ' ok' : '');
+
+      const logEl = document.getElementById('xray-log');
+      const chunks = [];
+      if (data.worker_errors && data.worker_errors.length) {
+        chunks.push('Recent worker errors:');
+        data.worker_errors.forEach(item => {
+          chunks.push(`\n[${item.project}]\n${item.tail}`);
+        });
+      }
+      if (data.journal_tail) {
+        chunks.push('\nxray journal (tail):\n' + data.journal_tail);
+      }
+      if (chunks.length) {
+        logEl.textContent = chunks.join('\n').trim();
+        logEl.classList.remove('hidden');
+      } else {
+        logEl.classList.add('hidden');
+      }
+    }
+
+    async function refreshXrayStatus(live) {
+      try {
+        const res = await apiFetch('/api/xray/status' + (live ? '?live=1' : ''));
+        const data = await res.json();
+        if (data.settings) fillXrayForm(data.settings);
+        renderXrayStatus(data);
+      } catch (e) {}
+    }
+
     async function loadSettingsPanel() {
       try {
-        const [settingsRes, modelsRes, xrayRes] = await Promise.all([
+        const [settingsRes, modelsRes] = await Promise.all([
           apiFetch('/api/settings'),
           apiFetch('/api/models'),
-          apiFetch('/api/xray/client'),
         ]);
         const settings = await settingsRes.json();
         const select = document.getElementById('settings-model');
@@ -818,9 +892,7 @@
         document.getElementById('settings-model-status').textContent = settings.default_model
           ? 'Default model: ' + settings.default_model
           : 'No default model — Cursor will use its own default.';
-        const xray = await xrayRes.json();
-        fillXrayForm(xray.settings || {});
-        updateXrayStatus(xray.settings || {}, xray.test || null);
+        await refreshXrayStatus(false);
       } catch (e) {}
     }
 
@@ -854,15 +926,7 @@
     }
 
     function updateXrayStatus(settings, test) {
-      const el = document.getElementById('xray-status');
-      const parts = [];
-      if (settings.proxy_url) parts.push('Proxy: ' + settings.proxy_url);
-      parts.push(settings.listening ? 'Listening' : 'Not listening');
-      if (test) {
-        parts.push(test.ok ? ('Test OK ' + (test.elapsed_ms || '') + 'ms') : ('Test failed: ' + (test.error || 'unknown')));
-      }
-      el.textContent = parts.join(' · ');
-      el.className = 'api-key-hint' + ((test && test.ok) || settings.listening ? ' ok' : '');
+      renderXrayStatus({ settings, cursor_test: test, listening: settings.listening, xray_active: settings.xray_active });
     }
 
     async function saveXrayClient() {
@@ -875,8 +939,8 @@
         });
         const data = await res.json();
         if (!res.ok) { status.textContent = data.error || 'Save failed'; status.className = 'api-key-hint'; return; }
-        fillXrayForm(data.settings || {});
-        updateXrayStatus(data.settings || {}, data.test || null);
+        if (data.settings) fillXrayForm(data.settings);
+        renderXrayStatus(data.status || data);
         status.textContent = 'Saved and applied' + (data.restarted ? ' (xray restarted)' : '');
         status.className = 'api-key-hint ok';
       } catch (e) {
@@ -887,7 +951,7 @@
 
     async function testXrayClient() {
       const status = document.getElementById('xray-status');
-      status.textContent = 'Testing proxy…';
+      status.textContent = 'Testing proxy (cursor.com + api2.cursor.sh)…';
       try {
         const res = await apiFetch('/api/xray/client/test', {
           method: 'POST',
@@ -895,7 +959,7 @@
           body: JSON.stringify(xrayPayload()),
         });
         const data = await res.json();
-        updateXrayStatus({ proxy_url: data.proxy, listening: true }, data);
+        renderXrayStatus(data.status || data);
       } catch (e) {
         status.textContent = 'Test failed';
         status.className = 'api-key-hint';

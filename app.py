@@ -27,9 +27,11 @@ from flask import Flask, jsonify, render_template, request
 
 from xray_client import (
     apply_client_settings,
+    build_status_report,
     import_from_xray_config,
     load_client_settings,
     public_settings,
+    test_cursor_api,
     test_proxy,
 )
 
@@ -1143,12 +1145,15 @@ def api_settings_model():
 @app.get("/api/xray/client")
 def api_xray_client_get():
     settings = load_client_settings()
-    return jsonify(
-        {
-            "settings": public_settings(settings),
-            "test": test_proxy(settings) if settings.get("enabled") else None,
-        }
-    )
+    live = request.args.get("live") == "1"
+    return jsonify(build_status_report(settings, live_test=live))
+
+
+@app.get("/api/xray/status")
+def api_xray_status():
+    settings = load_client_settings()
+    live = request.args.get("live") == "1"
+    return jsonify(build_status_report(settings, live_test=live))
 
 
 @app.post("/api/xray/client")
@@ -1196,7 +1201,31 @@ def api_xray_client_import():
 def api_xray_client_test():
     data = request.get_json(silent=True) or {}
     settings = {**load_client_settings(), **data} if data else load_client_settings()
-    return jsonify(test_proxy(settings))
+    cursor_test = test_proxy(settings)
+    cursor_api_test = test_cursor_api(settings)
+    return jsonify(
+        {
+            "cursor_test": cursor_test,
+            "cursor_api_test": cursor_api_test,
+            "status": build_status_report(settings),
+        }
+    )
+
+
+@app.get("/api/fleet/bundle")
+def api_fleet_bundle():
+    folders = list_folders()
+    for item in folders:
+        if item["running"]:
+            item["ready"] = worker_ready(item["name"])
+    return jsonify(
+        {
+            "system": collect_system_info(),
+            "folders": folders,
+            "history": list(METRICS_HISTORY),
+            "scan_root": CFG["scan_root"],
+        }
+    )
 
 
 @app.get("/api/folders")

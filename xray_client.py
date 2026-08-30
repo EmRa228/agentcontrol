@@ -17,6 +17,7 @@ import yaml
 
 DEFAULT_XRAY_CONFIG = Path("/usr/local/etc/xray/config.json")
 DEFAULT_CLIENT_FILE = Path("/etc/agentcontrol/xray-client.yaml")
+STATUS_FILE = Path(os.environ.get("XRAY_STATUS_FILE", "/var/lib/agentcontrol/xray-status.json"))
 INBOUND_TAG = "agentcontrol-http-in"
 OUTBOUND_TAG = "reality-out"
 DEFAULT_PROXY_PORT = 30229
@@ -308,7 +309,7 @@ def test_proxy(settings: dict[str, Any] | None = None, url: str = "https://curso
         opener = build_opener(ProxyHandler({"http": proxy, "https": proxy}))
         with opener.open(url, timeout=20) as response:
             elapsed_ms = int((time.time() - started) * 1000)
-            return {
+            result = {
                 "ok": True,
                 "status": response.status,
                 "url": url,
@@ -316,12 +317,157 @@ def test_proxy(settings: dict[str, Any] | None = None, url: str = "https://curso
                 "elapsed_ms": elapsed_ms,
             }
     except URLError as exc:
-        return {
+        result = {
             "ok": False,
             "url": url,
             "proxy": proxy,
             "error": str(exc.reason if hasattr(exc, "reason") else exc),
         }
+    record_status(merged, cursor_test=result)
+    return result
+
+
+def xray_service_active() -> bool:
+    for cmd in (
+        ["systemctl", "is-active", "--quiet", "xray"],
+        ["pgrep", "-x", "xray"],
+    ):
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=5, check=False)
+            if result.returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return False
+
+
+def read_xray_journal_tail(lines: int = 25) -> str:
+    commands = [
+        ["journalctl", "-u", "xray", "-n", str(lines), "--no-pager"],
+        [
+            "nsenter",
+            "-t",
+            "1",
+            "-m",
+            "-u",
+            "-i",
+            "-n",
+            "-p",
+            "journalctl",
+            "-u",
+            "xray",
+            "-n",
+            str(lines),
+            "--no-pager",
+        ],
+    ]
+    for cmd in commands:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=False)
+            if result.returncode == 0 and (result.stdout or "").strip():
+                return result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return ""
+
+
+def record_status(
+    settings: dict[str, Any] | None,
+    *,
+    cursor_test: dict[str, Any] | None = None,
+    cursor_api_test: dict[str, Any] | None = None,
+    restart_ok: bool | None = None,
+    restart_detail: str = "",
+) -> dict[str, Any]:
+    merged = _merge_settings(settings or load_client_settings())
+    listening = proxy_listening(merged)
+    status = load_status()
+    status.update(
+        {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "enabled": merged.get("enabled", True),
+            "proxy_url": proxy_url(merged),
+            "listening": listening,
+            "xray_active": xray_service_active(),
+        }
+    )
+    if cursor_test is not None:
+        status["cursor_test"] = cursor_test
+    if cursor_api_test is not None:
+        status["cursor_api_test"] = cursor_api_test
+    if restart_ok is not None:
+        status["restart_ok"] = restart_ok
+        status["restart_detail"] = restart_detail
+    STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATUS_FILE.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+    return status
+
+
+def load_status() -> dict[str, Any]:
+    if STATUS_FILE.is_file():
+        try:
+            return json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    merged = load_client_settings()
+    return {
+        "at": None,
+        "enabled": merged.get("enabled", True),
+        "proxy_url": proxy_url(merged),
+        "listening": proxy_listening(merged),
+        "xray_active": xray_service_active(),
+        "cursor_test": None,
+        "cursor_api_test": None,
+    }
+
+
+def test_cursor_api(settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Test the same host agent workers use (api2.cursor.sh)."""
+    return test_proxy(settings, url="https://api2.cursor.sh")
+
+
+def build_status_report(settings: dict[str, Any] | None = None, *, live_test: bool = False) -> dict[str, Any]:
+    merged = _merge_settings(settings or load_client_settings())
+    status = load_status()
+    status["settings"] = public_settings(merged)
+    status["listening"] = proxy_listening(merged)
+    status["xray_active"] = xray_service_active()
+    status["proxy_url"] = proxy_url(merged)
+    status["journal_tail"] = read_xray_journal_tail()
+    status["worker_errors"] = recent_worker_errors()
+    if live_test and merged.get("enabled"):
+        status["cursor_test"] = test_proxy(merged)
+        status["cursor_api_test"] = test_cursor_api(merged)
+    return status
+
+
+def recent_worker_errors(limit: int = 5) -> list[dict[str, str]]:
+    state_dir = Path(os.environ.get("STATE_DIR", "/var/lib/agentcontrol"))
+    errors: list[dict[str, str]] = []
+    if not state_dir.is_dir():
+        return errors
+    markers = ("failed to reach", "error", "✗", "proxy", "unauthorized", "denied")
+    for log_file in sorted(state_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            text = log_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        tail = text[-4000:]
+        hit_lines = [
+            line.strip()
+            for line in tail.splitlines()
+            if line.strip() and any(marker in line.lower() for marker in markers)
+        ]
+        if hit_lines:
+            errors.append(
+                {
+                    "project": log_file.stem,
+                    "tail": "\n".join(hit_lines[-8:]),
+                }
+            )
+        if len(errors) >= limit:
+            break
+    return errors
 
 
 def apply_client_settings(
@@ -346,7 +492,16 @@ def apply_client_settings(
         write_runtime_env(applied["proxy_url"])
 
     listening = proxy_listening(merged)
-    test = test_proxy(merged) if listening else {"ok": False, "error": "proxy port not listening"}
+    cursor_test = test_proxy(merged) if listening else {"ok": False, "error": "proxy port not listening"}
+    cursor_api_test = test_cursor_api(merged) if listening else {"ok": False, "error": "proxy port not listening"}
+
+    record_status(
+        merged,
+        cursor_test=cursor_test,
+        cursor_api_test=cursor_api_test,
+        restart_ok=restarted,
+        restart_detail=restart_detail,
+    )
 
     return {
         "ok": True,
@@ -355,8 +510,10 @@ def apply_client_settings(
         "restarted": restarted,
         "restart_detail": restart_detail,
         "listening": listening,
-        "test": test,
+        "test": cursor_test,
+        "cursor_api_test": cursor_api_test,
         "settings": public_settings(merged),
+        "status": build_status_report(merged),
     }
 
 

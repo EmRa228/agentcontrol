@@ -118,28 +118,30 @@ function publicServer(s: StoredServer) {
 
 const STREAM_INTERVAL_MS = 4000;
 const STREAM_HEARTBEAT_MS = 15000;
+/** Cloudflare Workers cap subrequests per invocation; SSE stays open so reconnect before the limit. */
+const STREAM_MAX_TICKS = 18;
 
 async function snapshotOneServer(server: StoredServer) {
   const base = { id: server.id, name: server.name, url: server.url };
   try {
-    const [sysRes, foldRes, histRes] = await Promise.all([
-      proxyAgent(server, "/api/system"),
-      proxyAgent(server, "/api/folders"),
-      proxyAgent(server, "/api/system/history"),
-    ]);
-    if (sysRes.status === 401 || foldRes.status === 401) {
+    const bundleRes = await proxyAgent(server, "/api/fleet/bundle");
+    if (bundleRes.status === 401) {
       return { ...base, online: false, error: "auth failed" };
     }
-    if (!sysRes.ok || !foldRes.ok) {
+    if (!bundleRes.ok) {
       return {
         ...base,
         online: false,
-        error: `HTTP ${sysRes.status}/${foldRes.status}`,
+        error: `HTTP ${bundleRes.status}`,
       };
     }
-    const system = (await sysRes.json()) as Record<string, unknown>;
-    const foldersPayload = (await foldRes.json()) as { folders?: unknown[] };
-    const folders = foldersPayload.folders || [];
+    const bundle = (await bundleRes.json()) as {
+      system?: Record<string, unknown>;
+      folders?: unknown[];
+      history?: unknown[];
+    };
+    const system = bundle.system || {};
+    const folders = bundle.folders || [];
     const cpu = system.cpu as { percent?: number; load_percent?: number; cores?: number } | undefined;
     const memory = system.memory as {
       percent?: number;
@@ -148,7 +150,6 @@ async function snapshotOneServer(server: StoredServer) {
     } | undefined;
     const disk = system.disk_root as { percent?: number } | undefined;
     const panel = system.panel as { running_workers?: number; project_count?: number } | undefined;
-    const histPayload = histRes.ok ? ((await histRes.json()) as { points?: unknown[] }) : { points: [] };
     return {
       ...base,
       online: true,
@@ -164,7 +165,7 @@ async function snapshotOneServer(server: StoredServer) {
       },
       system,
       folders,
-      history: histPayload.points || [],
+      history: bundle.history || [],
     };
   } catch (e) {
     return { ...base, online: false, error: String(e) };
@@ -202,15 +203,22 @@ function fleetStreamResponse(request: Request, env: Env): Response {
 
   const pump = async () => {
     let lastHeartbeat = Date.now();
+    let tickCount = 0;
     try {
       while (!request.signal.aborted) {
         const payload = await buildFleetSnapshot(env.KV);
         await writer.write(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        tickCount += 1;
 
         const now = Date.now();
         if (now - lastHeartbeat >= STREAM_HEARTBEAT_MS) {
           await writer.write(encoder.encode(`: ping ${now}\n\n`));
           lastHeartbeat = now;
+        }
+
+        if (tickCount >= STREAM_MAX_TICKS) {
+          await writer.write(encoder.encode(`: reconnect ${now}\n\n`));
+          break;
         }
 
         await sleep(STREAM_INTERVAL_MS, request.signal);
