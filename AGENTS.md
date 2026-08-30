@@ -8,50 +8,71 @@ Token-efficient context for AI agents. Prefer this file over re-reading `README.
 
 ## Product
 
-**AgentControl** is a lightweight web panel to **start/stop Cursor Cloud Agent workers** on Linux servers.
+**AgentControl** is a lightweight Linux web panel that **starts/stops Cursor Cloud Agent workers** (`agent worker`) per project folder. Optional **Fleet** dashboard (Cloudflare Workers) aggregates many servers into one UI.
 
-- Lists project folders under a configurable root (default `/root`).
-- **Start** → runs `agent worker` as `agentcontrol-<folder>`; opens `cursor.com/agents#workerId=...`.
-- **Stop** → terminates the worker process group.
-- Server stats: CPU, RAM, disk, swap, network, Docker containers, active workers.
+| Component | Stack | Runs on |
+|-----------|-------|---------|
+| Single-server panel | Python 3.10+ Flask, vanilla HTML/JS | Each Linux VPS (**Docker** default, or legacy systemd) |
+| Fleet dashboard | Cloudflare Workers (TypeScript), KV, static `public/` | Cloudflare edge |
+
+- Lists project folders under `scan_root` (default `/root`).
+- **Start** → `agent worker` as `agentcontrol-<folder>`; opens `cursor.com/agents#workerId=...`.
+- **Stop** → terminates worker process group.
+- Server stats: CPU, RAM, disk, swap, network, Docker, active workers.
 - Stable worker ID per folder (deterministic UUID v5).
 - Auto idle-release after **12 hours** (`idle_release_seconds`, default `43200`).
-- **Per-server panel password** — stored in browser `localStorage`; server copy in `/etc/agentcontrol/auth-password`.
-- **Cursor API key** optional at install; can be set later in dashboard Settings.
-- **xray client config** — VLESS+Reality upstream + local HTTP inbound for restricted networks (Iran, etc.).
+- **Panel password** — `/etc/agentcontrol/auth-password`; browser `localStorage`.
+- **Cursor API key** optional at install; required to start workers (dashboard Settings).
+- **xray client** — VLESS+Reality upstream + local HTTP inbound for restricted networks (Iran, etc.).
 
-Repo: `https://github.com/EmRa228/agentcontrol`  
-Default install path: `/opt/agentcontrol`
+**Repo:** https://github.com/EmRa228/agentcontrol  
+**Default install path:** `/opt/agentcontrol`  
+**Default panel port:** `30228`
 
 ---
 
 ## Architecture
 
 ```
-Phone/Browser → Flask panel :30228
-                    │
-                    ├─► agent CLI (`agent worker`) per project folder
-                    │       └─► cursor.com (via HTTP_PROXY when xray enabled)
-                    │
-Host xray (:30229 HTTP inbound) ─► VLESS+Reality outbound ─► upstream proxy server
+Browser → Flask panel :30228
+            ├─ GET /api/system, /api/folders, …
+            └─ POST /api/start|stop/<name> → agent worker
+                    └─► cursor.com (via HTTP_PROXY when xray enabled)
+
+Host xray (127.0.0.1:30229 HTTP inbound) ─► VLESS+Reality outbound ─► upstream proxy
 ```
 
 | Runtime | Role |
 |---|---|
 | **Docker** (default) | `agentcontrol` container: Flask + agent CLI; `network_mode: host`, `pid: host` |
-| **Host xray** | Local HTTP proxy (`127.0.0.1:30229` default) + upstream outbound |
-| **Legacy systemd** | `agentcontrol.service` → venv + `app.py` (no Docker) |
+| **Host xray** | Local HTTP proxy (default `127.0.0.1:30229`) + upstream outbound |
+| **Legacy systemd** | `agentcontrol.service` → venv + `app.py` |
 
-**Default install is Docker**, not systemd. Container mounts:
+**Default install is Docker.** Container mounts: `${SCAN_ROOT}`, `/etc/agentcontrol`, `/var/lib/agentcontrol`, `/usr/local/etc/xray`.
 
-- `${SCAN_ROOT}` (default `/root`) — project folders for workers
-- `/etc/agentcontrol` — config, secrets, xray client yaml, runtime env
-- `/var/lib/agentcontrol` — worker state, logs
-- `/usr/local/etc/xray` — host xray `config.json` (read/write for apply)
+Docker **build** is direct (Debian/PyPI). **Proxy applies at runtime** via `/etc/agentcontrol/env`.
 
-Docker build uses **direct** network (Debian/PyPI). **Proxy applies at runtime** via `/etc/agentcontrol/env` (`HTTP_PROXY`/`HTTPS_PROXY`).
+**Worker details:**
 
-Worker management ports: `127.0.0.1:32000–32800` (hash of folder name).
+- **Worker ID:** `uuid.uuid5(WORKER_NAMESPACE, f"agentcontrol:{folder}")` — **never change** `WORKER_NAMESPACE`.
+- **Worker name in Cursor:** `agentcontrol-<folder>`.
+- **Redirect URL:** `https://cursor.com/agents#workerId={id}` (optional `?model=` from `default_model`).
+- **Management ports:** `127.0.0.1:32000–32800` (hash of folder name).
+- **Hide project:** `.agentcontrol-ignore` in folder; POST `/api/hide/<name>`.
+- **Metrics history:** in-memory `deque` (max 1800 points, ~2s refresh → ~1h). Fields: `cpu`, `load_pct`, `ram`, `disk`, `swap`, `net`, `docker_running`.
+
+### Fleet
+
+```
+Browser → Worker (*.workers.dev or custom domain)
+            ├─ KV: server list { id, name, url, password }
+            ├─ GET /api/fleet/stream  → SSE snapshot every 4s
+            └─ proxy → each server /api/* with X-AgentControl-Auth
+```
+
+**Critical:** Cloudflare Workers **cannot fetch raw IP addresses** (error 1003). Fleet URLs must use a **hostname** with grey-cloud DNS A record, e.g. `http://ac-tg-uk.example.com:30228`.
+
+**Do not change `fleet/`** unless explicitly asked.
 
 ---
 
@@ -74,19 +95,29 @@ sudo LEGACY_INSTALL=1 /opt/agentcontrol/bootstrap.sh
 cd /opt/agentcontrol
 docker compose ps
 docker compose logs -f
+docker compose up -d --build    # after app/template changes
 docker compose restart
 curl -sS http://127.0.0.1:30228/health
 ```
 
-After meaningful changes:
+Open firewall: `30228/tcp`.
 
 | If you changed… | Command |
 |---|---|
-| `app.py`, `templates/`, `xray_client.py`, `Dockerfile` | `cd /opt/agentcontrol && docker compose up -d --build` |
-| `install-wizard.sh`, `scripts/*` only | rerun `./install-wizard.sh` or `./bootstrap.sh` |
+| `app.py`, `templates/`, `xray_client.py`, `Dockerfile` | `docker compose up -d --build` |
+| `install-wizard.sh`, `scripts/*` only | rerun `./bootstrap.sh` |
 | `/etc/agentcontrol/xray-client.yaml` manually | `python3 scripts/apply-xray-client.py` |
 
-Panel URL: `http://SERVER_IP:30228`
+### Fleet deploy
+
+```bash
+cd fleet
+npm install
+npx wrangler login
+npx wrangler kv namespace create KV   # paste id into wrangler.jsonc
+npx wrangler secret put FLEET_PASSWORD
+npm run deploy
+```
 
 ---
 
@@ -103,26 +134,40 @@ Called by `bootstrap.sh` unless `LEGACY_INSTALL=1`.
 | Cursor API key | optional | `CURSOR_API_KEY` or dashboard later |
 | Panel password | optional | `PANEL_PASSWORD` or dashboard later |
 
-xray client env (non-interactive): `XRAY_ADDRESS`, `XRAY_PORT`, `XRAY_UUID`, `XRAY_SERVER_NAME`, `XRAY_PUBLIC_KEY`, `XRAY_SHORT_ID`, `XRAY_FINGERPRINT`, `XRAY_FLOW`.
+xray env (non-interactive): `XRAY_ADDRESS`, `XRAY_PORT`, `XRAY_UUID`, `XRAY_SERVER_NAME`, `XRAY_PUBLIC_KEY`, `XRAY_SHORT_ID`, `XRAY_FINGERPRINT`, `XRAY_FLOW`.
 
 ---
 
-## Configuration files
+## Configuration
+
+### Runtime paths (not in git)
 
 | Path | Purpose |
-|---|---|
-| `/etc/agentcontrol/config.yaml` | Panel: port, scan_root, idle timeout, agent_bin, default_model |
+|------|---------|
+| `/opt/agentcontrol` | App install dir |
+| `/etc/agentcontrol/config.yaml` | Panel config |
 | `/etc/agentcontrol/api-key` | Cursor personal API key |
 | `/etc/agentcontrol/auth-password` | Panel password |
 | `/etc/agentcontrol/env` | Runtime `HTTP_PROXY` for container + workers |
-| `/etc/agentcontrol/xray-client.yaml` | Canonical xray client settings (AgentControl-managed) |
-| `/usr/local/etc/xray/config.json` | Host xray config (inbound + outbound applied here) |
-| `/var/lib/agentcontrol/workers.json` | Running worker PIDs/state |
+| `/etc/agentcontrol/xray-client.yaml` | Canonical xray client settings |
+| `/usr/local/etc/xray/config.json` | Host xray (inbound + outbound applied here) |
+| `/var/lib/agentcontrol/workers.json` | Worker PIDs/state |
 | `/var/lib/agentcontrol/<folder>.log` | Per-worker logs |
 
-`config.example.yaml` keys: `port` (30228), `scan_root`, `idle_release_seconds`, `api_key_file`, `auth_password_file`, `state_dir`, `exclude_prefixes`, `exclude_dirs`, `default_model`, `agent_bin`.
+### `config.yaml` keys
 
-Hide a project from the list: create `.agentcontrol-ignore` in the folder (or POST `/api/hide/<name>`).
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `port` | `30228` | Flask listen port |
+| `scan_root` | `/root` | Project folders root |
+| `idle_release_seconds` | `43200` | Auto-stop idle workers |
+| `api_key_file` | `/etc/agentcontrol/api-key` | Cursor API key |
+| `auth_password_file` | `/etc/agentcontrol/auth-password` | Panel password |
+| `state_dir` | `/var/lib/agentcontrol` | PIDs, logs, state JSON |
+| `default_model` | `""` | Appended to Cursor redirect URL |
+| `agent_bin` | `""` | Path to `agent` CLI (auto-detected) |
+| `exclude_prefixes` | `["."]` | Skip dirs starting with these |
+| `exclude_dirs` | `[...]` | Exact dir names to skip |
 
 ---
 
@@ -131,144 +176,208 @@ Hide a project from the list: create `.agentcontrol-ignore` in the folder (or PO
 Manages **upstream VLESS+Reality outbound** + **local HTTP inbound** (`agentcontrol-http-in`).
 
 - Canonical store: `/etc/agentcontrol/xray-client.yaml`
-- Applies to host `/usr/local/etc/xray/config.json` (outbound tag default `reality-out`)
-- Restarts xray via `systemctl` or `nsenter` (container needs `cap_add: SYS_ADMIN`, `pid: host`)
+- Applies to `/usr/local/etc/xray/config.json` (outbound tag default `reality-out`)
+- Restarts xray via `systemctl` or `nsenter` (container: `cap_add: SYS_ADMIN`, `pid: host`)
 - Writes `/etc/agentcontrol/env` with `http://127.0.0.1:<proxy_port>`
 
-CLI:
-
 ```bash
-python3 scripts/apply-xray-client.py --import   # import from xray config.json
+python3 scripts/apply-xray-client.py --import
 python3 scripts/apply-xray-client.py --show
 python3 scripts/apply-xray-client.py --test
-python3 scripts/apply-xray-client.py            # apply saved settings
+python3 scripts/apply-xray-client.py
 ```
 
-UI: panel → server section → **xray client (proxy)** — edit, Save & apply, Test, Import.
-
+UI: panel → server section → **xray client (proxy)** — edit, Save & apply, Test, Import.  
 Env overrides: `XRAY_CONFIG`, `XRAY_CLIENT_FILE`.
 
 ---
 
-## Request flows
+## Authentication
 
-### Start worker
+| Layer | Header / storage | Notes |
+|-------|------------------|-------|
+| Panel | `X-AgentControl-Auth: <password>` | or `Authorization: Bearer`; `localStorage` key `agentcontrol_auth_<host>` |
+| Fleet | `X-Fleet-Password: <secret>` | Wrangler secret `FLEET_PASSWORD`; `sessionStorage` |
+| Fleet → server | `X-AgentControl-Auth` | Per-server password in KV (never returned to browser) |
 
-1. POST `/api/start/<folder>` (auth required).
-2. `start_worker()` → `agent worker --worker-dir <path> --name agentcontrol-<folder> ... start`.
-3. Env includes `CURSOR_API_KEY`, `CURSOR_AGENT_WORKER_ID`, optional `CURSOR_MODEL`, and `HTTP_PROXY` from container env.
-4. Ready probe: tail log for `connected`/`ready` markers; GET `/api/ready/<name>`.
-
-### First visit / setup
-
-Open endpoints: `/`, `/health`, `/api/auth/*`, `/api/setup/*` (password always; api-key only when not yet configured).
-
-Dashboard setup gate: panel password (required) → Cursor API key (optional at install, required to start workers).
-
-### Auth
-
-Header: `X-AgentControl-Auth: <password>` or `Authorization: Bearer <password>`.
+First visit: `/api/setup/password` and `/api/setup/api-key` when files missing.
 
 ---
 
-## API (panel)
+## API (single server)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/` | no | Panel HTML |
+| GET | `/health` | no | `{ ok: true }` |
+| POST | `/api/auth/login` | no | Validate password |
+| GET | `/api/auth/status` | no | Auth + setup flags |
+| GET | `/api/setup/status` | no | Needs password / API key |
+| POST | `/api/setup/password` | no | First-time password |
+| POST | `/api/setup/api-key` | no if unset; else yes | API key |
+| GET | `/api/system` | yes | Full system snapshot |
+| GET | `/api/system/history` | yes | `{ points: [...] }` |
+| GET | `/api/folders` | yes | Projects (mtime desc) |
+| GET | `/api/models` | yes | `agent --list-models` |
+| GET | `/api/settings` | yes | `default_model`, etc. |
+| POST | `/api/settings/model` | yes | Save default model |
+| GET | `/api/xray/client` | yes | xray client settings + test |
+| POST | `/api/xray/client` | yes | Save & apply xray |
+| POST | `/api/xray/client/import` | yes | Import from xray config |
+| POST | `/api/xray/client/test` | yes | Test HTTP proxy |
+| POST | `/api/start/<name>` | yes | Start worker |
+| POST | `/api/stop/<name>` | yes | Stop worker |
+| GET | `/api/ready/<name>` | yes | Running + cloud ready |
+| POST | `/api/hide/<name>` | yes | `.agentcontrol-ignore` |
+| GET | `/api/status` | yes | Legacy summary |
+
+## API (Fleet Worker)
 
 | Method | Path | Auth |
-|---|---|---|
-| GET | `/health` | no |
-| GET | `/` | no |
-| POST | `/api/auth/login` | no |
-| GET | `/api/auth/status` | no |
-| GET | `/api/setup/status` | no |
-| POST | `/api/setup/password` | no (first-time only) |
-| POST | `/api/setup/api-key` | no if unset; else yes |
-| GET | `/api/system` | yes |
-| GET | `/api/system/history` | yes |
-| GET | `/api/folders` | yes |
-| POST | `/api/start/<name>` | yes |
-| POST | `/api/stop/<name>` | yes |
-| POST | `/api/hide/<name>` | yes |
-| GET | `/api/ready/<name>` | yes |
-| GET | `/api/status` | yes |
-| GET | `/api/models` | yes |
-| GET | `/api/settings` | yes |
-| POST | `/api/settings/model` | yes |
-| GET | `/api/xray/client` | yes |
-| POST | `/api/xray/client` | yes |
-| POST | `/api/xray/client/import` | yes |
-| POST | `/api/xray/client/test` | yes |
+|--------|------|------|
+| POST | `/api/login` | body `{ password }` |
+| GET | `/api/servers` | Fleet password |
+| POST | `/api/servers` | Add server (probes `/api/system`) |
+| DELETE | `/api/servers/<id>` | Remove server |
+| GET | `/api/fleet/stream` | SSE live snapshots |
+| GET | `/api/fleet/snapshot` | One-shot snapshot |
+| POST | `/api/fleet/<serverId>/start\|stop/<project>` | Proxy |
+| GET | `/api/fleet/<serverId>/ready/<project>` | Proxy |
 
 ---
 
 ## Repo map
 
 ```
-/opt/agentcontrol
+agentcontrol/
 ├── AGENTS.md              ← this file
-├── README.md              ← human install docs
-├── bootstrap.sh           ← idempotent entry: git pull → install-wizard (or legacy install.sh)
+├── README.md              ← human install docs (EN + FA snippet)
+├── bootstrap.sh           ← idempotent: git pull → install-wizard (or legacy install.sh)
 ├── install-wizard.sh      ← Docker + xray wizard
 ├── install.sh             ← legacy systemd install
-├── app.py                 ← Flask app + worker control
+├── app.py                 ← Flask backend + worker lifecycle
 ├── xray_client.py         ← xray client apply/import/test
 ├── config.example.yaml
 ├── Dockerfile
 ├── docker-compose.yml
 ├── docker/entrypoint.sh
 ├── agentcontrol.service   ← legacy systemd unit
-├── templates/index.html   ← single-page panel UI
+├── templates/index.html   ← single-server UI
 ├── scripts/
 │   ├── apply-xray-client.py
-│   └── setup-xray-proxy.sh  ← thin wrapper (legacy)
-└── fleet/                 ← Cloudflare Workers multi-server dashboard (separate deploy)
+│   └── setup-xray-proxy.sh
+└── fleet/
+    ├── src/index.ts       # Worker: proxy API, SSE, KV
+    ├── public/index.html  # Fleet UI
+    ├── wrangler.jsonc
+    └── README.md
 ```
 
 ---
 
-## Fleet (Cloudflare Workers)
+## UI conventions
 
-Optional multi-server dashboard in `fleet/`. **Do not change** unless explicitly asked.
+### Single-server (`templates/index.html`)
 
-- Deploy: `cd fleet && npm install && wrangler login` → KV → `FLEET_PASSWORD` → `npm run deploy`
-- Workers cannot `fetch()` raw IPs — use DNS hostname (grey cloud) + port `30228`
-- See `fleet/README.md`
+- Dark theme CSS variables: `--bg`, `--card`, `--accent`, etc.
+- Auto-refresh every **2s**; pauses when modals open (`modalOpen`, `busy`).
+- Event delegation on `#list` for Start/Stop.
+- Sparklines: CPU (load overlay), RAM, Disk, Network; swap on RAM card + detail grid.
+- Docker: compose groups with CPU/RAM bars (`docker.groups` from backend).
+- Long-press / right-click → hide project.
+- **xray client** form in server settings section.
+
+### Fleet (`fleet/public/index.html`)
+
+- Live updates via **SSE** (`/api/fleet/stream`), not polling.
+- Server cards: 4 metrics; **2×2 grid mobile**, 4 columns desktop.
+- **Quick agents:** top 3 folders by mtime as chips on card header.
+- **Server sort:** `localStorage` `agentcontrol_fleet_recent` — recent servers float up.
+- Avoid `minmax(130px)` grids that cause horizontal scroll on mobile.
 
 ---
 
-## Coding conventions for agents
+## Backend conventions
 
-- Keep logic in `app.py` / `xray_client.py`; bash only for install/bootstrap.
-- Default path: **Docker + wizard**; preserve `LEGACY_INSTALL=1` systemd path.
-- xray: edit via `xray_client.py` API/CLI — do not hand-edit `config.json` without backup.
-- Never log or commit secrets from `/etc/agentcontrol/`.
-- Panel copy: English in code/templates; README has short Persian section.
-- Worker spawn must inherit proxy env from `os.environ` (already in `start_worker`).
-- After app/template changes on a live server: `docker compose up -d --build` from `/opt/agentcontrol`.
-- `fleet/` is out of scope unless the task says otherwise.
+- **Python:** stdlib-first; minimal deps (`flask`, `pyyaml`); no ORM.
+- **Config:** `CONFIG_SEARCH` chain; `save_config_patch()` for runtime updates.
+- **Docker stats:** `docker stats` + `docker inspect` labels; grouped by compose project.
+- **Do not change** `WORKER_NAMESPACE`.
+- **Workers:** inherit `os.environ` including `HTTP_PROXY` in `start_worker()`.
+- **xray:** edit via `xray_client.py` — backups created on apply.
+- Default deploy path: **Docker + wizard**; keep `LEGACY_INSTALL=1` systemd path.
+
+### Adding API fields
+
+1. Add to `collect_system_info()` / `record_metrics()` in `app.py`.
+2. Update `templates/index.html` `renderSystem()` if panel should show it.
+3. Fleet: `snapshotOneServer()` forwards full `system` + `history`; update Fleet UI only unless summary shortcuts needed.
+
+---
+
+## Local development
+
+```bash
+cd agentcontrol
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp config.example.yaml config.yaml
+python app.py
+```
+
+Fleet: `cd fleet && npm run dev` (usually `http://localhost:8787`).
+
+---
+
+## Testing checklist
+
+1. **Panel:** `curl -H "X-AgentControl-Auth: pass" http://127.0.0.1:30228/api/system`
+2. **Panel UI:** login, metrics, start/stop, hide, xray save/test, Docker expand.
+3. **Docker:** `docker compose up -d --build`; `/health` OK; proxy env in container.
+4. **Fleet:** hostname URL only; SSE live; quick agents; mobile layout.
+5. **Restart:** workers reconcile via `reconcile_state()`.
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
-|---|---|
-| `pip`/PyPI timeout on host | Use Docker install; build is direct, runtime uses xray proxy |
-| Worker cannot reach Cursor | Check `/etc/agentcontrol/env`, xray listening on proxy port, outbound config |
-| xray apply fails in container | Ensure `/usr/local/etc/xray` mounted, `SYS_ADMIN` + `pid: host` |
-| Panel login loop | Wrong password; check `/etc/agentcontrol/auth-password` |
-| Start fails: no API key | Set in Settings or `/etc/agentcontrol/api-key` |
-| Port 30228 in use | `docker compose ps`; stop legacy `systemctl stop agentcontrol` |
-| Proxy build fails | Expected — wizard builds direct; proxy is runtime-only |
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Cloudflare error 1003 | Fleet URL uses raw IP | Hostname + grey-cloud A record |
+| `pip`/PyPI timeout on host | Restricted network | Docker install; build direct, runtime proxy |
+| Worker cannot reach Cursor | Proxy/xray misconfigured | `/etc/agentcontrol/env`, xray outbound, test in UI |
+| xray apply fails in container | Missing mounts/caps | Mount `/usr/local/etc/xray`, `SYS_ADMIN` + `pid: host` |
+| Start fails | No API key | `/etc/agentcontrol/api-key` or Settings |
+| Empty project list | Wrong `scan_root` / ignored | config + `.agentcontrol-ignore` |
+| Port 30228 in use | Docker + legacy systemd | `docker compose ps`; `systemctl stop agentcontrol` |
+| Buttons dead after refresh | No event delegation | Bind on `#list` / `#servers` parent |
+| Worker ID changed | `WORKER_NAMESPACE` modified | Never change UUID constant |
 
 ---
 
-## Quick file pointers
+## Scope guidance for agents
 
-| Task | Start here |
-|---|---|
-| Worker start/stop | `app.py` → `start_worker`, `stop_worker` |
-| Folder listing | `app.py` → `list_folders`, `folder_path` |
-| Install / Docker | `install-wizard.sh`, `docker-compose.yml`, `Dockerfile` |
-| xray client | `xray_client.py`, `scripts/apply-xray-client.py` |
-| Panel UI | `templates/index.html` |
-| Fleet dashboard | `fleet/src/index.ts`, `fleet/README.md` |
+**Do:**
+
+- Keep diffs focused; match vanilla JS / Flask patterns.
+- Update README and this file when install paths or APIs change.
+- After app changes on live server: `docker compose up -d --build`.
+- Test Fleet with hostname URLs only.
+
+**Avoid:**
+
+- Heavy frontend frameworks or databases unless requested.
+- Cloudflare Tunnel as requirement (design is direct HTTP per server).
+- Storing fleet passwords in client code or logs.
+- Changing `fleet/` unless explicitly asked.
+
+---
+
+## User communication
+
+Project owner often communicates in **Persian (Farsi)**. Summaries and install instructions may be in Persian; code, comments, and this file stay in English.
+
+## Related docs
+
+- [README.md](README.md) — install, config, service commands
+- [fleet/README.md](fleet/README.md) — Wrangler, KV, FLEET_PASSWORD, custom domain
