@@ -10,8 +10,8 @@
       --muted: #8b93a7; --accent: #5b8cff; --green: #3dd68c; --yellow: #e8c468; --red: #f07178;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 14px; }
-    .wrap { max-width: 1400px; margin: 0 auto; }
+    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 14px; overflow-x: hidden; }
+    .wrap { max-width: 1400px; margin: 0 auto; overflow-x: hidden; }
     .hidden { display: none !important; }
     .gate { min-height: 70vh; display: flex; align-items: center; justify-content: center; }
     .panel { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
@@ -30,7 +30,7 @@
     .sub { color: var(--muted); font-size: .75rem; }
     .live { color: var(--green); font-size: .72rem; }
     .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); gap: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
     .server {
       background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
     }
@@ -43,7 +43,12 @@
     .badge { font-size: .62rem; padding: 2px 6px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
     .badge.ok { background: rgba(61,214,140,.15); color: var(--green); }
     .badge.bad { background: rgba(240,113,120,.15); color: var(--red); }
-    .server-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; }
+    .server-metrics {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: 100%; min-width: 0;
+    }
+    @media (min-width: 640px) {
+      .server-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
     .metric {
       background: #0d1016; border: 1px solid var(--border); border-radius: 8px; padding: 5px 6px; min-width: 0;
     }
@@ -122,6 +127,15 @@
     #msg { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 10px; min-height: 1.2em; }
     .warn { color: var(--yellow); }
     .expand-hint { font-size: .65rem; color: var(--muted); margin-top: 6px; }
+    .quick-agents { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; min-width: 0; }
+    .quick-agent {
+      border: 1px solid var(--border); background: #0d1016; color: var(--text);
+      border-radius: 6px; padding: 4px 8px; font-size: .7rem; font-weight: 600; cursor: pointer;
+      max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0;
+    }
+    .quick-agent:hover { background: rgba(255,255,255,.04); }
+    .quick-agent.running { border-color: rgba(61,214,140,.35); color: var(--green); }
+    .quick-agents-label { font-size: .6rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -186,6 +200,7 @@
 
   <script>
     const AUTH_KEY = 'agentcontrol_fleet_pw';
+    const RECENT_KEY = 'agentcontrol_fleet_recent';
     const expanded = new Set();
     const expandedDocker = new Set();
     let streamAbort = null;
@@ -194,6 +209,41 @@
     let lastSnapshots = [];
 
     function sid(id) { return String(id).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+
+    function loadRecent() {
+      try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '{}'); } catch { return {}; }
+    }
+
+    function touchServerRecent(id) {
+      const recent = loadRecent();
+      recent[id] = Date.now();
+      localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+    }
+
+    function sortServers(snapshots) {
+      const recent = loadRecent();
+      return [...snapshots].sort((a, b) => {
+        const diff = (recent[b.id] || 0) - (recent[a.id] || 0);
+        return diff || String(a.name).localeCompare(String(b.name));
+      });
+    }
+
+    function topFolders(folders, limit = 3) {
+      return (folders || []).slice(0, limit);
+    }
+
+    function renderQuickAgents(s) {
+      const items = topFolders(s.folders);
+      if (!items.length) return '';
+      const chips = items.map(f => {
+        const enc = encodeURIComponent(f.name);
+        const attrs = f.running
+          ? `class="quick-agent running" data-stop="${esc(s.id)}" data-proj="${enc}" type="button"`
+          : `class="quick-agent" data-start="${esc(s.id)}" data-proj="${enc}" type="button"`;
+        return `<button ${attrs} title="${esc(f.name)}">${esc(f.name)}</button>`;
+      }).join('');
+      return `<div class="quick-agents-label">Recent projects</div><div class="quick-agents">${chips}</div>`;
+    }
 
     function pw() { return sessionStorage.getItem(AUTH_KEY) || ''; }
     function setPw(v) { sessionStorage.setItem(AUTH_KEY, v); }
@@ -485,10 +535,9 @@
         ${metricCard(serverId, 'cpu', 'CPU')}
         ${metricCard(serverId, 'ram', 'RAM')}
         ${metricCard(serverId, 'disk', 'Disk')}
-        ${metricCard(serverId, 'swap', 'Swap')}
         ${metricCard(serverId, 'net', 'Network')}
       </div>
-      <div class="expand-hint">Click to expand charts, Docker &amp; projects</div>`;
+      <div class="expand-hint">Click card for charts, Docker &amp; all projects</div>`;
     }
 
     function renderServerDetailsHtml(s, serverId) {
@@ -514,7 +563,6 @@
         </div>
         <div class="chart-box"><h3>RAM %</h3><canvas id="chart-ram-${serverId}" width="520" height="56"></canvas></div>
         <div class="chart-box"><h3>Disk %</h3><canvas id="chart-disk-${serverId}" width="520" height="56"></canvas></div>
-        <div class="chart-box"><h3>Swap %</h3><canvas id="chart-swap-${serverId}" width="520" height="56"></canvas></div>
         <div class="chart-box"><h3>Network throughput</h3><canvas id="chart-net-${serverId}" width="520" height="56"></canvas></div>
       </div>
       <div class="detail-grid">
@@ -548,14 +596,13 @@
       const swapPct = mem.swap_percent;
 
       const cpuLvl = healthLevel(Math.max(cpu.percent || 0, loadPct), true);
-      const ramLvl = healthLevel(mem.percent || 0, false);
+      const ramPct = mem.percent || 0;
+      const ramLvl = healthLevel(Math.max(ramPct, swapPct != null ? swapPct : 0), false);
       const diskLvl = healthLevel(disk.percent || 0, false);
-      const swapLvl = swapPct != null ? healthLevel(swapPct, false) : 'ok';
 
       applyMetricStatus(serverId, 'cpu', cpuLvl);
       applyMetricStatus(serverId, 'ram', ramLvl);
       applyMetricStatus(serverId, 'disk', diskLvl);
-      applyMetricStatus(serverId, 'swap', swapLvl);
       applyMetricStatus(serverId, 'net', 'ok');
 
       const line = (key, html) => {
@@ -564,18 +611,15 @@
       };
 
       line('cpu', `${cpu.percent ?? '—'}% <span class="dim">· ${cpu.cores ?? '?'}c · load ${loadPct}%</span>`);
-      line('ram', `${mem.percent ?? '—'}% <span class="dim">· ${mem.used_human || '—'}/${mem.total_human || '—'}</span>`);
+      const swapNote = swapPct != null ? ` · swap ${swapPct}%` : '';
+      line('ram', `${mem.percent ?? '—'}%<span class="dim">${swapNote} · ${mem.used_human || '—'}/${mem.total_human || '—'}</span>`);
       line('disk', `${disk.percent ?? '—'}% <span class="dim">· ${disk.used_human || '—'}/${disk.total_human || '—'}</span>`);
-      line('swap', swapPct != null
-        ? `${swapPct}% <span class="dim">· ${mem.swap_used_human || '—'} used</span>`
-        : `<span class="dim">none</span>`);
       line('net', `↓${net.rx_rate_human || '—'} <span class="dim">↑${net.tx_rate_human || '—'}</span>`);
 
       const cpuHist = history.map(p => p.cpu ?? 0);
       const loadHist = history.map(p => p.load_pct ?? 0);
       const ramHist = history.map(p => p.ram ?? 0);
       const diskHist = history.map(p => p.disk ?? 0);
-      const swapHist = history.map(p => p.swap ?? 0);
       const netHist = history.map(p => p.net ?? 0);
       const netPeak = netMax(netHist);
 
@@ -584,7 +628,6 @@
       });
       drawSparkline(`spark-ram-${serverId}`, ramHist.slice(-30), { max: 100, percent: true, colors: ['#3dd68c'] });
       drawSparkline(`spark-disk-${serverId}`, diskHist.slice(-30), { max: 100, percent: true, colors: ['#e8c468'] });
-      drawSparkline(`spark-swap-${serverId}`, swapHist.slice(-30), { max: 100, percent: true, colors: ['#c678dd'] });
       drawSparkline(`spark-net-${serverId}`, netHist.slice(-30), { max: netPeak, percent: false, colors: ['#9b8cff'] });
 
       if (!expanded.has(s.id)) return;
@@ -594,24 +637,23 @@
       });
       drawChart(`chart-ram-${serverId}`, ramHist, { max: 100, percent: true, colors: ['#3dd68c'] });
       drawChart(`chart-disk-${serverId}`, diskHist, { max: 100, percent: true, colors: ['#e8c468'] });
-      drawChart(`chart-swap-${serverId}`, swapHist, { max: 100, percent: true, colors: ['#c678dd'] });
       drawChart(`chart-net-${serverId}`, netHist, { max: netPeak, percent: false, colors: ['#9b8cff'] });
     }
 
     function renderServers(snapshots) {
-      lastSnapshots = snapshots;
+      lastSnapshots = sortServers(snapshots);
       const el = document.getElementById('servers');
-      if (!snapshots.length) {
+      if (!lastSnapshots.length) {
         el.innerHTML = '<p class="sub">No servers yet. Click <strong>Add server</strong>.</p>';
         return;
       }
-      el.innerHTML = snapshots.map(s => {
+      el.innerHTML = lastSnapshots.map(s => {
         const open = expanded.has(s.id) ? ' open' : '';
         const offline = !s.online ? ' offline' : '';
         const badge = s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">${esc(s.error || 'offline')}</span>`;
         const serverId = sid(s.id);
         const metrics = s.online
-          ? renderServerMetricsHtml(serverId)
+          ? renderServerMetricsHtml(serverId) + renderQuickAgents(s)
           : `<p class="sub" style="margin-top:8px">${esc(s.error || 'Unreachable')}</p>`;
         const folders = (s.folders || []).map(f => {
           const enc = encodeURIComponent(f.name);
@@ -644,10 +686,25 @@
         </div>`;
       }).join('');
 
-      snapshots.forEach(s => paintServerCharts(s));
+      lastSnapshots.forEach(s => paintServerCharts(s));
     }
 
     document.getElementById('servers').addEventListener('click', async (e) => {
+      const start = e.target.closest('[data-start]');
+      if (start && !busy) {
+        e.stopPropagation();
+        touchServerRecent(start.dataset.start);
+        startWorker(start.dataset.start, decodeURIComponent(start.dataset.proj));
+        return;
+      }
+      const stop = e.target.closest('[data-stop]');
+      if (stop && !busy) {
+        e.stopPropagation();
+        touchServerRecent(stop.dataset.stop);
+        stopWorker(stop.dataset.stop, decodeURIComponent(stop.dataset.proj));
+        return;
+      }
+
       const dockerToggle = e.target.closest('[data-docker-toggle]');
       if (dockerToggle) {
         e.stopPropagation();
@@ -667,19 +724,11 @@
       if (t) {
         const id = t.dataset.toggle;
         if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+        touchServerRecent(id);
         document.querySelectorAll('.server').forEach(el => el.classList.toggle('open', expanded.has(el.dataset.id)));
         const snap = lastSnapshots.find(s => s.id === id);
         if (snap) requestAnimationFrame(() => paintServerCharts(snap));
-        return;
-      }
-      const start = e.target.closest('[data-start]');
-      if (start && !busy) {
-        startWorker(start.dataset.start, decodeURIComponent(start.dataset.proj));
-        return;
-      }
-      const stop = e.target.closest('[data-stop]');
-      if (stop && !busy) {
-        stopWorker(stop.dataset.stop, decodeURIComponent(stop.dataset.proj));
+        renderServers(lastSnapshots);
         return;
       }
       const rem = e.target.closest('[data-remove]');
