@@ -779,8 +779,22 @@ def proxy_url(settings: dict[str, Any] | None = None) -> str:
     return f"http://{listen}:{port}"
 
 
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NODE_USE_ENV_PROXY",
+)
+
+
 def load_runtime_proxy_env() -> dict[str, str]:
     """Load HTTP proxy variables for Cursor agent / Node processes."""
+    if not load_client_settings().get("enabled"):
+        return {}
+
     env_path = Path("/etc/agentcontrol/env")
     values: dict[str, str] = {}
     if env_path.is_file():
@@ -818,8 +832,19 @@ def load_runtime_proxy_env() -> dict[str, str]:
 
 def apply_proxy_env(env: dict[str, str] | None = None) -> dict[str, str]:
     merged = dict(env or os.environ)
+    if not load_client_settings().get("enabled"):
+        for key in _PROXY_ENV_KEYS:
+            merged.pop(key, None)
+        return merged
     merged.update(load_runtime_proxy_env())
     return merged
+
+
+def set_proxy_enabled(enabled: bool, *, restart: bool = False) -> dict[str, Any]:
+    """Enable or disable the xray HTTP proxy for Cursor traffic."""
+    settings = load_client_settings()
+    settings["enabled"] = bool(enabled)
+    return apply_client_settings(settings, restart=restart, write_env=True)
 
 
 def write_runtime_env(proxy_url_value: str | None) -> Path:
@@ -1059,7 +1084,14 @@ def apply_client_settings(
     if not merged.get("enabled"):
         if write_env:
             write_runtime_env(None)
-        return {"ok": True, "enabled": False, "proxy_url": None}
+        record_status(merged, restart_ok=None, restart_detail="direct mode")
+        return {
+            "ok": True,
+            "enabled": False,
+            "proxy_url": None,
+            "settings": public_settings(merged),
+            "status": build_status_report(merged),
+        }
 
     applied = apply_to_xray_config(merged)
     restarted = False

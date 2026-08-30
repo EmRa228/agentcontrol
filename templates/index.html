@@ -177,6 +177,14 @@
       resize: vertical;
     }
     .xray-grid .full { grid-column: 1 / -1; }
+    .xray-mode {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+      background: rgba(255,255,255,.02); margin-top: 8px;
+    }
+    .xray-mode label { font-size: .78rem; color: var(--text); margin: 0; }
+    .xray-mode .hint { font-size: .65rem; color: var(--muted); margin-top: 2px; }
+    .xray-mode.disabled-fields { opacity: .55; pointer-events: none; }
     .xray-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .xray-status-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
     .xray-pill {
@@ -317,6 +325,19 @@
         </div>
         <div class="settings-block">
           <div class="section-title">xray client (proxy)</div>
+          <div class="settings-note">Route all Cursor agent traffic through a local HTTP proxy (xray). Disable for direct connection.</div>
+          <div class="xray-mode">
+            <div>
+              <label for="xray-enabled">Use HTTP proxy for Cursor</label>
+              <div class="hint" id="xray-mode-hint">Workers and API calls use xray on port 30229</div>
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:.75rem;color:var(--muted)">
+              <span>Direct</span>
+              <input id="xray-enabled" type="checkbox" onchange="onXrayEnabledChange()">
+              <span>Proxy</span>
+            </label>
+          </div>
+          <div id="xray-config-fields">
           <div class="settings-note">Paste an xray share link (<code>vless://</code>, <code>trojan://</code>, <code>vmess://</code>, <code>ss://</code>) or edit fields below.</div>
           <div class="xray-grid">
             <div class="full"><label>Share URL</label><textarea id="xray-share-url" placeholder="vless://... or trojan://... or vmess://..."></textarea></div>
@@ -343,6 +364,7 @@
           <div class="xray-status-row" id="xray-pills"></div>
           <div class="api-key-hint" id="xray-status">—</div>
           <pre class="xray-log hidden" id="xray-log"></pre>
+          </div>
         </div>
       </div>
     </div>
@@ -908,6 +930,9 @@
     }
 
     function fillXrayForm(s) {
+      const enabled = s.enabled !== false;
+      document.getElementById('xray-enabled').checked = enabled;
+      updateXrayModeUi(enabled);
       document.getElementById('xray-share-url').value = s.share_url || s.vless_url || '';
       document.getElementById('xray-protocol').value = s.protocol || 'vless';
       document.getElementById('xray-proxy-port').value = s.proxy_port || 30229;
@@ -923,9 +948,53 @@
       document.getElementById('xray-flow').value = s.flow || '';
     }
 
+    function updateXrayModeUi(enabled) {
+      const fields = document.getElementById('xray-config-fields');
+      const hint = document.getElementById('xray-mode-hint');
+      if (enabled) {
+        fields.classList.remove('disabled-fields');
+        hint.textContent = 'Workers and API calls use xray on port 30229';
+      } else {
+        fields.classList.add('disabled-fields');
+        hint.textContent = 'Direct mode — Cursor traffic goes without proxy';
+      }
+    }
+
+    async function onXrayEnabledChange() {
+      const enabled = document.getElementById('xray-enabled').checked;
+      updateXrayModeUi(enabled);
+      const status = document.getElementById('xray-status');
+      status.textContent = enabled ? 'Enabling proxy…' : 'Switching to direct mode…';
+      try {
+        const res = await apiFetch('/api/xray/client/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled, restart: enabled }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          document.getElementById('xray-enabled').checked = !enabled;
+          updateXrayModeUi(!enabled);
+          status.textContent = data.error || 'Toggle failed';
+          status.className = 'api-key-hint';
+          return;
+        }
+        if (data.settings) fillXrayForm(data.settings);
+        renderXrayStatus(data.status || data);
+        status.textContent = enabled ? 'Proxy enabled' : 'Direct mode enabled';
+        status.className = 'api-key-hint ok';
+      } catch (e) {
+        document.getElementById('xray-enabled').checked = !enabled;
+        updateXrayModeUi(!enabled);
+        status.textContent = 'Toggle failed';
+        status.className = 'api-key-hint';
+      }
+    }
+
     function xrayPayload() {
+      const enabled = document.getElementById('xray-enabled').checked;
       const payload = {
-        enabled: true,
+        enabled,
         protocol: document.getElementById('xray-protocol').value.trim() || 'vless',
         proxy_port: Number(document.getElementById('xray-proxy-port').value || 30229),
         address: document.getElementById('xray-address').value.trim(),

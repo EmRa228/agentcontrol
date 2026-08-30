@@ -35,6 +35,7 @@ from xray_client import (
     merge_vless_url,
     proxy_listening,
     public_settings,
+    set_proxy_enabled,
     test_cursor_api,
     test_proxy,
 )
@@ -1166,6 +1167,21 @@ def api_xray_status():
     settings = load_client_settings()
     live = request.args.get("live") == "1"
     return jsonify(build_status_report(settings, live_test=live))
+
+
+@app.post("/api/xray/client/toggle")
+def api_xray_client_toggle():
+    data = request.get_json(silent=True) or {}
+    if "enabled" not in data:
+        return jsonify({"error": "enabled is required"}), 400
+    enabled = bool(data.get("enabled"))
+    try:
+        result = set_proxy_enabled(enabled, restart=bool(data.get("restart", enabled)))
+    except (ValueError, FileNotFoundError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except OSError as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(result)
 
 
 @app.post("/api/xray/client")
