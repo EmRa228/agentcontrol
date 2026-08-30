@@ -30,6 +30,7 @@ from xray_client import (
     build_status_report,
     import_from_xray_config,
     load_client_settings,
+    merge_share_url,
     merge_vless_url,
     public_settings,
     test_cursor_api,
@@ -1161,25 +1162,31 @@ def api_xray_status():
 def api_xray_client_save():
     data = request.get_json(silent=True) or {}
     current = load_client_settings()
-    if data.get("vless_url"):
+    if data.get("share_url") or data.get("vless_url"):
+        share_url = str(data.get("share_url") or data.get("vless_url"))
         try:
-            current = merge_vless_url(current, str(data["vless_url"]))
+            current = merge_share_url(current, share_url)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
     updates = {
         "enabled": bool(data.get("enabled", current.get("enabled", True))),
         "proxy_port": int(data.get("proxy_port", current.get("proxy_port", 30229))),
         "proxy_listen": str(data.get("proxy_listen", current.get("proxy_listen", "127.0.0.1"))),
+        "protocol": str(data.get("protocol", current.get("protocol", "vless"))).strip(),
         "address": str(data.get("address", current.get("address", ""))).strip(),
         "port": int(data.get("port", current.get("port", 443))),
         "uuid": str(data.get("uuid", current.get("uuid", ""))).strip(),
+        "password": str(data.get("password", current.get("password", ""))).strip(),
         "flow": str(data.get("flow", current.get("flow", ""))).strip(),
         "network": str(data.get("network", current.get("network", "tcp"))).strip() or "tcp",
+        "security": str(data.get("security", current.get("security", "none"))).strip() or "none",
         "server_name": str(data.get("server_name", current.get("server_name", ""))).strip(),
         "fingerprint": str(data.get("fingerprint", current.get("fingerprint", "chrome"))).strip(),
         "public_key": str(data.get("public_key", current.get("public_key", ""))).strip(),
         "short_id": str(data.get("short_id", current.get("short_id", ""))).strip(),
         "spider_x": str(data.get("spider_x", current.get("spider_x", ""))).strip(),
+        "alter_id": int(data.get("alter_id", current.get("alter_id", 0)) or 0),
+        "method": str(data.get("method", current.get("method", ""))).strip(),
     }
     if data.get("config_path"):
         updates["config_path"] = str(data["config_path"])
@@ -1207,11 +1214,11 @@ def api_xray_client_import():
 @app.post("/api/xray/client/parse")
 def api_xray_client_parse():
     data = request.get_json(silent=True) or {}
-    vless_url = str(data.get("vless_url", "")).strip()
-    if not vless_url:
-        return jsonify({"error": "vless_url is required"}), 400
+    share_url = str(data.get("share_url") or data.get("vless_url") or "").strip()
+    if not share_url:
+        return jsonify({"error": "share_url is required"}), 400
     try:
-        settings = public_settings(merge_vless_url(load_client_settings(), vless_url))
+        settings = public_settings(merge_share_url(load_client_settings(), share_url))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"settings": settings})
@@ -1221,9 +1228,10 @@ def api_xray_client_parse():
 def api_xray_client_test():
     data = request.get_json(silent=True) or {}
     settings = load_client_settings()
-    if data.get("vless_url"):
+    if data.get("share_url") or data.get("vless_url"):
+        share_url = str(data.get("share_url") or data.get("vless_url"))
         try:
-            settings = merge_vless_url(settings, str(data["vless_url"]))
+            settings = merge_share_url(settings, share_url)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
     elif data:

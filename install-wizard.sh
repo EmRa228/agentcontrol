@@ -169,14 +169,15 @@ configure_xray_client() {
 
   python3 "${INSTALL_DIR}/scripts/apply-xray-client.py" --import >/dev/null 2>&1 || true
 
-  if [[ -n "${XRAY_VLESS_URL:-}" ]]; then
-    log "Applying xray client from VLESS URL (XRAY_VLESS_URL)"
+  if [[ -n "${XRAY_SHARE_URL:-}" || -n "${XRAY_VLESS_URL:-}" ]]; then
+    local share_url="${XRAY_SHARE_URL:-${XRAY_VLESS_URL}}"
+    log "Applying xray client from share URL"
     python3 - <<PY
 import json, sys
 sys.path.insert(0, "${INSTALL_DIR}")
-from xray_client import apply_client_settings, merge_vless_url, load_client_settings
+from xray_client import apply_client_settings, merge_share_url, load_client_settings
 
-settings = merge_vless_url(load_client_settings(), """${XRAY_VLESS_URL}""")
+settings = merge_share_url(load_client_settings(), """${share_url}""")
 settings["enabled"] = True
 settings["proxy_port"] = int("${proxy_port}")
 result = apply_client_settings(settings, restart=True, write_env=True)
@@ -205,20 +206,20 @@ PY
     return
   fi
 
-  local address port uuid server_name public_key short_id fingerprint flow vless_url
+  local address port uuid server_name public_key short_id fingerprint flow share_url
   if [[ -t 0 ]] && [[ -z "${XRAY_ADDRESS:-}" ]]; then
     echo "" >&2
     echo "xray client outbound (upstream proxy server):" >&2
-    echo "Paste a vless:// share link, or press Enter to enter fields manually." >&2
-    read -r -p "VLESS URL: " vless_url || true
-    vless_url="$(echo "${vless_url}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    if [[ -n "${vless_url}" ]]; then
+    echo "Paste a share link (vless://, trojan://, vmess://, ss://), or press Enter for manual fields." >&2
+    read -r -p "Share URL: " share_url || true
+    share_url="$(echo "${share_url}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [[ -n "${share_url}" ]]; then
       python3 - <<PY
 import json, sys
 sys.path.insert(0, "${INSTALL_DIR}")
-from xray_client import apply_client_settings, merge_vless_url, load_client_settings
+from xray_client import apply_client_settings, merge_share_url, load_client_settings
 
-settings = merge_vless_url(load_client_settings(), """${vless_url}""")
+settings = merge_share_url(load_client_settings(), """${share_url}""")
 settings["enabled"] = True
 settings["proxy_port"] = int("${proxy_port}")
 result = apply_client_settings(settings, restart=True, write_env=True)

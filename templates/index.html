@@ -317,22 +317,25 @@
         </div>
         <div class="settings-block">
           <div class="section-title">xray client (proxy)</div>
-          <div class="settings-note">Paste a <code>vless://</code> share link or edit fields below. Changes apply to host xray and restart the service.</div>
+          <div class="settings-note">Paste an xray share link (<code>vless://</code>, <code>trojan://</code>, <code>vmess://</code>, <code>ss://</code>) or edit fields below.</div>
           <div class="xray-grid">
-            <div class="full"><label>VLESS URL</label><textarea id="xray-vless-url" placeholder="vless://uuid@host:port?security=reality&amp;sni=...&amp;pbk=...&amp;sid=..."></textarea></div>
+            <div class="full"><label>Share URL</label><textarea id="xray-share-url" placeholder="vless://... or trojan://... or vmess://..."></textarea></div>
+            <div><label>Protocol</label><input id="xray-protocol" type="text" placeholder="vless"></div>
             <div><label>Local proxy port</label><input id="xray-proxy-port" type="number" min="1" max="65535" placeholder="30229"></div>
             <div><label>Server address</label><input id="xray-address" type="text" placeholder="1.2.3.4"></div>
             <div><label>Server port</label><input id="xray-port" type="number" min="1" max="65535" placeholder="2096"></div>
             <div><label>UUID</label><input id="xray-uuid" type="text" placeholder="uuid"></div>
+            <div><label>Password</label><input id="xray-password" type="text" placeholder="trojan/ss password"></div>
+            <div><label>Security</label><input id="xray-security" type="text" placeholder="none / tls / reality"></div>
             <div><label>Reality SNI</label><input id="xray-server-name" type="text" placeholder="example.com"></div>
-            <div><label>Public key</label><input id="xray-public-key" type="text" placeholder="public key"></div>
+            <div><label>Public key</label><input id="xray-public-key" type="text" placeholder="reality pbk"></div>
             <div><label>Short ID</label><input id="xray-short-id" type="text" placeholder="shortId"></div>
             <div><label>Fingerprint</label><input id="xray-fingerprint" type="text" placeholder="chrome"></div>
             <div><label>Flow (optional)</label><input id="xray-flow" type="text" placeholder="xtls-rprx-vision"></div>
           </div>
           <div class="xray-actions">
             <button class="btn btn-primary btn-sm" type="button" onclick="saveXrayClient()">Save &amp; apply</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="parseXrayVlessUrl()">Parse VLESS URL</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="parseXrayShareUrl()">Parse share URL</button>
             <button class="btn btn-ghost btn-sm" type="button" onclick="testXrayClient()">Test proxy</button>
             <button class="btn btn-ghost btn-sm" type="button" onclick="importXrayClient()">Import from xray</button>
             <button class="btn btn-ghost btn-sm" type="button" onclick="refreshXrayStatus(true)">Refresh status</button>
@@ -905,11 +908,14 @@
     }
 
     function fillXrayForm(s) {
-      document.getElementById('xray-vless-url').value = s.vless_url || '';
+      document.getElementById('xray-share-url').value = s.share_url || s.vless_url || '';
+      document.getElementById('xray-protocol').value = s.protocol || 'vless';
       document.getElementById('xray-proxy-port').value = s.proxy_port || 30229;
       document.getElementById('xray-address').value = s.address || '';
       document.getElementById('xray-port').value = s.port || 443;
       document.getElementById('xray-uuid').value = s.uuid || '';
+      document.getElementById('xray-password').value = s.password || '';
+      document.getElementById('xray-security').value = s.security || 'none';
       document.getElementById('xray-server-name').value = s.server_name || '';
       document.getElementById('xray-public-key').value = s.public_key || '';
       document.getElementById('xray-short-id').value = s.short_id || '';
@@ -920,10 +926,13 @@
     function xrayPayload() {
       const payload = {
         enabled: true,
+        protocol: document.getElementById('xray-protocol').value.trim() || 'vless',
         proxy_port: Number(document.getElementById('xray-proxy-port').value || 30229),
         address: document.getElementById('xray-address').value.trim(),
         port: Number(document.getElementById('xray-port').value || 443),
         uuid: document.getElementById('xray-uuid').value.trim(),
+        password: document.getElementById('xray-password').value.trim(),
+        security: document.getElementById('xray-security').value.trim() || 'none',
         server_name: document.getElementById('xray-server-name').value.trim(),
         public_key: document.getElementById('xray-public-key').value.trim(),
         short_id: document.getElementById('xray-short-id').value.trim(),
@@ -932,25 +941,25 @@
         restart: true,
         write_env: true,
       };
-      const vlessUrl = document.getElementById('xray-vless-url').value.trim();
-      if (vlessUrl) payload.vless_url = vlessUrl;
+      const shareUrl = document.getElementById('xray-share-url').value.trim();
+      if (shareUrl) payload.share_url = shareUrl;
       return payload;
     }
 
-    async function parseXrayVlessUrl() {
+    async function parseXrayShareUrl() {
       const status = document.getElementById('xray-status');
-      const vlessUrl = document.getElementById('xray-vless-url').value.trim();
-      if (!vlessUrl) {
-        status.textContent = 'Paste a vless:// URL first';
+      const shareUrl = document.getElementById('xray-share-url').value.trim();
+      if (!shareUrl) {
+        status.textContent = 'Paste a share URL first';
         status.className = 'api-key-hint';
         return;
       }
-      status.textContent = 'Parsing VLESS URL…';
+      status.textContent = 'Parsing share URL…';
       try {
         const res = await apiFetch('/api/xray/client/parse', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vless_url: vlessUrl }),
+          body: JSON.stringify({ share_url: shareUrl }),
         });
         const data = await res.json();
         if (!res.ok) { status.textContent = data.error || 'Parse failed'; status.className = 'api-key-hint'; return; }
