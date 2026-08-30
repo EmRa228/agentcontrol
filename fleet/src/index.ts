@@ -122,9 +122,10 @@ const STREAM_HEARTBEAT_MS = 15000;
 async function snapshotOneServer(server: StoredServer) {
   const base = { id: server.id, name: server.name, url: server.url };
   try {
-    const [sysRes, foldRes] = await Promise.all([
+    const [sysRes, foldRes, histRes] = await Promise.all([
       proxyAgent(server, "/api/system"),
       proxyAgent(server, "/api/folders"),
+      proxyAgent(server, "/api/system/history"),
     ]);
     if (sysRes.status === 401 || foldRes.status === 401) {
       return { ...base, online: false, error: "auth failed" };
@@ -140,9 +141,14 @@ async function snapshotOneServer(server: StoredServer) {
     const foldersPayload = (await foldRes.json()) as { folders?: unknown[] };
     const folders = foldersPayload.folders || [];
     const cpu = system.cpu as { percent?: number; load_percent?: number; cores?: number } | undefined;
-    const memory = system.memory as { percent?: number } | undefined;
+    const memory = system.memory as {
+      percent?: number;
+      swap_percent?: number | null;
+      swap_used_human?: string | null;
+    } | undefined;
     const disk = system.disk_root as { percent?: number } | undefined;
     const panel = system.panel as { running_workers?: number; project_count?: number } | undefined;
+    const histPayload = histRes.ok ? ((await histRes.json()) as { points?: unknown[] }) : { points: [] };
     return {
       ...base,
       online: true,
@@ -151,12 +157,14 @@ async function snapshotOneServer(server: StoredServer) {
         load_pct: cpu?.load_percent ?? null,
         cores: cpu?.cores ?? null,
         ram: memory?.percent ?? null,
+        swap: memory?.swap_percent ?? null,
         disk: disk?.percent ?? null,
         workers: panel?.running_workers ?? 0,
         projects: panel?.project_count ?? folders.length,
       },
       system,
       folders,
+      history: histPayload.points || [],
     };
   } catch (e) {
     return { ...base, online: false, error: String(e) };

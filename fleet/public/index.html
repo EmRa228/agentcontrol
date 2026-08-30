@@ -11,7 +11,7 @@
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 14px; }
-    .wrap { max-width: 1100px; margin: 0 auto; }
+    .wrap { max-width: 1400px; margin: 0 auto; }
     .hidden { display: none !important; }
     .gate { min-height: 70vh; display: flex; align-items: center; justify-content: center; }
     .panel { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
@@ -30,25 +30,78 @@
     .sub { color: var(--muted); font-size: .75rem; }
     .live { color: var(--green); font-size: .72rem; }
     .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); gap: 12px; }
     .server {
       background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
     }
     .server.offline { border-color: rgba(240,113,120,.35); }
     .server-head { padding: 10px 12px; cursor: pointer; }
     .server-head:hover { background: rgba(255,255,255,.02); }
-    .server-title { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+    .server-title { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
     .server-name { font-weight: 700; font-size: .92rem; }
     .server-url { font-size: .68rem; color: var(--muted); margin-top: 2px; word-break: break-all; }
     .badge { font-size: .62rem; padding: 2px 6px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
     .badge.ok { background: rgba(61,214,140,.15); color: var(--green); }
     .badge.bad { background: rgba(240,113,120,.15); color: var(--red); }
-    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
-    .m { background: #0d1016; border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; }
-    .m .k { font-size: .58rem; color: var(--muted); text-transform: uppercase; }
-    .m .v { font-size: .78rem; font-weight: 700; margin-top: 1px; }
-    .server-body { border-top: 1px solid var(--border); padding: 8px 10px 10px; display: none; }
+    .server-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; }
+    .metric {
+      background: #0d1016; border: 1px solid var(--border); border-radius: 8px; padding: 5px 6px; min-width: 0;
+    }
+    .metric.ok { border-color: rgba(61,214,140,.25); }
+    .metric.warn { border-color: rgba(232,196,104,.35); }
+    .metric.bad { border-color: rgba(240,113,120,.4); }
+    .metric-row { display: flex; gap: 5px; align-items: stretch; min-height: 46px; }
+    .metric-info { flex: 0 0 46%; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+    .metric-head { display: flex; align-items: center; gap: 4px; }
+    .metric .label { font-size: .58rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .metric-line { font-size: .7rem; font-weight: 700; line-height: 1.25; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .metric-line .dim { color: var(--muted); font-weight: 500; }
+    .status {
+      width: 13px; height: 13px; border-radius: 50%; display: inline-flex; align-items: center;
+      justify-content: center; font-size: .55rem; font-weight: 800; flex-shrink: 0;
+    }
+    .status.ok { background: rgba(61,214,140,.18); color: var(--green); }
+    .status.warn { background: rgba(232,196,104,.18); color: var(--yellow); }
+    .status.bad { background: rgba(240,113,120,.18); color: var(--red); }
+    .metric-chart { flex: 1; min-width: 0; display: flex; align-items: flex-end; }
+    .metric-chart canvas { width: 100%; height: 46px; display: block; }
+    .server-body { border-top: 1px solid var(--border); padding: 10px 12px 12px; display: none; }
     .server.open .server-body { display: block; }
+    .charts { display: grid; gap: 8px; margin-bottom: 10px; }
+    .chart-box { background: #0d1016; border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
+    .chart-box h3 { font-size: .7rem; color: var(--muted); margin-bottom: 4px; }
+    .chart-box canvas { width: 100%; height: 56px; display: block; }
+    .legend { font-size: .6rem; color: var(--muted); margin-top: 3px; }
+    .legend i { display: inline-block; width: 10px; height: 2px; margin-right: 3px; vertical-align: middle; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; font-size: .74rem; margin-bottom: 10px; }
+    .detail-grid .full { grid-column: 1 / -1; }
+    .detail-grid span { color: var(--muted); }
+    .section-title { font-size: .72rem; color: var(--muted); margin: 8px 0 5px; text-transform: uppercase; letter-spacing: .05em; }
+    .docker-list { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+    .docker-totals { font-size: .68rem; color: var(--muted); margin: 2px 0 6px; }
+    .docker-group { background: #0d1016; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .docker-group-head {
+      display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+      padding: 7px 9px; cursor: pointer; user-select: none;
+    }
+    .docker-group-head:hover { background: rgba(255,255,255,.02); }
+    .docker-group-title { font-size: .74rem; font-weight: 700; }
+    .docker-group-sub { font-size: .6rem; color: var(--muted); margin-top: 2px; }
+    .docker-group-pct { font-size: .64rem; color: var(--muted); text-align: right; white-space: nowrap; }
+    .docker-group-pct strong { color: var(--text); }
+    .share-bars { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
+    .share-row { display: grid; grid-template-columns: 30px 1fr 34px; gap: 5px; align-items: center; font-size: .58rem; color: var(--muted); }
+    .share-row .bar { height: 6px; background: #0a0c10; border-radius: 999px; overflow: hidden; }
+    .share-row .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+    .share-row .bar > i.warn { background: var(--yellow); }
+    .share-row .bar > i.bad { background: var(--red); }
+    .share-row .pct { text-align: right; color: var(--text); font-weight: 600; }
+    .docker-group-body { border-top: 1px solid var(--border); padding: 5px 7px 7px; display: none; }
+    .docker-group.open .docker-group-body { display: block; }
+    .docker-group-chevron { color: var(--muted); font-size: .65rem; margin-left: 4px; }
+    .docker-item { padding: 5px 3px; border-top: 1px solid rgba(37,43,56,.6); font-size: .64rem; }
+    .docker-item:first-child { border-top: none; }
+    .docker-item-name { font-weight: 600; margin-bottom: 3px; }
     .projects { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
     .proj {
       display: grid; grid-template-columns: 52px 1fr auto; gap: 6px; align-items: center;
@@ -68,6 +121,7 @@
     .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
     #msg { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 10px; min-height: 1.2em; }
     .warn { color: var(--yellow); }
+    .expand-hint { font-size: .65rem; color: var(--muted); margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -133,9 +187,13 @@
   <script>
     const AUTH_KEY = 'agentcontrol_fleet_pw';
     const expanded = new Set();
+    const expandedDocker = new Set();
     let streamAbort = null;
     let streamRetry = null;
     let busy = false;
+    let lastSnapshots = [];
+
+    function sid(id) { return String(id).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
     function pw() { return sessionStorage.getItem(AUTH_KEY) || ''; }
     function setPw(v) { sessionStorage.setItem(AUTH_KEY, v); }
@@ -264,18 +322,284 @@
 
     function logout() { clearPw(); stopStream(); showLogin(); }
 
-    function healthClass(p) {
-      if (p == null) return '';
-      if (p >= 90) return 'bad';
-      if (p >= 75) return 'warn';
-      return 'ok';
-    }
-
     function esc(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
     }
 
+    function healthLevel(pct, loadMode) {
+      if (loadMode) {
+        if (pct >= 100) return 'bad';
+        if (pct >= 70) return 'warn';
+        return 'ok';
+      }
+      if (pct >= 90) return 'bad';
+      if (pct >= 75) return 'warn';
+      return 'ok';
+    }
+
+    function statusIcon(level) {
+      return level === 'bad' ? '✕' : level === 'warn' ? '!' : '✓';
+    }
+
+    function applyMetricStatus(serverId, key, level) {
+      const card = document.getElementById(`m-${key}-${serverId}`);
+      const st = document.getElementById(`st-${key}-${serverId}`);
+      if (card) card.className = 'metric ' + level;
+      if (st) { st.className = 'status ' + level; st.textContent = statusIcon(level); }
+    }
+
+    function pctClass(p) { return p >= 90 ? 'bad' : p >= 75 ? 'warn' : ''; }
+
+    function drawGrid(ctx, w, h, maxY, percentMode) {
+      ctx.strokeStyle = 'rgba(139,147,167,.15)';
+      ctx.lineWidth = 1;
+      if (percentMode) {
+        [0.5, 1].forEach(frac => {
+          const y = h - 2 - frac * (h - 4);
+          ctx.beginPath();
+          ctx.moveTo(1, y);
+          ctx.lineTo(w - 1, y);
+          ctx.stroke();
+        });
+      }
+    }
+
+    function plotLine(ctx, values, w, h, max, color, dashed) {
+      if (!values.length) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      if (dashed) ctx.setLineDash([3, 2]); else ctx.setLineDash([]);
+      ctx.beginPath();
+      values.forEach((v, i) => {
+        const x = (i / Math.max(values.length - 1, 1)) * (w - 2) + 1;
+        const y = h - 2 - (Math.min(v, max) / max) * (h - 4);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    function drawSparkline(canvasId, series, opts = {}) {
+      const c = document.getElementById(canvasId);
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+      const max = opts.max ?? 100;
+      drawGrid(ctx, w, h, max, opts.percent !== false);
+      const list = Array.isArray(series[0]) ? series : [series];
+      const colors = opts.colors || ['#5b8cff'];
+      const dashed = opts.dashed || [];
+      list.forEach((values, idx) => plotLine(ctx, values, w, h, max, colors[idx] || colors[0], dashed[idx]));
+    }
+
+    function drawChart(canvasId, series, opts = {}) {
+      const c = document.getElementById(canvasId);
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+      const max = opts.max ?? 100;
+      drawGrid(ctx, w, h, max, opts.percent !== false);
+      const list = Array.isArray(series[0]) ? series : [series];
+      const colors = opts.colors || ['#5b8cff'];
+      const dashed = opts.dashed || [];
+      list.forEach((values, idx) => {
+        if (!values.length) return;
+        const color = colors[idx] || colors[0];
+        if (!dashed[idx]) {
+          ctx.fillStyle = color + '22';
+          ctx.beginPath();
+          values.forEach((v, i) => {
+            const x = (i / Math.max(values.length - 1, 1)) * (w - 4) + 2;
+            const y = h - 4 - (Math.min(v, max) / max) * (h - 8);
+            i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+          });
+          ctx.lineTo(w - 2, h - 2);
+          ctx.lineTo(2, h - 2);
+          ctx.closePath();
+          ctx.fill();
+        }
+        plotLine(ctx, values, w, h, max, color, dashed[idx]);
+      });
+    }
+
+    function netMax(values) {
+      const peak = values.length ? Math.max(...values) : 0;
+      return Math.max(peak * 1.2, 1024);
+    }
+
+    function renderShareBars(cpuShare, memShare) {
+      return `<div class="share-bars">
+        <div class="share-row"><span>CPU</span><div class="bar"><i class="${pctClass(cpuShare)}" style="width:${Math.min(cpuShare,100)}%"></i></div><span class="pct">${cpuShare.toFixed(1)}%</span></div>
+        <div class="share-row"><span>RAM</span><div class="bar"><i class="${pctClass(memShare)}" style="width:${Math.min(memShare,100)}%;background:var(--green)"></i></div><span class="pct">${memShare.toFixed(1)}%</span></div>
+      </div>`;
+    }
+
+    function renderDockerGroups(serverId, docker) {
+      if (!docker || !docker.available) return '<div class="full" style="color:var(--muted)">Docker not installed</div>';
+      const groups = docker.groups || [];
+      if (!groups.length) return '<div class="full" style="color:var(--muted)">No running containers</div>';
+      const totals = docker.totals || {};
+      const head = `<div class="full docker-totals">Docker total: <strong>${(totals.cpu_percent||0).toFixed(1)}% CPU</strong> · <strong>${totals.mem_human||'0 B'} RAM</strong></div>`;
+      const body = groups.map(g => {
+        const key = `${serverId}:${g.id}`;
+        const open = expandedDocker.has(key) ? ' open' : '';
+        const chev = expandedDocker.has(key) ? '▾' : '▸';
+        const kind = g.type === 'compose' ? `compose · ${g.container_count} containers` : 'standalone';
+        const items = (g.containers || []).map(c => `
+          <div class="docker-item">
+            <div class="docker-item-name">${esc(c.service || c.name)}</div>
+            ${renderShareBars(c.cpu_share || 0, c.mem_share || 0)}
+            <div style="font-size:.58rem;color:var(--muted);margin-top:3px">${c.cpu_percent.toFixed(1)}% host CPU · ${c.mem_usage}</div>
+          </div>`).join('');
+        return `<div class="docker-group${open}" data-docker-group="${esc(key)}">
+          <div class="docker-group-head" data-docker-toggle="${esc(key)}">
+            <div>
+              <div class="docker-group-title">${esc(g.label)} <span class="docker-group-chevron">${chev}</span></div>
+              <div class="docker-group-sub">${kind}</div>
+              ${renderShareBars(g.cpu_share || 0, g.mem_share || 0)}
+            </div>
+            <div class="docker-group-pct"><strong>${g.cpu_share.toFixed(1)}%</strong> CPU<br><strong>${g.mem_share.toFixed(1)}%</strong> RAM</div>
+          </div>
+          <div class="docker-group-body">${items}</div>
+        </div>`;
+      }).join('');
+      return `<div class="full docker-list">${head}${body}</div>`;
+    }
+
+    function metricCard(serverId, key, label) {
+      return `<div class="metric" id="m-${key}-${serverId}">
+        <div class="metric-row">
+          <div class="metric-info">
+            <div class="metric-head"><span class="label">${label}</span><span class="status ok" id="st-${key}-${serverId}">✓</span></div>
+            <div class="metric-line" id="line-${key}-${serverId}">—</div>
+          </div>
+          <div class="metric-chart"><canvas id="spark-${key}-${serverId}" width="100" height="46"></canvas></div>
+        </div>
+      </div>`;
+    }
+
+    function renderServerMetricsHtml(serverId) {
+      return `<div class="server-metrics">
+        ${metricCard(serverId, 'cpu', 'CPU')}
+        ${metricCard(serverId, 'ram', 'RAM')}
+        ${metricCard(serverId, 'disk', 'Disk')}
+        ${metricCard(serverId, 'swap', 'Swap')}
+        ${metricCard(serverId, 'net', 'Network')}
+      </div>
+      <div class="expand-hint">Click to expand charts, Docker &amp; projects</div>`;
+    }
+
+    function renderServerDetailsHtml(s, serverId) {
+      const sys = s.system || {};
+      const cpu = sys.cpu || {};
+      const mem = sys.memory || {};
+      const disk = sys.disk_root || {};
+      const net = sys.network || {};
+      const panel = sys.panel || {};
+      const docker = sys.docker || {};
+      const swapPct = mem.swap_percent;
+      const loadPct = cpu.load_percent || 0;
+      const dockerSummary = docker.available
+        ? `${docker.running} running / ${docker.total} total · v${docker.version || '?'}`
+        : 'Docker not installed';
+      const histLen = (s.history || []).length;
+
+      return `<div class="charts">
+        <div class="chart-box">
+          <h3>CPU % (blue) · Load % (orange)</h3>
+          <canvas id="chart-cpu-${serverId}" width="520" height="56"></canvas>
+          <div class="legend"><i style="background:#5b8cff"></i>CPU <i style="background:#f0a060;margin-left:6px"></i>Load</div>
+        </div>
+        <div class="chart-box"><h3>RAM %</h3><canvas id="chart-ram-${serverId}" width="520" height="56"></canvas></div>
+        <div class="chart-box"><h3>Disk %</h3><canvas id="chart-disk-${serverId}" width="520" height="56"></canvas></div>
+        <div class="chart-box"><h3>Swap %</h3><canvas id="chart-swap-${serverId}" width="520" height="56"></canvas></div>
+        <div class="chart-box"><h3>Network throughput</h3><canvas id="chart-net-${serverId}" width="520" height="56"></canvas></div>
+      </div>
+      <div class="detail-grid">
+        <div class="full"><strong>${esc(sys.hostname || '—')}</strong> · ${esc(sys.ip || '—')}</div>
+        <div class="full">${esc(sys.os || '—')} · kernel ${esc(sys.kernel || '—')}</div>
+        <div><span>Uptime:</span> ${esc(sys.uptime_human || '—')}</div>
+        <div><span>Load:</span> ${cpu.load_1 ?? '—'} / ${cpu.load_5 ?? '—'} / ${cpu.load_15 ?? '—'} (${loadPct}% of ${cpu.cores ?? '?'} cores)</div>
+        <div class="full"><span>Network:</span> ↓ ${esc(net.rx_rate_human || '—')} · ↑ ${esc(net.tx_rate_human || '—')}</div>
+        <div class="full"><span>Disk /:</span> ${esc(disk.used_human || '—')} / ${esc(disk.total_human || '—')} (${esc(disk.free_human || '—')} free)</div>
+        ${sys.disk_scan_root ? `<div class="full"><span>Disk ${esc(panel.scan_root || '')}:</span> ${esc(sys.disk_scan_root.used_human)} / ${esc(sys.disk_scan_root.total_human)}</div>` : ''}
+        <div><span>Workers:</span> ${panel.running_workers ?? 0} active · ${panel.project_count ?? 0} projects</div>
+        <div><span>Swap:</span> ${swapPct != null ? swapPct + '% · ' + esc(mem.swap_used_human || '—') : 'none'}</div>
+        <div><span>Agent CLI:</span> ${esc((sys.agent || {}).version || 'not installed')}</div>
+        <div><span>API key:</span> ${(sys.agent || {}).api_key_set ? 'configured' : 'missing'}</div>
+        <div class="full section-title">Docker · ${dockerSummary}</div>
+        ${renderDockerGroups(serverId, docker)}
+        <div class="full" style="color:var(--muted);font-size:.65rem;margin-top:4px">History: ${histLen} samples</div>
+      </div>`;
+    }
+
+    function paintServerCharts(s) {
+      if (!s.online) return;
+      const serverId = sid(s.id);
+      const sys = s.system || {};
+      const cpu = sys.cpu || {};
+      const mem = sys.memory || {};
+      const disk = sys.disk_root || {};
+      const net = sys.network || {};
+      const history = s.history || [];
+      const loadPct = cpu.load_percent || 0;
+      const swapPct = mem.swap_percent;
+
+      const cpuLvl = healthLevel(Math.max(cpu.percent || 0, loadPct), true);
+      const ramLvl = healthLevel(mem.percent || 0, false);
+      const diskLvl = healthLevel(disk.percent || 0, false);
+      const swapLvl = swapPct != null ? healthLevel(swapPct, false) : 'ok';
+
+      applyMetricStatus(serverId, 'cpu', cpuLvl);
+      applyMetricStatus(serverId, 'ram', ramLvl);
+      applyMetricStatus(serverId, 'disk', diskLvl);
+      applyMetricStatus(serverId, 'swap', swapLvl);
+      applyMetricStatus(serverId, 'net', 'ok');
+
+      const line = (key, html) => {
+        const el = document.getElementById(`line-${key}-${serverId}`);
+        if (el) el.innerHTML = html;
+      };
+
+      line('cpu', `${cpu.percent ?? '—'}% <span class="dim">· ${cpu.cores ?? '?'}c · load ${loadPct}%</span>`);
+      line('ram', `${mem.percent ?? '—'}% <span class="dim">· ${mem.used_human || '—'}/${mem.total_human || '—'}</span>`);
+      line('disk', `${disk.percent ?? '—'}% <span class="dim">· ${disk.used_human || '—'}/${disk.total_human || '—'}</span>`);
+      line('swap', swapPct != null
+        ? `${swapPct}% <span class="dim">· ${mem.swap_used_human || '—'} used</span>`
+        : `<span class="dim">none</span>`);
+      line('net', `↓${net.rx_rate_human || '—'} <span class="dim">↑${net.tx_rate_human || '—'}</span>`);
+
+      const cpuHist = history.map(p => p.cpu ?? 0);
+      const loadHist = history.map(p => p.load_pct ?? 0);
+      const ramHist = history.map(p => p.ram ?? 0);
+      const diskHist = history.map(p => p.disk ?? 0);
+      const swapHist = history.map(p => p.swap ?? 0);
+      const netHist = history.map(p => p.net ?? 0);
+      const netPeak = netMax(netHist);
+
+      drawSparkline(`spark-cpu-${serverId}`, [cpuHist.slice(-30), loadHist.slice(-30)], {
+        max: 100, percent: true, colors: ['#5b8cff', '#f0a060'], dashed: [false, true],
+      });
+      drawSparkline(`spark-ram-${serverId}`, ramHist.slice(-30), { max: 100, percent: true, colors: ['#3dd68c'] });
+      drawSparkline(`spark-disk-${serverId}`, diskHist.slice(-30), { max: 100, percent: true, colors: ['#e8c468'] });
+      drawSparkline(`spark-swap-${serverId}`, swapHist.slice(-30), { max: 100, percent: true, colors: ['#c678dd'] });
+      drawSparkline(`spark-net-${serverId}`, netHist.slice(-30), { max: netPeak, percent: false, colors: ['#9b8cff'] });
+
+      if (!expanded.has(s.id)) return;
+
+      drawChart(`chart-cpu-${serverId}`, [cpuHist, loadHist], {
+        max: 100, percent: true, colors: ['#5b8cff', '#f0a060'], dashed: [false, true],
+      });
+      drawChart(`chart-ram-${serverId}`, ramHist, { max: 100, percent: true, colors: ['#3dd68c'] });
+      drawChart(`chart-disk-${serverId}`, diskHist, { max: 100, percent: true, colors: ['#e8c468'] });
+      drawChart(`chart-swap-${serverId}`, swapHist, { max: 100, percent: true, colors: ['#c678dd'] });
+      drawChart(`chart-net-${serverId}`, netHist, { max: netPeak, percent: false, colors: ['#9b8cff'] });
+    }
+
     function renderServers(snapshots) {
+      lastSnapshots = snapshots;
       const el = document.getElementById('servers');
       if (!snapshots.length) {
         el.innerHTML = '<p class="sub">No servers yet. Click <strong>Add server</strong>.</p>';
@@ -285,14 +609,10 @@
         const open = expanded.has(s.id) ? ' open' : '';
         const offline = !s.online ? ' offline' : '';
         const badge = s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">${esc(s.error || 'offline')}</span>`;
-        const sum = s.summary || {};
-        const metrics = s.online ? `
-          <div class="metrics">
-            <div class="m"><div class="k">CPU</div><div class="v">${sum.cpu ?? '—'}%</div></div>
-            <div class="m"><div class="k">RAM</div><div class="v">${sum.ram ?? '—'}%</div></div>
-            <div class="m"><div class="k">Disk</div><div class="v">${sum.disk ?? '—'}%</div></div>
-            <div class="m"><div class="k">Workers</div><div class="v">${sum.workers ?? 0}</div></div>
-          </div>` : `<p class="sub" style="margin-top:8px">${esc(s.error || 'Unreachable')}</p>`;
+        const serverId = sid(s.id);
+        const metrics = s.online
+          ? renderServerMetricsHtml(serverId)
+          : `<p class="sub" style="margin-top:8px">${esc(s.error || 'Unreachable')}</p>`;
         const folders = (s.folders || []).map(f => {
           const enc = encodeURIComponent(f.name);
           const btn = f.running
@@ -304,6 +624,7 @@
             <span class="dot ${f.running ? 'on' : ''}"></span>
           </div>`;
         }).join('');
+        const details = s.online ? renderServerDetailsHtml(s, serverId) : '';
         return `<div class="server${open}${offline}" data-id="${esc(s.id)}">
           <div class="server-head" data-toggle="${esc(s.id)}">
             <div class="server-title">
@@ -313,22 +634,42 @@
             ${metrics}
           </div>
           <div class="server-body">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-              <span class="sub">${(s.folders || []).length} projects</span>
+            ${details}
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px">
+              <span class="section-title" style="margin:0">${(s.folders || []).length} projects</span>
               <button class="btn btn-ghost btn-sm" data-remove="${esc(s.id)}" type="button">Remove</button>
             </div>
             <div class="projects">${folders || '<p class="sub">No projects</p>'}</div>
           </div>
         </div>`;
       }).join('');
+
+      snapshots.forEach(s => paintServerCharts(s));
     }
 
     document.getElementById('servers').addEventListener('click', async (e) => {
+      const dockerToggle = e.target.closest('[data-docker-toggle]');
+      if (dockerToggle) {
+        e.stopPropagation();
+        const key = dockerToggle.dataset.dockerToggle;
+        if (expandedDocker.has(key)) expandedDocker.delete(key); else expandedDocker.add(key);
+        const el = dockerToggle.closest('.docker-group');
+        if (el) {
+          const open = expandedDocker.has(key);
+          el.classList.toggle('open', open);
+          const chev = el.querySelector('.docker-group-chevron');
+          if (chev) chev.textContent = open ? '▾' : '▸';
+        }
+        return;
+      }
+
       const t = e.target.closest('[data-toggle]');
       if (t) {
         const id = t.dataset.toggle;
         if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
         document.querySelectorAll('.server').forEach(el => el.classList.toggle('open', expanded.has(el.dataset.id)));
+        const snap = lastSnapshots.find(s => s.id === id);
+        if (snap) requestAnimationFrame(() => paintServerCharts(snap));
         return;
       }
       const start = e.target.closest('[data-start]');

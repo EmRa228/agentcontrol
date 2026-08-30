@@ -697,6 +697,7 @@ def docker_stats() -> dict:
 def record_metrics(snapshot: dict) -> None:
     docker = snapshot.get("docker") or {}
     network = snapshot.get("network") or {}
+    swap_pct = snapshot["memory"].get("swap_percent")
     METRICS_HISTORY.append(
         {
             "t": time.time(),
@@ -704,6 +705,7 @@ def record_metrics(snapshot: dict) -> None:
             "load_pct": snapshot["cpu"]["load_percent"],
             "ram": snapshot["memory"]["percent"],
             "disk": snapshot["disk_root"]["percent"],
+            "swap": swap_pct if swap_pct is not None else 0,
             "net": network.get("total_rate") or 0,
             "docker_running": docker.get("running") or 0,
         }

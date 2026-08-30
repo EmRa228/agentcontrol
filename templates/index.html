@@ -29,8 +29,8 @@
     .sub { color: var(--muted); font-size: .75rem; margin-top: 2px; }
     .live { font-size: .7rem; color: var(--green); }
     #server-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
-    .server-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 8px; cursor: pointer; }
-    @media (min-width: 700px) { .server-summary { grid-template-columns: repeat(4, 1fr); } }
+    .server-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px; padding: 8px; cursor: pointer; }
+    @media (min-width: 700px) { .server-summary { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); } }
     .metric {
       background: #0d1016; border: 1px solid var(--border); border-radius: 8px; padding: 5px 6px; min-width: 0;
     }
@@ -236,6 +236,15 @@
             <div class="metric-chart"><canvas id="spark-disk" width="100" height="46"></canvas></div>
           </div>
         </div>
+        <div class="metric" id="metric-swap">
+          <div class="metric-row">
+            <div class="metric-info">
+              <div class="metric-head"><span class="label">Swap</span><span class="status" id="st-swap">✓</span></div>
+              <div class="metric-line" id="m-swap-line">—</div>
+            </div>
+            <div class="metric-chart"><canvas id="spark-swap" width="100" height="46"></canvas></div>
+          </div>
+        </div>
         <div class="metric" id="metric-net">
           <div class="metric-row">
             <div class="metric-info">
@@ -255,6 +264,7 @@
           </div>
           <div class="chart-box"><h3>RAM % · 0–100</h3><canvas id="chart-ram" width="560" height="64"></canvas></div>
           <div class="chart-box"><h3>Disk % · 0–100</h3><canvas id="chart-disk" width="560" height="64"></canvas></div>
+          <div class="chart-box"><h3>Swap % · 0–100</h3><canvas id="chart-swap" width="560" height="64"></canvas></div>
           <div class="chart-box"><h3>Network throughput</h3><canvas id="chart-net" width="560" height="64"></canvas></div>
         </div>
         <div id="server-detail-grid" class="detail-grid"></div>
@@ -328,7 +338,6 @@
     let ctxProjectName = null;
     let longPressTimer = null;
     let longPressRow = null;
-    let modelsLoaded = false; // refreshed when settings panel opens
 
     function getStoredPassword() { return localStorage.getItem(AUTH_KEY) || ''; }
     function storePassword(pw) { localStorage.setItem(AUTH_KEY, pw); }
@@ -608,10 +617,13 @@
       const cpuLvl = healthLevel(Math.max(s.cpu.percent, loadPct), true);
       const ramLvl = healthLevel(s.memory.percent, false);
       const diskLvl = healthLevel(s.disk_root.percent, false);
+      const swapPct = s.memory.swap_percent;
+      const swapLvl = swapPct != null ? healthLevel(swapPct, false) : 'ok';
 
       applyStatus('metric-cpu', 'st-cpu', cpuLvl);
       applyStatus('metric-ram', 'st-ram', ramLvl);
       applyStatus('metric-disk', 'st-disk', diskLvl);
+      applyStatus('metric-swap', 'st-swap', swapLvl);
 
       document.getElementById('m-cpu-line').innerHTML =
         `${s.cpu.percent}% <span class="dim">· ${s.cpu.cores}c · load ${loadPct}%</span>`;
@@ -619,6 +631,9 @@
         `${s.memory.percent}% <span class="dim">· ${s.memory.used_human}/${s.memory.total_human}</span>`;
       document.getElementById('m-disk-line').innerHTML =
         `${s.disk_root.percent}% <span class="dim">· ${s.disk_root.used_human}/${s.disk_root.total_human}</span>`;
+      document.getElementById('m-swap-line').innerHTML = swapPct != null
+        ? `${swapPct}% <span class="dim">· ${s.memory.swap_used_human || '—'} used</span>`
+        : `<span class="dim">none</span>`;
       document.getElementById('m-net-line').innerHTML =
         `↓${s.network.rx_rate_human} <span class="dim">↑${s.network.tx_rate_human}</span>`;
 
@@ -626,6 +641,7 @@
       const loadHist = history.map(p => p.load_pct ?? 0);
       const ramHist = history.map(p => p.ram);
       const diskHist = history.map(p => p.disk);
+      const swapHist = history.map(p => p.swap ?? 0);
       const netHist = history.map(p => p.net ?? 0);
       netPeak = netMax(netHist);
 
@@ -634,6 +650,7 @@
       });
       drawSparkline('spark-ram', ramHist.slice(-30), { max: 100, percent: true, colors: ['#3dd68c'] });
       drawSparkline('spark-disk', diskHist.slice(-30), { max: 100, percent: true, colors: ['#e8c468'] });
+      drawSparkline('spark-swap', swapHist.slice(-30), { max: 100, percent: true, colors: ['#c678dd'] });
       drawSparkline('spark-net', netHist.slice(-30), { max: netPeak, percent: false, colors: ['#9b8cff'] });
 
       drawChart('chart-cpu', [cpuHist, loadHist], {
@@ -641,6 +658,7 @@
       });
       drawChart('chart-ram', ramHist, { max: 100, percent: true, colors: ['#3dd68c'] });
       drawChart('chart-disk', diskHist, { max: 100, percent: true, colors: ['#e8c468'] });
+      drawChart('chart-swap', swapHist, { max: 100, percent: true, colors: ['#c678dd'] });
       drawChart('chart-net', netHist, { max: netPeak, percent: false, colors: ['#9b8cff'] });
 
       const statusEl = document.getElementById('settings-api-status');
@@ -662,6 +680,7 @@
         <div class="full"><span>Disk /:</span> ${s.disk_root.used_human} / ${s.disk_root.total_human} (${s.disk_root.free_human} free)</div>
         ${s.disk_scan_root ? `<div class="full"><span>Disk ${s.panel.scan_root}:</span> ${s.disk_scan_root.used_human} / ${s.disk_scan_root.total_human}</div>` : ''}
         <div><span>Workers:</span> ${s.panel.running_workers} active</div>
+        <div><span>Swap:</span> ${swapPct != null ? swapPct + '% · ' + (s.memory.swap_used_human || '—') : 'none'}</div>
         <div><span>Agent CLI:</span> ${s.agent.version || 'not installed'}</div>
         <div class="full section-title" style="margin-top:8px">Docker · ${dockerSummary}</div>
         ${renderDockerGroups(s.docker)}
