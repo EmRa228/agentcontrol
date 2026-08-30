@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+config.yaml
+.env
+*.log
+auth-password
+**/auth-password
+fleet/node_modules/
+fleet/.wrangler/
+.dockerignore

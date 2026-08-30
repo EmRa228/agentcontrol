@@ -1,0 +1,30 @@
+services:
+  agentcontrol:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+      args:
+        AGENT_HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        AGENT_HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
+    image: agentcontrol:local
+    container_name: agentcontrol
+    network_mode: host
+    pid: host
+    cap_add:
+      - SYS_ADMIN
+    env_file:
+      - path: /etc/agentcontrol/env
+        required: false
+    environment:
+      SCAN_ROOT: ${SCAN_ROOT:-/root}
+      PORT: "30228"
+      STATE_DIR: /var/lib/agentcontrol
+      API_KEY_FILE: /etc/agentcontrol/api-key
+      AUTH_PASSWORD_FILE: /etc/agentcontrol/auth-password
+    volumes:
+      - ${SCAN_ROOT:-/root}:${SCAN_ROOT:-/root}
+      - /etc/agentcontrol:/etc/agentcontrol
+      - /var/lib/agentcontrol:/var/lib/agentcontrol
+      - ${XRAY_CONFIG_DIR:-/usr/local/etc/xray}:/usr/local/etc/xray
+    restart: unless-stopped

@@ -92,23 +92,19 @@ setup_api_key() {
     return
   fi
   if [[ ! -t 0 ]]; then
-    echo "WARNING: no API key. Set CURSOR_API_KEY=... or add ${CONFIG_DIR}/api-key"
-    touch "${CONFIG_DIR}/api-key"
-    chmod 600 "${CONFIG_DIR}/api-key"
+    log "No API key yet — set later in the web UI or ${CONFIG_DIR}/api-key"
     return
   fi
   echo ""
-  echo "Cursor personal API key required (Dashboard → API Keys)"
+  echo "Cursor personal API key (optional — can set in web UI on first visit)"
   echo "https://cursor.com/settings"
-  read -rsp "Paste API key: " key
+  read -rsp "Paste API key (Enter to skip): " key
   echo ""
   if [[ -z "${key}" ]]; then
-    echo "WARNING: no API key set. Start will fail until you add one:"
-    echo "  echo YOUR_KEY | sudo tee ${CONFIG_DIR}/api-key"
-    touch "${CONFIG_DIR}/api-key"
-  else
-    printf '%s' "${key}" > "${CONFIG_DIR}/api-key"
+    log "Skipping API key — configure in panel Settings on first visit"
+    return
   fi
+  printf '%s' "${key}" > "${CONFIG_DIR}/api-key"
   chmod 600 "${CONFIG_DIR}/api-key"
 }
 
