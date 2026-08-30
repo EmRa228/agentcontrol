@@ -24,16 +24,32 @@ Mobile-friendly UI with per-server password protection.
 - [Cursor agent CLI](https://cursor.com/docs/cloud-agent/self-hosted-guides/my-machines)
 - Personal API key from [Cursor Dashboard](https://cursor.com/settings)
 
-## Quick install (idempotent)
+## Quick install (Docker + wizard, idempotent)
+
+Interactive wizard — asks **direct vs xray proxy** (default proxy port `30229`), **scan root** (default `/root`), optional API key/password:
 
 ```bash
-sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && CURSOR_API_KEY=YOUR_CURSOR_KEY /opt/agentcontrol/bootstrap.sh'
+sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && /opt/agentcontrol/bootstrap.sh'
 ```
 
-Update later:
+Non-interactive (proxy mode, Iran-friendly):
 
 ```bash
-sudo CURSOR_API_KEY=YOUR_KEY PANEL_PASSWORD=your-pass /opt/agentcontrol/bootstrap.sh
+sudo AGENTCONTROL_NETWORK_MODE=2 AGENTCONTROL_PROXY_PORT=30229 SCAN_ROOT=/root /opt/agentcontrol/bootstrap.sh
+```
+
+Proxy mode configures xray on `127.0.0.1:30229` for **runtime** Cursor agent traffic. The Docker image builds directly (Debian/PyPI); the container receives `HTTP_PROXY` via `/etc/agentcontrol/env`.
+
+Update later (rebuild + restart container):
+
+```bash
+sudo /opt/agentcontrol/bootstrap.sh
+```
+
+Legacy **systemd** install (no Docker):
+
+```bash
+sudo LEGACY_INSTALL=1 /opt/agentcontrol/bootstrap.sh
 ```
 
 Fresh reinstall (removes legacy `agentstart`):
@@ -88,6 +104,17 @@ File: `/etc/agentcontrol/config.yaml`
 
 ## Service
 
+Docker (default):
+
+```bash
+cd /opt/agentcontrol
+docker compose ps
+docker compose logs -f
+docker compose restart
+```
+
+Legacy systemd:
+
 ```bash
 systemctl status agentcontrol
 systemctl restart agentcontrol
@@ -126,7 +153,9 @@ MIT — see [LICENSE](LICENSE)
 ## فارسی
 
 ```bash
-sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && CURSOR_API_KEY=کلید_شما /opt/agentcontrol/bootstrap.sh'
+sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && /opt/agentcontrol/bootstrap.sh'
 ```
+
+ویزارد: مستقیم یا پروکسی xray (پورت پیش‌فرض `30229`)، مسیر پروژه‌ها (پیش‌فرض `/root`). API key اختیاری — در داشبورد هم قابل تنظیم است.
 
 پسورد: `sudo cat /etc/agentcontrol/auth-password`

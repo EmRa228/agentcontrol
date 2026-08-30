@@ -27,5 +27,10 @@ else
 fi
 
 cd "${INSTALL_DIR}"
-chmod +x bootstrap.sh install.sh
-exec ./install.sh
+chmod +x bootstrap.sh install.sh install-wizard.sh scripts/setup-xray-proxy.sh 2>/dev/null || true
+
+if [[ "${LEGACY_INSTALL:-}" == "1" ]]; then
+  exec ./install.sh
+fi
+
+exec ./install-wizard.sh
