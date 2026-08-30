@@ -779,6 +779,49 @@ def proxy_url(settings: dict[str, Any] | None = None) -> str:
     return f"http://{listen}:{port}"
 
 
+def load_runtime_proxy_env() -> dict[str, str]:
+    """Load HTTP proxy variables for Cursor agent / Node processes."""
+    env_path = Path("/etc/agentcontrol/env")
+    values: dict[str, str] = {}
+    if env_path.is_file():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+
+    proxy = (
+        values.get("HTTPS_PROXY")
+        or values.get("https_proxy")
+        or values.get("HTTP_PROXY")
+        or values.get("http_proxy")
+        or ""
+    )
+    if not proxy and load_client_settings().get("enabled"):
+        proxy = proxy_url()
+
+    if not proxy:
+        return {}
+
+    return {
+        "HTTP_PROXY": proxy,
+        "HTTPS_PROXY": proxy,
+        "http_proxy": proxy,
+        "https_proxy": proxy,
+        "ALL_PROXY": proxy,
+        "all_proxy": proxy,
+        "NODE_USE_ENV_PROXY": "1",
+        "NO_PROXY": values.get("NO_PROXY", "localhost,127.0.0.1"),
+    }
+
+
+def apply_proxy_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    merged = dict(env or os.environ)
+    merged.update(load_runtime_proxy_env())
+    return merged
+
+
 def write_runtime_env(proxy_url_value: str | None) -> Path:
     env_path = Path("/etc/agentcontrol/env")
     env_path.parent.mkdir(parents=True, exist_ok=True)
@@ -788,6 +831,9 @@ def write_runtime_env(proxy_url_value: str | None) -> Path:
             f"HTTPS_PROXY={proxy_url_value}\n"
             f"http_proxy={proxy_url_value}\n"
             f"https_proxy={proxy_url_value}\n"
+            f"ALL_PROXY={proxy_url_value}\n"
+            f"all_proxy={proxy_url_value}\n"
+            "NODE_USE_ENV_PROXY=1\n"
             "NO_PROXY=localhost,127.0.0.1\n"
         )
     else:

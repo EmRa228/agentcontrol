@@ -27,11 +27,13 @@ from flask import Flask, jsonify, render_template, request
 
 from xray_client import (
     apply_client_settings,
+    apply_proxy_env,
     build_status_report,
     import_from_xray_config,
     load_client_settings,
     merge_share_url,
     merge_vless_url,
+    proxy_listening,
     public_settings,
     test_cursor_api,
     test_proxy,
@@ -197,7 +199,7 @@ def list_agent_models() -> list[dict]:
     agent_bin = find_agent_bin()
     if not agent_bin:
         return []
-    env = os.environ.copy()
+    env = apply_proxy_env(os.environ.copy())
     api_key = read_api_key()
     if api_key:
         env["CURSOR_API_KEY"] = api_key
@@ -954,6 +956,14 @@ def start_worker(name: str) -> tuple[dict, int]:
             "error": "Cursor API key missing. Set it: echo YOUR_KEY | sudo tee /etc/agentcontrol/api-key"
         }, 500
 
+    xray_settings = load_client_settings()
+    if xray_settings.get("enabled") and not proxy_listening(xray_settings):
+        return {
+            "error": "HTTP proxy is not listening on "
+            f"{xray_settings.get('proxy_listen', '127.0.0.1')}:{xray_settings.get('proxy_port', 30229)}. "
+            "Fix xray in Settings before starting workers.",
+        }, 503
+
     state = reconcile_state()
     existing = state.get(name)
     if existing and existing.get("pid") and is_running(existing["pid"]):
@@ -973,7 +983,7 @@ def start_worker(name: str) -> tuple[dict, int]:
 
     worker_id = worker_id_for(name)
     port = mgmt_port(name)
-    env = os.environ.copy()
+    env = apply_proxy_env(os.environ.copy())
     env["CURSOR_AGENT_WORKER_ID"] = worker_id
     env["CURSOR_API_KEY"] = api_key
     env["PATH"] = "/root/.local/bin:" + env.get("PATH", "")
