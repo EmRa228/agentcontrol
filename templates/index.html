@@ -162,6 +162,16 @@
       color: var(--text); border-radius: 8px; padding: 9px 11px; font-size: .82rem;
     }
     .settings-note { font-size: .68rem; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+    .xray-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px; margin-top: 8px;
+    }
+    .xray-grid label { display: block; font-size: .65rem; color: var(--muted); margin-bottom: 4px; }
+    .xray-grid input {
+      width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--card); color: var(--text); font-size: .75rem;
+    }
+    .xray-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .row.removing { opacity: 0; transform: scale(0.98); transition: opacity .15s, transform .15s; }
     .legend { font-size: .62rem; color: var(--muted); margin-top: 4px; }
     .legend i { display: inline-block; width: 10px; height: 2px; margin-right: 3px; vertical-align: middle; }
@@ -285,6 +295,27 @@
             <button class="btn btn-primary btn-sm" type="button" onclick="saveDefaultModel()">Save model</button>
           </div>
           <div class="api-key-hint" id="settings-model-status">—</div>
+        </div>
+        <div class="settings-block">
+          <div class="section-title">xray client (proxy)</div>
+          <div class="settings-note">Upstream VLESS+Reality server and local HTTP proxy port for Cursor agent traffic. Changes apply to host xray and restart the service.</div>
+          <div class="xray-grid">
+            <div><label>Local proxy port</label><input id="xray-proxy-port" type="number" min="1" max="65535" placeholder="30229"></div>
+            <div><label>Server address</label><input id="xray-address" type="text" placeholder="1.2.3.4"></div>
+            <div><label>Server port</label><input id="xray-port" type="number" min="1" max="65535" placeholder="2096"></div>
+            <div><label>UUID</label><input id="xray-uuid" type="text" placeholder="uuid"></div>
+            <div><label>Reality SNI</label><input id="xray-server-name" type="text" placeholder="example.com"></div>
+            <div><label>Public key</label><input id="xray-public-key" type="text" placeholder="public key"></div>
+            <div><label>Short ID</label><input id="xray-short-id" type="text" placeholder="shortId"></div>
+            <div><label>Fingerprint</label><input id="xray-fingerprint" type="text" placeholder="chrome"></div>
+            <div><label>Flow</label><input id="xray-flow" type="text" placeholder="xtls-rprx-vision"></div>
+          </div>
+          <div class="xray-actions">
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveXrayClient()">Save &amp; apply</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="testXrayClient()">Test proxy</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="importXrayClient()">Import from xray</button>
+          </div>
+          <div class="api-key-hint" id="xray-status">—</div>
         </div>
       </div>
     </div>
@@ -771,9 +802,10 @@
 
     async function loadSettingsPanel() {
       try {
-        const [settingsRes, modelsRes] = await Promise.all([
+        const [settingsRes, modelsRes, xrayRes] = await Promise.all([
           apiFetch('/api/settings'),
           apiFetch('/api/models'),
+          apiFetch('/api/xray/client'),
         ]);
         const settings = await settingsRes.json();
         const select = document.getElementById('settings-model');
@@ -786,7 +818,102 @@
         document.getElementById('settings-model-status').textContent = settings.default_model
           ? 'Default model: ' + settings.default_model
           : 'No default model — Cursor will use its own default.';
+        const xray = await xrayRes.json();
+        fillXrayForm(xray.settings || {});
+        updateXrayStatus(xray.settings || {}, xray.test || null);
       } catch (e) {}
+    }
+
+    function fillXrayForm(s) {
+      document.getElementById('xray-proxy-port').value = s.proxy_port || 30229;
+      document.getElementById('xray-address').value = s.address || '';
+      document.getElementById('xray-port').value = s.port || 443;
+      document.getElementById('xray-uuid').value = s.uuid || '';
+      document.getElementById('xray-server-name').value = s.server_name || '';
+      document.getElementById('xray-public-key').value = s.public_key || '';
+      document.getElementById('xray-short-id').value = s.short_id || '';
+      document.getElementById('xray-fingerprint').value = s.fingerprint || 'chrome';
+      document.getElementById('xray-flow').value = s.flow || 'xtls-rprx-vision';
+    }
+
+    function xrayPayload() {
+      return {
+        enabled: true,
+        proxy_port: Number(document.getElementById('xray-proxy-port').value || 30229),
+        address: document.getElementById('xray-address').value.trim(),
+        port: Number(document.getElementById('xray-port').value || 443),
+        uuid: document.getElementById('xray-uuid').value.trim(),
+        server_name: document.getElementById('xray-server-name').value.trim(),
+        public_key: document.getElementById('xray-public-key').value.trim(),
+        short_id: document.getElementById('xray-short-id').value.trim(),
+        fingerprint: document.getElementById('xray-fingerprint').value.trim() || 'chrome',
+        flow: document.getElementById('xray-flow').value.trim() || 'xtls-rprx-vision',
+        restart: true,
+        write_env: true,
+      };
+    }
+
+    function updateXrayStatus(settings, test) {
+      const el = document.getElementById('xray-status');
+      const parts = [];
+      if (settings.proxy_url) parts.push('Proxy: ' + settings.proxy_url);
+      parts.push(settings.listening ? 'Listening' : 'Not listening');
+      if (test) {
+        parts.push(test.ok ? ('Test OK ' + (test.elapsed_ms || '') + 'ms') : ('Test failed: ' + (test.error || 'unknown')));
+      }
+      el.textContent = parts.join(' · ');
+      el.className = 'api-key-hint' + ((test && test.ok) || settings.listening ? ' ok' : '');
+    }
+
+    async function saveXrayClient() {
+      const status = document.getElementById('xray-status');
+      try {
+        const res = await apiFetch('/api/xray/client', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(xrayPayload()),
+        });
+        const data = await res.json();
+        if (!res.ok) { status.textContent = data.error || 'Save failed'; status.className = 'api-key-hint'; return; }
+        fillXrayForm(data.settings || {});
+        updateXrayStatus(data.settings || {}, data.test || null);
+        status.textContent = 'Saved and applied' + (data.restarted ? ' (xray restarted)' : '');
+        status.className = 'api-key-hint ok';
+      } catch (e) {
+        status.textContent = 'Save failed';
+        status.className = 'api-key-hint';
+      }
+    }
+
+    async function testXrayClient() {
+      const status = document.getElementById('xray-status');
+      status.textContent = 'Testing proxy…';
+      try {
+        const res = await apiFetch('/api/xray/client/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(xrayPayload()),
+        });
+        const data = await res.json();
+        updateXrayStatus({ proxy_url: data.proxy, listening: true }, data);
+      } catch (e) {
+        status.textContent = 'Test failed';
+        status.className = 'api-key-hint';
+      }
+    }
+
+    async function importXrayClient() {
+      const status = document.getElementById('xray-status');
+      try {
+        const res = await apiFetch('/api/xray/client/import', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { status.textContent = data.error || 'Import failed'; return; }
+        fillXrayForm(data.settings || {});
+        status.textContent = 'Imported from xray config — review and Save & apply';
+        status.className = 'api-key-hint';
+      } catch (e) {
+        status.textContent = 'Import failed';
+      }
     }
 
     async function saveDefaultModel() {

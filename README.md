@@ -32,13 +32,13 @@ Interactive wizard — asks **direct vs xray proxy** (default proxy port `30229`
 sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && /opt/agentcontrol/bootstrap.sh'
 ```
 
-Non-interactive (proxy mode, Iran-friendly):
+Non-interactive (proxy mode, import existing xray client config):
 
 ```bash
-sudo AGENTCONTROL_NETWORK_MODE=2 AGENTCONTROL_PROXY_PORT=30229 SCAN_ROOT=/root /opt/agentcontrol/bootstrap.sh
+sudo XRAY_IMPORT_ONLY=1 AGENTCONTROL_NETWORK_MODE=2 AGENTCONTROL_PROXY_PORT=30229 SCAN_ROOT=/root /opt/agentcontrol/bootstrap.sh
 ```
 
-Proxy mode configures xray on `127.0.0.1:30229` for **runtime** Cursor agent traffic. The Docker image builds directly (Debian/PyPI); the container receives `HTTP_PROXY` via `/etc/agentcontrol/env`.
+Proxy mode configures xray client outbound + local HTTP inbound on `127.0.0.1:30229` for **runtime** Cursor agent traffic. Edit later in the panel under **xray client (proxy)**.
 
 Update later (rebuild + restart container):
 

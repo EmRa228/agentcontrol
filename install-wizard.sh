@@ -135,7 +135,7 @@ optional_secret() {
     return
   fi
   if [[ -t 0 ]]; then
-  echo ""
+    echo ""
     read -rsp "${prompt} (optional, Enter to skip): " value
     echo ""
     if [[ -n "${value}" ]]; then
@@ -146,23 +146,127 @@ optional_secret() {
   fi
 }
 
+prompt_field() {
+  local label="$1"
+  local default="$2"
+  local var_name="$3"
+  local value="${!var_name:-}"
+  if [[ -n "${value}" ]]; then
+    echo "${value}"
+    return
+  fi
+  if [[ -t 0 ]]; then
+    read -rp "${label} [${default}]: " value
+    echo "${value:-${default}}"
+  else
+    echo "${default}"
+  fi
+}
+
+configure_xray_client() {
+  local proxy_port="$1"
+  log "Configuring xray client (VLESS+Reality outbound + local HTTP proxy)"
+
+  python3 "${INSTALL_DIR}/scripts/apply-xray-client.py" --import >/dev/null 2>&1 || true
+
+  if [[ "${XRAY_IMPORT_ONLY:-}" == "1" ]] || { [[ ! -t 0 ]] && [[ -z "${XRAY_ADDRESS:-}" ]]; }; then
+    log "Applying xray client from existing config / saved settings"
+    python3 - <<PY
+import json, sys
+sys.path.insert(0, "${INSTALL_DIR}")
+from xray_client import apply_client_settings, load_client_settings
+
+settings = load_client_settings()
+settings["enabled"] = True
+settings["proxy_port"] = int("${proxy_port}")
+result = apply_client_settings(settings, restart=True, write_env=True)
+print(json.dumps(result, indent=2))
+if not result.get("listening"):
+    sys.exit(1)
+PY
+    return
+  fi
+
+  local current_json
+  current_json="$(python3 - <<PY
+import json, sys
+sys.path.insert(0, "${INSTALL_DIR}")
+from xray_client import load_client_settings
+print(json.dumps(load_client_settings()))
+PY
+)"
+
+  local address port uuid server_name public_key short_id fingerprint flow
+  address="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('address',''))" "${current_json}")"
+  port="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('port',443))" "${current_json}")"
+  uuid="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('uuid',''))" "${current_json}")"
+  server_name="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('server_name',''))" "${current_json}")"
+  public_key="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('public_key',''))" "${current_json}")"
+  short_id="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('short_id',''))" "${current_json}")"
+  fingerprint="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('fingerprint','chrome'))" "${current_json}")"
+  flow="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('flow','xtls-rprx-vision'))" "${current_json}")"
+
+  if [[ -t 0 ]] && [[ -z "${XRAY_ADDRESS:-}" ]]; then
+    echo "" >&2
+    echo "xray client outbound (upstream proxy server):" >&2
+    echo "Press Enter to keep the value in brackets." >&2
+  fi
+
+  address="$(prompt_field "Server address" "${address}" XRAY_ADDRESS)"
+  port="$(prompt_field "Server port" "${port}" XRAY_PORT)"
+  uuid="$(prompt_field "UUID" "${uuid}" XRAY_UUID)"
+  server_name="$(prompt_field "Reality SNI (serverName)" "${server_name}" XRAY_SERVER_NAME)"
+  public_key="$(prompt_field "Reality public key (password)" "${public_key}" XRAY_PUBLIC_KEY)"
+  short_id="$(prompt_field "Reality shortId" "${short_id}" XRAY_SHORT_ID)"
+  fingerprint="$(prompt_field "TLS fingerprint" "${fingerprint:-chrome}" XRAY_FINGERPRINT)"
+  flow="$(prompt_field "Flow" "${flow:-xtls-rprx-vision}" XRAY_FLOW)"
+
+  python3 - <<PY
+import json, sys
+sys.path.insert(0, "${INSTALL_DIR}")
+from xray_client import apply_client_settings
+
+settings = {
+    "enabled": True,
+    "proxy_port": int("${proxy_port}"),
+    "address": """${address}""",
+    "port": int("""${port}"""),
+    "uuid": """${uuid}""",
+    "server_name": """${server_name}""",
+    "public_key": """${public_key}""",
+    "short_id": """${short_id}""",
+    "fingerprint": """${fingerprint}""",
+    "flow": """${flow}""",
+}
+result = apply_client_settings(settings, restart=True, write_env=True)
+print(json.dumps(result, indent=2))
+if not result.get("listening"):
+    sys.exit(1)
+PY
+}
+
 main() {
   need_root
   ensure_docker
 
   cd "${INSTALL_DIR}"
-  chmod +x "${INSTALL_DIR}/install-wizard.sh" "${INSTALL_DIR}/scripts/setup-xray-proxy.sh" 2>/dev/null || true
+  chmod +x "${INSTALL_DIR}/install-wizard.sh" "${INSTALL_DIR}/scripts/setup-xray-proxy.sh" "${INSTALL_DIR}/scripts/apply-xray-client.py" 2>/dev/null || true
 
   local net_mode proxy_port scan_root proxy_url=""
   net_mode="$(prompt_network_mode)"
 
   if [[ "${net_mode}" == "2" ]]; then
     proxy_port="$(prompt_proxy_port)"
-    log "Configuring xray HTTP inbound on 127.0.0.1:${proxy_port}"
-    "${INSTALL_DIR}/scripts/setup-xray-proxy.sh" "${proxy_port}"
+    configure_xray_client "${proxy_port}"
     proxy_url="http://127.0.0.1:${proxy_port}"
   else
-    log "Direct mode selected (no xray inbound changes)"
+    log "Direct mode selected (no xray changes)"
+    python3 - <<PY || true
+import sys
+sys.path.insert(0, "${INSTALL_DIR}")
+from xray_client import write_runtime_env
+write_runtime_env(None)
+PY
   fi
 
   scan_root="$(prompt_scan_root)"
@@ -171,8 +275,12 @@ main() {
     mkdir -p "${scan_root}"
   fi
 
-  write_env_file "${proxy_url}"
   write_config "${scan_root}"
+
+  # env file already written by configure_xray_client in proxy mode
+  if [[ "${net_mode}" != "2" ]]; then
+    write_env_file ""
+  fi
 
   optional_secret CURSOR_API_KEY "Cursor API key" "${CONFIG_DIR}/api-key"
   optional_secret PANEL_PASSWORD "Panel password" "${CONFIG_DIR}/auth-password"

@@ -25,6 +25,14 @@ from urllib.request import urlopen
 import yaml
 from flask import Flask, jsonify, render_template, request
 
+from xray_client import (
+    apply_client_settings,
+    import_from_xray_config,
+    load_client_settings,
+    public_settings,
+    test_proxy,
+)
+
 IGNORE_MARKER = ".agentcontrol-ignore"
 WORKER_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 CURSOR_AGENTS_URL = "https://cursor.com/agents#workerId={worker_id}"
@@ -1130,6 +1138,65 @@ def api_settings_model():
     model = str(data.get("model", "")).strip()
     save_config_patch({"default_model": model})
     return jsonify({"ok": True, "default_model": model})
+
+
+@app.get("/api/xray/client")
+def api_xray_client_get():
+    settings = load_client_settings()
+    return jsonify(
+        {
+            "settings": public_settings(settings),
+            "test": test_proxy(settings) if settings.get("enabled") else None,
+        }
+    )
+
+
+@app.post("/api/xray/client")
+def api_xray_client_save():
+    data = request.get_json(silent=True) or {}
+    current = load_client_settings()
+    updates = {
+        "enabled": bool(data.get("enabled", current.get("enabled", True))),
+        "proxy_port": int(data.get("proxy_port", current.get("proxy_port", 30229))),
+        "proxy_listen": str(data.get("proxy_listen", current.get("proxy_listen", "127.0.0.1"))),
+        "address": str(data.get("address", current.get("address", ""))).strip(),
+        "port": int(data.get("port", current.get("port", 443))),
+        "uuid": str(data.get("uuid", current.get("uuid", ""))).strip(),
+        "flow": str(data.get("flow", current.get("flow", "xtls-rprx-vision"))).strip(),
+        "server_name": str(data.get("server_name", current.get("server_name", ""))).strip(),
+        "fingerprint": str(data.get("fingerprint", current.get("fingerprint", "chrome"))).strip(),
+        "public_key": str(data.get("public_key", current.get("public_key", ""))).strip(),
+        "short_id": str(data.get("short_id", current.get("short_id", ""))).strip(),
+        "spider_x": str(data.get("spider_x", current.get("spider_x", "/"))).strip() or "/",
+    }
+    if data.get("config_path"):
+        updates["config_path"] = str(data["config_path"])
+    try:
+        result = apply_client_settings(
+            {**current, **updates},
+            restart=bool(data.get("restart", True)),
+            write_env=bool(data.get("write_env", True)),
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except OSError as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(result)
+
+
+@app.post("/api/xray/client/import")
+def api_xray_client_import():
+    imported = import_from_xray_config()
+    if not imported:
+        return jsonify({"error": "could not import from xray config"}), 404
+    return jsonify({"settings": public_settings(imported)})
+
+
+@app.post("/api/xray/client/test")
+def api_xray_client_test():
+    data = request.get_json(silent=True) or {}
+    settings = {**load_client_settings(), **data} if data else load_client_settings()
+    return jsonify(test_proxy(settings))
 
 
 @app.get("/api/folders")

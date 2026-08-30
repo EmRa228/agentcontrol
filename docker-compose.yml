@@ -10,6 +10,9 @@ services:
     image: agentcontrol:local
     container_name: agentcontrol
     network_mode: host
+    pid: host
+    cap_add:
+      - SYS_ADMIN
     env_file:
       - path: /etc/agentcontrol/env
         required: false
@@ -23,4 +26,5 @@ services:
       - ${SCAN_ROOT:-/root}:${SCAN_ROOT:-/root}
       - /etc/agentcontrol:/etc/agentcontrol
       - /var/lib/agentcontrol:/var/lib/agentcontrol
+      - ${XRAY_CONFIG_DIR:-/usr/local/etc/xray}:/usr/local/etc/xray
     restart: unless-stopped
