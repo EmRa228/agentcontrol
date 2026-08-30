@@ -25,13 +25,28 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+function isDirectIpHost(hostname: string): boolean {
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return true;
+  if (hostname.startsWith("[") && hostname.endsWith("]")) return true;
+  if (hostname.includes(":") && !hostname.includes(".")) return true;
+  return false;
+}
+
+function directIpError(hostname: string): string {
+  return (
+    `Cloudflare Workers cannot call direct IP addresses (${hostname} — error 1003). ` +
+    "Create a DNS A record in your zone (grey cloud / DNS only), e.g. " +
+    "ac-tg-uk.aksbaz.com → 193.163.201.14, then use http://ac-tg-uk.aksbaz.com:30228"
+  );
+}
+
 function normalizeUrl(raw: string): string {
   let url = raw.trim();
   if (!url) throw new Error("URL required");
   if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
   const parsed = new URL(url);
-  if (!parsed.port && parsed.protocol === "http:") {
-    // keep default port; user should include :30228 if needed
+  if (isDirectIpHost(parsed.hostname)) {
+    throw new Error(directIpError(parsed.hostname));
   }
   return `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
 }
@@ -83,6 +98,13 @@ async function proxyAgent(
 
 async function readJsonSafe(res: Response): Promise<unknown> {
   const text = await res.text();
+  if (text.includes("error code: 1003")) {
+    return {
+      error: "Cloudflare error 1003 — use a hostname, not an IP address",
+      status: res.status,
+      hint: "Add an A record (DNS only) in your zone and use http://name.aksbaz.com:30228",
+    };
+  }
   try {
     return JSON.parse(text);
   } catch {

@@ -8,7 +8,22 @@ Each server stays as-is (public IP + port + panel password). You add them from t
 
 - A [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is enough to start)
 - [Node.js](https://nodejs.org/) 18+ on your laptop
-- Each AgentControl server reachable at `http://YOUR_IP:30228` from the internet
+- Each AgentControl server reachable at a **hostname** from the internet (not a raw IP — see below)
+
+## Important: use hostname, not IP
+
+Cloudflare Workers **cannot** `fetch()` direct IP addresses ([known limitation](https://developers.cloudflare.com/workers/platform/known-issues/#fetch-to-ip-addresses)).  
+If you use `http://193.163.201.14:30228` you get **error 1003**.
+
+**Fix:** In your Cloudflare DNS (e.g. `aksbaz.com`):
+
+1. **Add record** → Type **A**
+2. Name: `ac-tg-uk` (or any name)
+3. IPv4: `193.163.201.14`
+4. Proxy status: **DNS only** (grey cloud — not orange)
+5. In fleet, use: `http://ac-tg-uk.aksbaz.com:30228`
+
+Port `30228` only works with grey cloud. Orange cloud proxies ports 80/443 only.
 
 ## Quick install (~5 minutes)
 
@@ -120,7 +135,8 @@ npm run deploy
 | Problem | Fix |
 |--------|-----|
 | `FLEET_PASSWORD secret is not set` | Run `npx wrangler secret put FLEET_PASSWORD` and redeploy |
-| `cannot reach server` | Check firewall allows port 30228 from the internet |
+| `cannot reach server` / `error 1003` | Use a **hostname** (A record, grey cloud), not raw IP — see above |
+| `cannot reach server` (other) | Check firewall allows port 30228 from the internet |
 | `wrong server password` | Use the same password as the single-server AgentControl login |
 | `REPLACE_WITH_KV_NAMESPACE_ID` | Create KV namespace and update `wrangler.jsonc` |
 

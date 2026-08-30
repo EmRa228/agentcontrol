@@ -102,11 +102,14 @@
   <div id="add-modal" class="modal-overlay hidden">
     <div class="modal">
       <h2>Add server</h2>
-      <p class="sub" style="margin-bottom:10px">Use the same URL and panel password as the single-server AgentControl UI.</p>
+      <p class="sub" style="margin-bottom:10px">
+        Use a <strong>hostname</strong>, not a raw IP — Cloudflare Workers block direct IP access (error 1003).
+        Example: <code>http://ac-tg-uk.aksbaz.com:30228</code> with an A record (grey cloud) pointing to your server.
+      </p>
       <label>Name</label>
-      <input id="add-name" placeholder="e.g. production-uk">
-      <label>URL</label>
-      <input id="add-url" placeholder="http://1.2.3.4:30228">
+      <input id="add-name" placeholder="e.g. tg-uk">
+      <label>URL (hostname only)</label>
+      <input id="add-url" placeholder="http://ac-tg-uk.aksbaz.com:30228">
       <label>Panel password</label>
       <input id="add-password" type="password" placeholder="AgentControl password">
       <div class="modal-actions">
