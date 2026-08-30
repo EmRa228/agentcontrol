@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import ProxyHandler, build_opener
 
 import yaml
@@ -41,13 +42,120 @@ def default_client_settings() -> dict[str, Any]:
         "address": "",
         "port": 443,
         "uuid": "",
-        "flow": "xtls-rprx-vision",
+        "flow": "",
+        "network": "tcp",
         "server_name": "",
         "fingerprint": "chrome",
         "public_key": "",
         "short_id": "",
-        "spider_x": "/",
+        "spider_x": "",
     }
+
+
+def _first_param(params: dict[str, list[str]], *keys: str) -> str:
+    for key in keys:
+        values = params.get(key)
+        if values and str(values[0]).strip():
+            return str(values[0]).strip()
+    return ""
+
+
+def parse_vless_url(url: str) -> dict[str, Any]:
+    """Parse a vless:// share link into AgentControl xray client settings."""
+    raw = (url or "").strip()
+    if not raw:
+        raise ValueError("vless URL is empty")
+    if not raw.lower().startswith("vless://"):
+        raise ValueError("URL must start with vless://")
+
+    parsed = urlparse(raw)
+    if not parsed.hostname:
+        raise ValueError("missing server host in vless URL")
+
+    uuid = unquote(parsed.username or "").strip()
+    if not uuid:
+        raise ValueError("missing UUID in vless URL")
+
+    port = parsed.port or 443
+    params = parse_qs(parsed.query, keep_blank_values=False)
+
+    security = _first_param(params, "security", "type").lower()
+    if security and security not in {"reality", "tls", "none"}:
+        if security in {"tcp", "ws", "grpc"}:
+            network = security
+            security = _first_param(params, "security").lower() or "reality"
+        else:
+            network = _first_param(params, "type", "network") or "tcp"
+    else:
+        network = _first_param(params, "type", "network") or "tcp"
+
+    flow = _first_param(params, "flow")
+    encryption = _first_param(params, "encryption")
+    if encryption and encryption != "none":
+        raise ValueError(f"unsupported encryption: {encryption}")
+
+    settings: dict[str, Any] = {
+        "protocol": "vless",
+        "address": parsed.hostname,
+        "port": int(port),
+        "uuid": uuid,
+        "flow": flow,
+        "network": network or "tcp",
+        "server_name": _first_param(params, "sni", "serverName", "host"),
+        "fingerprint": _first_param(params, "fp", "fingerprint") or "chrome",
+        "public_key": _first_param(params, "pbk", "publicKey", "public_key", "password"),
+        "short_id": _first_param(params, "sid", "shortId", "short_id"),
+        "spider_x": _first_param(params, "spx", "spiderX", "spider_x"),
+    }
+
+    if security == "reality":
+        if not settings["server_name"]:
+            raise ValueError("reality SNI (sni=) is required")
+        if not settings["public_key"]:
+            raise ValueError("reality public key (pbk=) is required")
+
+    return settings
+
+
+def build_vless_url(settings: dict[str, Any]) -> str:
+    """Serialize settings to a vless:// share link."""
+    merged = _merge_settings(settings)
+    address = str(merged.get("address") or "").strip()
+    uuid = str(merged.get("uuid") or "").strip()
+    if not address or not uuid:
+        raise ValueError("address and uuid are required")
+
+    port = int(merged.get("port") or 443)
+    query_parts = ["security=reality", "encryption=none"]
+    network = str(merged.get("network") or "tcp").strip()
+    if network:
+        query_parts.append(f"type={network}")
+    flow = str(merged.get("flow") or "").strip()
+    if flow:
+        query_parts.append(f"flow={flow}")
+    server_name = str(merged.get("server_name") or "").strip()
+    if server_name:
+        query_parts.append(f"sni={server_name}")
+    public_key = str(merged.get("public_key") or "").strip()
+    if public_key:
+        query_parts.append(f"pbk={public_key}")
+    short_id = str(merged.get("short_id") or "").strip()
+    if short_id:
+        query_parts.append(f"sid={short_id}")
+    fingerprint = str(merged.get("fingerprint") or "chrome").strip()
+    if fingerprint:
+        query_parts.append(f"fp={fingerprint}")
+
+    return f"vless://{uuid}@{address}:{port}?{'&'.join(query_parts)}"
+
+
+def merge_vless_url(settings: dict[str, Any] | None, vless_url: str) -> dict[str, Any]:
+    """Merge a vless:// link into existing client settings."""
+    merged = _merge_settings(settings)
+    parsed = parse_vless_url(vless_url)
+    merged.update(parsed)
+    merged["enabled"] = True
+    return merged
 
 
 def _merge_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -112,18 +220,31 @@ def import_from_xray_config() -> dict[str, Any] | None:
         return settings if settings.get("address") else None
 
     ob_settings = outbound.get("settings") or {}
-    settings["address"] = str(ob_settings.get("address") or "")
-    settings["port"] = int(ob_settings.get("port") or 443)
-    settings["uuid"] = str(ob_settings.get("id") or "")
-    settings["flow"] = str(ob_settings.get("flow") or "xtls-rprx-vision")
+    vnext = ob_settings.get("vnext") or []
+    if vnext:
+        node = vnext[0]
+        users = node.get("users") or [{}]
+        user = users[0] if users else {}
+        settings["address"] = str(node.get("address") or "")
+        settings["port"] = int(node.get("port") or 443)
+        settings["uuid"] = str(user.get("id") or "")
+        settings["flow"] = str(user.get("flow") or "")
+    else:
+        settings["address"] = str(ob_settings.get("address") or "")
+        settings["port"] = int(ob_settings.get("port") or 443)
+        settings["uuid"] = str(ob_settings.get("id") or "")
+        settings["flow"] = str(ob_settings.get("flow") or "")
 
     stream = outbound.get("streamSettings") or {}
+    settings["network"] = str(stream.get("network") or stream.get("method") or "tcp")
     reality = stream.get("realitySettings") or {}
     settings["server_name"] = str(reality.get("serverName") or "")
     settings["fingerprint"] = str(reality.get("fingerprint") or "chrome")
-    settings["public_key"] = str(reality.get("password") or "")
+    settings["public_key"] = str(
+        reality.get("publicKey") or reality.get("password") or ""
+    )
     settings["short_id"] = str(reality.get("shortId") or "")
-    settings["spider_x"] = str(reality.get("spiderX") or "/")
+    settings["spider_x"] = str(reality.get("spiderX") or "")
     return settings
 
 
@@ -135,27 +256,42 @@ def _backup_config(config_path: Path) -> Path:
 
 
 def build_outbound(settings: dict[str, Any]) -> dict[str, Any]:
+    user: dict[str, Any] = {
+        "id": settings["uuid"],
+        "encryption": "none",
+        "level": 0,
+    }
+    flow = str(settings.get("flow") or "").strip()
+    if flow:
+        user["flow"] = flow
+
+    reality_settings: dict[str, Any] = {
+        "serverName": settings.get("server_name") or "",
+        "fingerprint": settings.get("fingerprint") or "chrome",
+        "publicKey": settings.get("public_key") or "",
+        "shortId": settings.get("short_id") or "",
+    }
+    spider_x = str(settings.get("spider_x") or "").strip()
+    if spider_x:
+        reality_settings["spiderX"] = spider_x
+
+    network = str(settings.get("network") or "tcp").strip() or "tcp"
     return {
         "tag": settings.get("outbound_tag") or OUTBOUND_TAG,
         "protocol": "vless",
         "settings": {
-            "address": settings["address"],
-            "port": int(settings["port"]),
-            "id": settings["uuid"],
-            "encryption": "none",
-            "flow": settings.get("flow") or "xtls-rprx-vision",
-            "level": 0,
+            "vnext": [
+                {
+                    "address": settings["address"],
+                    "port": int(settings["port"]),
+                    "users": [user],
+                }
+            ]
         },
         "streamSettings": {
-            "method": "raw",
+            "network": network,
             "security": "reality",
-            "realitySettings": {
-                "serverName": settings.get("server_name") or "",
-                "fingerprint": settings.get("fingerprint") or "chrome",
-                "password": settings.get("public_key") or "",
-                "shortId": settings.get("short_id") or "",
-                "spiderX": settings.get("spider_x") or "/",
-            },
+            "realitySettings": reality_settings,
             "sockopt": {
                 "tcpKeepAliveIdle": 45,
                 "tcpKeepAliveInterval": 15,
@@ -529,11 +665,17 @@ def public_settings(settings: dict[str, Any] | None = None) -> dict[str, Any]:
         "address": merged.get("address"),
         "port": merged.get("port"),
         "uuid": merged.get("uuid"),
-        "flow": merged.get("flow"),
+        "flow": merged.get("flow") or "",
+        "network": merged.get("network") or "tcp",
         "server_name": merged.get("server_name"),
         "fingerprint": merged.get("fingerprint"),
         "public_key": merged.get("public_key"),
         "short_id": merged.get("short_id"),
-        "spider_x": merged.get("spider_x"),
+        "spider_x": merged.get("spider_x") or "",
         "listening": proxy_listening(merged),
     }
+    try:
+        public["vless_url"] = build_vless_url(merged)
+    except ValueError:
+        public["vless_url"] = ""
+    return public

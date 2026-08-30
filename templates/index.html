@@ -171,6 +171,12 @@
       width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
       background: var(--card); color: var(--text); font-size: .75rem;
     }
+    .xray-grid textarea {
+      width: 100%; min-height: 72px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--card); color: var(--text); font-size: .68rem; font-family: ui-monospace, monospace;
+      resize: vertical;
+    }
+    .xray-grid .full { grid-column: 1 / -1; }
     .xray-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .xray-status-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
     .xray-pill {
@@ -311,8 +317,9 @@
         </div>
         <div class="settings-block">
           <div class="section-title">xray client (proxy)</div>
-          <div class="settings-note">Upstream VLESS+Reality server and local HTTP proxy port for Cursor agent traffic. Changes apply to host xray and restart the service.</div>
+          <div class="settings-note">Paste a <code>vless://</code> share link or edit fields below. Changes apply to host xray and restart the service.</div>
           <div class="xray-grid">
+            <div class="full"><label>VLESS URL</label><textarea id="xray-vless-url" placeholder="vless://uuid@host:port?security=reality&amp;sni=...&amp;pbk=...&amp;sid=..."></textarea></div>
             <div><label>Local proxy port</label><input id="xray-proxy-port" type="number" min="1" max="65535" placeholder="30229"></div>
             <div><label>Server address</label><input id="xray-address" type="text" placeholder="1.2.3.4"></div>
             <div><label>Server port</label><input id="xray-port" type="number" min="1" max="65535" placeholder="2096"></div>
@@ -321,10 +328,11 @@
             <div><label>Public key</label><input id="xray-public-key" type="text" placeholder="public key"></div>
             <div><label>Short ID</label><input id="xray-short-id" type="text" placeholder="shortId"></div>
             <div><label>Fingerprint</label><input id="xray-fingerprint" type="text" placeholder="chrome"></div>
-            <div><label>Flow</label><input id="xray-flow" type="text" placeholder="xtls-rprx-vision"></div>
+            <div><label>Flow (optional)</label><input id="xray-flow" type="text" placeholder="xtls-rprx-vision"></div>
           </div>
           <div class="xray-actions">
             <button class="btn btn-primary btn-sm" type="button" onclick="saveXrayClient()">Save &amp; apply</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="parseXrayVlessUrl()">Parse VLESS URL</button>
             <button class="btn btn-ghost btn-sm" type="button" onclick="testXrayClient()">Test proxy</button>
             <button class="btn btn-ghost btn-sm" type="button" onclick="importXrayClient()">Import from xray</button>
             <button class="btn btn-ghost btn-sm" type="button" onclick="refreshXrayStatus(true)">Refresh status</button>
@@ -897,6 +905,7 @@
     }
 
     function fillXrayForm(s) {
+      document.getElementById('xray-vless-url').value = s.vless_url || '';
       document.getElementById('xray-proxy-port').value = s.proxy_port || 30229;
       document.getElementById('xray-address').value = s.address || '';
       document.getElementById('xray-port').value = s.port || 443;
@@ -905,11 +914,11 @@
       document.getElementById('xray-public-key').value = s.public_key || '';
       document.getElementById('xray-short-id').value = s.short_id || '';
       document.getElementById('xray-fingerprint').value = s.fingerprint || 'chrome';
-      document.getElementById('xray-flow').value = s.flow || 'xtls-rprx-vision';
+      document.getElementById('xray-flow').value = s.flow || '';
     }
 
     function xrayPayload() {
-      return {
+      const payload = {
         enabled: true,
         proxy_port: Number(document.getElementById('xray-proxy-port').value || 30229),
         address: document.getElementById('xray-address').value.trim(),
@@ -919,10 +928,39 @@
         public_key: document.getElementById('xray-public-key').value.trim(),
         short_id: document.getElementById('xray-short-id').value.trim(),
         fingerprint: document.getElementById('xray-fingerprint').value.trim() || 'chrome',
-        flow: document.getElementById('xray-flow').value.trim() || 'xtls-rprx-vision',
+        flow: document.getElementById('xray-flow').value.trim(),
         restart: true,
         write_env: true,
       };
+      const vlessUrl = document.getElementById('xray-vless-url').value.trim();
+      if (vlessUrl) payload.vless_url = vlessUrl;
+      return payload;
+    }
+
+    async function parseXrayVlessUrl() {
+      const status = document.getElementById('xray-status');
+      const vlessUrl = document.getElementById('xray-vless-url').value.trim();
+      if (!vlessUrl) {
+        status.textContent = 'Paste a vless:// URL first';
+        status.className = 'api-key-hint';
+        return;
+      }
+      status.textContent = 'Parsing VLESS URL…';
+      try {
+        const res = await apiFetch('/api/xray/client/parse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vless_url: vlessUrl }),
+        });
+        const data = await res.json();
+        if (!res.ok) { status.textContent = data.error || 'Parse failed'; status.className = 'api-key-hint'; return; }
+        fillXrayForm(data.settings || {});
+        status.textContent = 'Parsed — review fields and Save & apply';
+        status.className = 'api-key-hint ok';
+      } catch (e) {
+        status.textContent = 'Parse failed';
+        status.className = 'api-key-hint';
+      }
     }
 
     function updateXrayStatus(settings, test) {

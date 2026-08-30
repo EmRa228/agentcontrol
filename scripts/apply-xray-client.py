@@ -16,6 +16,7 @@ from xray_client import (  # noqa: E402
     apply_client_settings,
     import_from_xray_config,
     load_client_settings,
+    merge_vless_url,
     public_settings,
     save_client_settings,
     test_proxy,
@@ -29,7 +30,15 @@ def main() -> int:
     parser.add_argument("--test", action="store_true", help="Test HTTP proxy")
     parser.add_argument("--no-restart", action="store_true", help="Do not restart xray")
     parser.add_argument("--json", dest="json_path", help="Apply settings from JSON file")
+    parser.add_argument("--vless-url", dest="vless_url", help="Apply settings from a vless:// share link")
     args = parser.parse_args()
+
+    if args.vless_url:
+        settings = merge_vless_url(load_client_settings(), args.vless_url)
+        settings["enabled"] = True
+        result = apply_client_settings(settings, restart=not args.no_restart)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 1
 
     if args.do_import:
         imported = import_from_xray_config()

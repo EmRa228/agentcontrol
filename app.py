@@ -30,6 +30,7 @@ from xray_client import (
     build_status_report,
     import_from_xray_config,
     load_client_settings,
+    merge_vless_url,
     public_settings,
     test_cursor_api,
     test_proxy,
@@ -1160,6 +1161,11 @@ def api_xray_status():
 def api_xray_client_save():
     data = request.get_json(silent=True) or {}
     current = load_client_settings()
+    if data.get("vless_url"):
+        try:
+            current = merge_vless_url(current, str(data["vless_url"]))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
     updates = {
         "enabled": bool(data.get("enabled", current.get("enabled", True))),
         "proxy_port": int(data.get("proxy_port", current.get("proxy_port", 30229))),
@@ -1167,12 +1173,13 @@ def api_xray_client_save():
         "address": str(data.get("address", current.get("address", ""))).strip(),
         "port": int(data.get("port", current.get("port", 443))),
         "uuid": str(data.get("uuid", current.get("uuid", ""))).strip(),
-        "flow": str(data.get("flow", current.get("flow", "xtls-rprx-vision"))).strip(),
+        "flow": str(data.get("flow", current.get("flow", ""))).strip(),
+        "network": str(data.get("network", current.get("network", "tcp"))).strip() or "tcp",
         "server_name": str(data.get("server_name", current.get("server_name", ""))).strip(),
         "fingerprint": str(data.get("fingerprint", current.get("fingerprint", "chrome"))).strip(),
         "public_key": str(data.get("public_key", current.get("public_key", ""))).strip(),
         "short_id": str(data.get("short_id", current.get("short_id", ""))).strip(),
-        "spider_x": str(data.get("spider_x", current.get("spider_x", "/"))).strip() or "/",
+        "spider_x": str(data.get("spider_x", current.get("spider_x", ""))).strip(),
     }
     if data.get("config_path"):
         updates["config_path"] = str(data["config_path"])
@@ -1197,10 +1204,30 @@ def api_xray_client_import():
     return jsonify({"settings": public_settings(imported)})
 
 
+@app.post("/api/xray/client/parse")
+def api_xray_client_parse():
+    data = request.get_json(silent=True) or {}
+    vless_url = str(data.get("vless_url", "")).strip()
+    if not vless_url:
+        return jsonify({"error": "vless_url is required"}), 400
+    try:
+        settings = public_settings(merge_vless_url(load_client_settings(), vless_url))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"settings": settings})
+
+
 @app.post("/api/xray/client/test")
 def api_xray_client_test():
     data = request.get_json(silent=True) or {}
-    settings = {**load_client_settings(), **data} if data else load_client_settings()
+    settings = load_client_settings()
+    if data.get("vless_url"):
+        try:
+            settings = merge_vless_url(settings, str(data["vless_url"]))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+    elif data:
+        settings = {**settings, **data}
     cursor_test = test_proxy(settings)
     cursor_api_test = test_cursor_api(settings)
     return jsonify(

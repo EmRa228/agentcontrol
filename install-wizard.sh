@@ -169,6 +169,24 @@ configure_xray_client() {
 
   python3 "${INSTALL_DIR}/scripts/apply-xray-client.py" --import >/dev/null 2>&1 || true
 
+  if [[ -n "${XRAY_VLESS_URL:-}" ]]; then
+    log "Applying xray client from VLESS URL (XRAY_VLESS_URL)"
+    python3 - <<PY
+import json, sys
+sys.path.insert(0, "${INSTALL_DIR}")
+from xray_client import apply_client_settings, merge_vless_url, load_client_settings
+
+settings = merge_vless_url(load_client_settings(), """${XRAY_VLESS_URL}""")
+settings["enabled"] = True
+settings["proxy_port"] = int("${proxy_port}")
+result = apply_client_settings(settings, restart=True, write_env=True)
+print(json.dumps(result, indent=2))
+if not result.get("listening"):
+    sys.exit(1)
+PY
+    return
+  fi
+
   if [[ "${XRAY_IMPORT_ONLY:-}" == "1" ]] || { [[ ! -t 0 ]] && [[ -z "${XRAY_ADDRESS:-}" ]]; }; then
     log "Applying xray client from existing config / saved settings"
     python3 - <<PY
@@ -185,6 +203,31 @@ if not result.get("listening"):
     sys.exit(1)
 PY
     return
+  fi
+
+  local address port uuid server_name public_key short_id fingerprint flow vless_url
+  if [[ -t 0 ]] && [[ -z "${XRAY_ADDRESS:-}" ]]; then
+    echo "" >&2
+    echo "xray client outbound (upstream proxy server):" >&2
+    echo "Paste a vless:// share link, or press Enter to enter fields manually." >&2
+    read -r -p "VLESS URL: " vless_url || true
+    vless_url="$(echo "${vless_url}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [[ -n "${vless_url}" ]]; then
+      python3 - <<PY
+import json, sys
+sys.path.insert(0, "${INSTALL_DIR}")
+from xray_client import apply_client_settings, merge_vless_url, load_client_settings
+
+settings = merge_vless_url(load_client_settings(), """${vless_url}""")
+settings["enabled"] = True
+settings["proxy_port"] = int("${proxy_port}")
+result = apply_client_settings(settings, restart=True, write_env=True)
+print(json.dumps(result, indent=2))
+if not result.get("listening"):
+    sys.exit(1)
+PY
+      return
+    fi
   fi
 
   local current_json
@@ -204,11 +247,9 @@ PY
   public_key="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('public_key',''))" "${current_json}")"
   short_id="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('short_id',''))" "${current_json}")"
   fingerprint="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('fingerprint','chrome'))" "${current_json}")"
-  flow="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('flow','xtls-rprx-vision'))" "${current_json}")"
+  flow="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('flow',''))" "${current_json}")"
 
   if [[ -t 0 ]] && [[ -z "${XRAY_ADDRESS:-}" ]]; then
-    echo "" >&2
-    echo "xray client outbound (upstream proxy server):" >&2
     echo "Press Enter to keep the value in brackets." >&2
   fi
 
@@ -216,10 +257,10 @@ PY
   port="$(prompt_field "Server port" "${port}" XRAY_PORT)"
   uuid="$(prompt_field "UUID" "${uuid}" XRAY_UUID)"
   server_name="$(prompt_field "Reality SNI (serverName)" "${server_name}" XRAY_SERVER_NAME)"
-  public_key="$(prompt_field "Reality public key (password)" "${public_key}" XRAY_PUBLIC_KEY)"
+  public_key="$(prompt_field "Reality public key (pbk)" "${public_key}" XRAY_PUBLIC_KEY)"
   short_id="$(prompt_field "Reality shortId" "${short_id}" XRAY_SHORT_ID)"
   fingerprint="$(prompt_field "TLS fingerprint" "${fingerprint:-chrome}" XRAY_FINGERPRINT)"
-  flow="$(prompt_field "Flow" "${flow:-xtls-rprx-vision}" XRAY_FLOW)"
+  flow="$(prompt_field "Flow (optional)" "${flow}" XRAY_FLOW)"
 
   python3 - <<PY
 import json, sys
