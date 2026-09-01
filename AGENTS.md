@@ -197,7 +197,7 @@ Env overrides: `XRAY_CONFIG`, `XRAY_CLIENT_FILE`.
 | Layer | Header / storage | Notes |
 |-------|------------------|-------|
 | Panel | `X-AgentControl-Auth: <password>` | or `Authorization: Bearer`; `localStorage` key `agentcontrol_auth_<host>` |
-| Fleet | `X-Fleet-Password: <secret>` | Wrangler secret `FLEET_PASSWORD`; `sessionStorage` |
+| Fleet | `X-Fleet-Password: <secret>` | Wrangler secret `FLEET_PASSWORD`; `localStorage` key `agentcontrol_fleet_pw` |
 | Fleet → server | `X-AgentControl-Auth` | Per-server password in KV (never returned to browser) |
 
 First visit: `/api/setup/password` and `/api/setup/api-key` when files missing.

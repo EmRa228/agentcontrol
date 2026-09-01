@@ -904,6 +904,45 @@ def folder_path(name: str) -> Path | None:
     return None
 
 
+LOG_ERROR_MARKERS = (
+    "failed to reach",
+    "error",
+    "unauthorized",
+    "denied",
+    "worker not found",
+    "do not have access",
+    "✗",
+    "fatal",
+    "refused",
+    "econnrefused",
+    "proxy",
+)
+
+
+def detect_worker_log_errors(log_tail: str) -> list[str]:
+    if not log_tail:
+        return []
+    errors: list[str] = []
+    for line in log_tail.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        low = text.lower()
+        if any(marker in low for marker in LOG_ERROR_MARKERS):
+            errors.append(text)
+    return errors[-12:]
+
+
+def worker_log_tail(info: dict) -> str:
+    log_file = info.get("log_file")
+    if not log_file or not Path(log_file).is_file():
+        return ""
+    try:
+        return Path(log_file).read_text(encoding="utf-8", errors="ignore")[-4000:]
+    except OSError:
+        return ""
+
+
 def worker_ready(name: str) -> bool:
     state = reconcile_state()
     info = state.get(name)
@@ -911,6 +950,10 @@ def worker_ready(name: str) -> bool:
         return False
     pid = info.get("pid")
     if not pid or not is_running(pid):
+        return False
+
+    tail = worker_log_tail(info)
+    if detect_worker_log_errors(tail):
         return False
 
     port = info.get("mgmt_port")
@@ -921,22 +964,17 @@ def worker_ready(name: str) -> bool:
         except (URLError, OSError, ValueError):
             pass
 
-    log_file = info.get("log_file")
-    if log_file and Path(log_file).is_file():
-        try:
-            tail = Path(log_file).read_text(encoding="utf-8", errors="ignore")[-4000:]
-            markers = ("connected", "Connected", "workerId", "bridge", "ready")
-            if any(marker in tail for marker in markers) and "error" not in tail.lower()[-500:]:
-                return True
-        except OSError:
-            pass
+    if tail:
+        markers = ("connected", "Connected", "workerId", "bridge", "ready")
+        if any(marker in tail for marker in markers):
+            return True
 
     started_at = info.get("started_at")
     if started_at:
         try:
             started = datetime.fromisoformat(started_at)
             age = (datetime.now(timezone.utc) - started).total_seconds()
-            return age >= 8
+            return age >= 25
         except ValueError:
             pass
     return False
@@ -1330,20 +1368,17 @@ def api_ready(name: str):
     if not info:
         return jsonify({"ready": False, "running": False}), 200
     running = bool(info.get("pid") and is_running(info["pid"]))
+    log_tail = worker_log_tail(info)[-2000:]
+    log_errors = detect_worker_log_errors(log_tail)
     ready = worker_ready(name) if running else False
-    log_tail = ""
-    log_file = info.get("log_file")
-    if log_file and Path(log_file).is_file():
-        try:
-            log_tail = Path(log_file).read_text(encoding="utf-8", errors="ignore")[-800:]
-        except OSError:
-            pass
     return jsonify(
         {
             "ready": ready,
             "running": running,
             "agent_url": agent_url(name),
             "log_tail": log_tail,
+            "log_errors": log_errors,
+            "has_errors": bool(log_errors),
         }
     )
 

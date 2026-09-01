@@ -228,7 +228,7 @@
   <div id="login-gate" class="gate hidden">
     <div class="panel">
       <h2>Sign in</h2>
-      <p>Password is saved in this browser for this server.</p>
+      <p>Password is saved in this browser (localStorage) — you won't need to sign in again.</p>
       <input id="login-password" type="password" placeholder="Panel password" autocomplete="current-password">
       <button class="btn btn-primary" type="button" style="width:100%;margin-top:12px" onclick="submitLogin()">Sign in</button>
       <p id="login-error" class="err"></p>
@@ -384,7 +384,9 @@
         <li data-step="redirect"><span class="step-dot">4</span>Open Cursor</li>
       </ul>
       <p id="start-modal-msg" class="err" style="min-height:1.2em"></p>
+      <pre id="start-modal-log" class="xray-log hidden"></pre>
       <div class="modal-actions">
+        <button type="button" class="btn btn-ghost btn-sm hidden" id="start-modal-open" onclick="openCursorFromModal()">Open Cursor</button>
         <button type="button" class="btn btn-ghost btn-sm hidden" id="start-modal-close" onclick="closeStartModal()">Close</button>
       </div>
     </div>
@@ -791,6 +793,29 @@
       }).join('');
     }
 
+    let pendingAgentUrl = null;
+
+    function showStartLog(text) {
+      const el = document.getElementById('start-modal-log');
+      if (!text) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+      }
+      el.classList.remove('hidden');
+      el.textContent = text;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function formatLogErrors(errors) {
+      return (errors || []).join('\n');
+    }
+
+    function openCursorFromModal() {
+      if (!pendingAgentUrl) return;
+      window.location.href = pendingAgentUrl;
+    }
+
     function setStartStep(step, state) {
       document.querySelectorAll('#start-steps li').forEach(li => {
         li.classList.remove('active', 'done', 'error');
@@ -806,15 +831,20 @@
 
     function openStartModal(name) {
       modalOpen = true;
+      pendingAgentUrl = null;
       document.getElementById('start-modal-title').textContent = 'Starting ' + name;
       document.getElementById('start-modal-msg').textContent = '';
       document.getElementById('start-modal-close').classList.add('hidden');
+      document.getElementById('start-modal-open').classList.add('hidden');
+      showStartLog('');
       document.getElementById('start-modal').classList.remove('hidden');
       setStartStep('request', 'active');
     }
 
     function closeStartModal() {
       document.getElementById('start-modal').classList.add('hidden');
+      document.getElementById('start-modal-open').classList.add('hidden');
+      pendingAgentUrl = null;
       modalOpen = false;
       busy = false;
       lastFoldersJson = '';
@@ -1242,13 +1272,20 @@
       } catch (e) { msgEl.textContent = 'Failed'; }
     }
 
-    async function waitReady(name, timeoutMs = 45000) {
+    async function waitReady(name, timeoutMs = 60000) {
       const start = Date.now();
+      const msgEl = document.getElementById('start-modal-msg');
       while (Date.now() - start < timeoutMs) {
         const res = await apiFetch('/api/ready/' + encodeURIComponent(name));
         const data = await res.json();
         if (!data.running) throw new Error('stopped');
+        if (data.log_tail) showStartLog(data.log_tail);
+        if (data.has_errors) {
+          const errText = formatLogErrors(data.log_errors) || 'Worker reported errors in log';
+          throw new Error(errText);
+        }
         if (data.ready) return data;
+        msgEl.textContent = 'Waiting for Cursor connection…';
         await new Promise(r => setTimeout(r, 1500));
       }
       throw new Error('timeout');
@@ -1277,19 +1314,27 @@
         const ready = await waitReady(name);
         setStartStep('connect', 'done');
         setStartStep('redirect', 'active');
-        msgEl.textContent = 'Opening Cursor…';
-        await new Promise(r => setTimeout(r, 400));
-        window.location.href = ready.agent_url || data.agent_url;
+        pendingAgentUrl = ready.agent_url || data.agent_url;
+        msgEl.textContent = 'Worker connected. Review logs, then open Cursor.';
+        document.getElementById('start-modal-open').classList.remove('hidden');
+        document.getElementById('start-modal-close').classList.remove('hidden');
+        setStartStep('redirect', 'done');
       } catch (e) {
         if (e.message === 'stopped') {
           setStartStep('connect', 'error');
           msgEl.textContent = 'Worker stopped unexpectedly.';
         } else if (e.message === 'timeout') {
           setStartStep('connect', 'error');
-          msgEl.textContent = 'Timed out — worker may still be starting. Try again in a moment.';
+          msgEl.textContent = 'Timed out — check worker logs below. Fix the issue before opening Cursor.';
         } else if (e.message !== 'unauthorized') {
           setStartStep('connect', 'error');
-          msgEl.textContent = 'Connection failed: ' + (e.message || 'unknown');
+          const lines = (e.message || '').split('\n').filter(Boolean);
+          if (lines.length > 1) {
+            msgEl.textContent = 'Worker error — fix before opening Cursor:';
+            showStartLog(lines.join('\n'));
+          } else {
+            msgEl.textContent = 'Connection failed: ' + (e.message || 'unknown');
+          }
         }
         document.getElementById('start-modal-close').classList.remove('hidden');
       } finally {

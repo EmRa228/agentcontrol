@@ -136,13 +136,32 @@
     .quick-agent:hover { background: rgba(255,255,255,.04); }
     .quick-agent.running { border-color: rgba(61,214,140,.35); color: var(--green); }
     .quick-agents-label { font-size: .6rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 8px; }
+    .modal-steps { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .modal-steps li {
+      display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--muted);
+    }
+    .modal-steps li.active { color: var(--text); }
+    .modal-steps li.done { color: var(--green); }
+    .modal-steps li.error { color: var(--red); }
+    .step-dot {
+      width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border);
+      display: inline-flex; align-items: center; justify-content: center; font-size: .6rem; flex-shrink: 0;
+    }
+    .modal-steps li.active .step-dot { border-color: var(--accent); }
+    .modal-steps li.done .step-dot { border-color: var(--green); background: rgba(61,214,140,.15); }
+    .modal-steps li.error .step-dot { border-color: var(--red); }
+    .start-log {
+      margin-top: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+      background: rgba(0,0,0,.25); font-family: ui-monospace, monospace; font-size: .62rem;
+      line-height: 1.45; max-height: 180px; overflow: auto; white-space: pre-wrap; color: #c9d3e7;
+    }
   </style>
 </head>
 <body>
   <div id="login" class="gate">
     <div class="panel">
       <h1>AgentControl Fleet</h1>
-      <p>Enter the fleet password you set with <code>wrangler secret put FLEET_PASSWORD</code>.</p>
+      <p>Enter the fleet password. It is saved in this browser (localStorage) so you won't need to sign in again.</p>
       <label>Fleet password</label>
       <input id="login-pw" type="password" autocomplete="current-password" placeholder="Fleet password">
       <button class="btn btn-primary" type="button" style="width:100%;margin-top:12px" onclick="doLogin()">Sign in</button>
@@ -160,6 +179,7 @@
     </header>
     <div class="toolbar">
       <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="openMainPanel()">Main panel</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="refreshNow()">Refresh</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="logout()">Sign out</button>
     </div>
@@ -189,10 +209,18 @@
   </div>
 
   <div id="start-modal" class="modal-overlay hidden">
-    <div class="modal">
+    <div class="modal" style="max-width:420px">
       <h2 id="start-title">Starting…</h2>
-      <p id="start-msg" class="sub" style="margin-top:8px">Connecting to Cursor…</p>
+      <ul class="modal-steps" id="start-steps">
+        <li data-step="request"><span class="step-dot">1</span>Send start request</li>
+        <li data-step="launch"><span class="step-dot">2</span>Launch worker process</li>
+        <li data-step="connect"><span class="step-dot">3</span>Connect to Cursor cloud</li>
+        <li data-step="redirect"><span class="step-dot">4</span>Open Cursor</li>
+      </ul>
+      <p id="start-msg" class="err" style="min-height:1.2em"></p>
+      <pre id="start-log" class="start-log hidden"></pre>
       <div class="modal-actions" style="margin-top:14px">
+        <button class="btn btn-ghost btn-sm hidden" id="start-open" type="button" onclick="openCursorFromStartModal()">Open Cursor</button>
         <button class="btn btn-ghost btn-sm hidden" id="start-close" type="button" onclick="closeStartModal()">Close</button>
       </div>
     </div>
@@ -201,12 +229,14 @@
   <script>
     const AUTH_KEY = 'agentcontrol_fleet_pw';
     const RECENT_KEY = 'agentcontrol_fleet_recent';
+    const MAIN_SERVER_KEY = 'agentcontrol_fleet_main_server';
     const expanded = new Set();
     const expandedDocker = new Set();
     let streamAbort = null;
     let streamRetry = null;
     let busy = false;
     let lastSnapshots = [];
+    let pendingAgentUrl = null;
 
     function sid(id) { return String(id).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
@@ -245,9 +275,38 @@
       return `<div class="quick-agents-label">Recent projects</div><div class="quick-agents">${chips}</div>`;
     }
 
-    function pw() { return sessionStorage.getItem(AUTH_KEY) || ''; }
-    function setPw(v) { sessionStorage.setItem(AUTH_KEY, v); }
-    function clearPw() { sessionStorage.removeItem(AUTH_KEY); }
+    function pw() { return localStorage.getItem(AUTH_KEY) || ''; }
+    function setPw(v) { localStorage.setItem(AUTH_KEY, v); }
+    function clearPw() { localStorage.removeItem(AUTH_KEY); }
+
+    function getMainServer() {
+      const mainId = localStorage.getItem(MAIN_SERVER_KEY);
+      if (mainId) {
+        const found = lastSnapshots.find(s => s.id === mainId && s.online);
+        if (found) return found;
+      }
+      return lastSnapshots.find(s => s.online) || lastSnapshots[0] || null;
+    }
+
+    function setMainServer(id) {
+      localStorage.setItem(MAIN_SERVER_KEY, id);
+      renderServers(lastSnapshots);
+    }
+
+    function openMainPanel() {
+      const server = getMainServer();
+      if (!server) {
+        document.getElementById('msg').textContent = 'Add a server first';
+        document.getElementById('msg').className = 'warn';
+        return;
+      }
+      if (!server.online) {
+        document.getElementById('msg').textContent = 'Main server is offline';
+        document.getElementById('msg').className = 'warn';
+        return;
+      }
+      window.open(server.url, '_blank');
+    }
 
     async function api(path, opts = {}) {
       opts.headers = {
@@ -652,6 +711,10 @@
         const offline = !s.online ? ' offline' : '';
         const badge = s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">${esc(s.error || 'offline')}</span>`;
         const serverId = sid(s.id);
+        const isMain = localStorage.getItem(MAIN_SERVER_KEY) === s.id;
+        const mainBtn = s.online
+          ? `<button class="btn btn-ghost btn-sm" data-main="${esc(s.id)}" type="button">${isMain ? '★ Main' : 'Set main'}</button>`
+          : '';
         const metrics = s.online
           ? renderServerMetricsHtml(serverId) + renderQuickAgents(s)
           : `<p class="sub" style="margin-top:8px">${esc(s.error || 'Unreachable')}</p>`;
@@ -679,7 +742,11 @@
             ${details}
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px">
               <span class="section-title" style="margin:0">${(s.folders || []).length} projects</span>
-              <button class="btn btn-ghost btn-sm" data-remove="${esc(s.id)}" type="button">Remove</button>
+              <div style="display:flex;gap:6px">
+                ${mainBtn}
+                <button class="btn btn-ghost btn-sm" data-open-panel="${esc(s.id)}" type="button">Open panel</button>
+                <button class="btn btn-ghost btn-sm" data-remove="${esc(s.id)}" type="button">Remove</button>
+              </div>
             </div>
             <div class="projects">${folders || '<p class="sub">No projects</p>'}</div>
           </div>
@@ -735,7 +802,24 @@
       if (rem && confirm('Remove this server from fleet?')) {
         await api('/api/servers/' + rem.dataset.remove, { method: 'DELETE' });
         expanded.delete(rem.dataset.remove);
+        if (localStorage.getItem(MAIN_SERVER_KEY) === rem.dataset.remove) {
+          localStorage.removeItem(MAIN_SERVER_KEY);
+        }
         refreshNow();
+        return;
+      }
+      const mainBtn = e.target.closest('[data-main]');
+      if (mainBtn) {
+        e.stopPropagation();
+        setMainServer(mainBtn.dataset.main);
+        return;
+      }
+      const openPanel = e.target.closest('[data-open-panel]');
+      if (openPanel) {
+        e.stopPropagation();
+        const snap = lastSnapshots.find(s => s.id === openPanel.dataset.openPanel);
+        if (snap && snap.url) window.open(snap.url, '_blank');
+        return;
       }
     });
 
@@ -780,26 +864,69 @@
       } catch (e) { err.textContent = 'Failed'; }
     }
 
+    function setStartStep(step, state) {
+      document.querySelectorAll('#start-steps li').forEach(li => {
+        li.classList.remove('active', 'done', 'error');
+        const key = li.dataset.step;
+        const order = ['request', 'launch', 'connect', 'redirect'];
+        const si = order.indexOf(step);
+        const ki = order.indexOf(key);
+        if (state === 'error' && key === step) li.classList.add('error');
+        else if (ki < si) li.classList.add('done');
+        else if (ki === si) li.classList.add(state === 'done' ? 'done' : 'active');
+      });
+    }
+
+    function showStartLog(text) {
+      const el = document.getElementById('start-log');
+      if (!text) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+      }
+      el.classList.remove('hidden');
+      el.textContent = text;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function openCursorFromStartModal() {
+      if (!pendingAgentUrl) return;
+      window.open(pendingAgentUrl, '_blank');
+    }
+
     function openStartModal(title) {
+      pendingAgentUrl = null;
       document.getElementById('start-title').textContent = title;
-      document.getElementById('start-msg').textContent = 'Sending start request…';
+      document.getElementById('start-msg').textContent = '';
       document.getElementById('start-close').classList.add('hidden');
+      document.getElementById('start-open').classList.add('hidden');
+      showStartLog('');
       document.getElementById('start-modal').classList.remove('hidden');
+      setStartStep('request', 'active');
       busy = true;
     }
     function closeStartModal() {
       document.getElementById('start-modal').classList.add('hidden');
+      document.getElementById('start-open').classList.add('hidden');
+      pendingAgentUrl = null;
       busy = false;
       refreshNow();
     }
 
     async function waitReady(serverId, project) {
       const start = Date.now();
-      while (Date.now() - start < 50000) {
+      const msgEl = document.getElementById('start-msg');
+      while (Date.now() - start < 60000) {
         const res = await api(`/api/fleet/${serverId}/ready/${encodeURIComponent(project)}`);
         const data = await res.json();
         if (!data.running) throw new Error('stopped');
+        if (data.log_tail) showStartLog(data.log_tail);
+        if (data.has_errors) {
+          const errText = (data.log_errors || []).join('\n') || 'Worker reported errors in log';
+          throw new Error(errText);
+        }
         if (data.ready) return data;
+        msgEl.textContent = 'Waiting for Cursor connection…';
         await new Promise(r => setTimeout(r, 1500));
       }
       throw new Error('timeout');
@@ -809,16 +936,43 @@
       openStartModal('Starting ' + project);
       const msgEl = document.getElementById('start-msg');
       try {
+        setStartStep('request', 'active');
         const res = await api(`/api/fleet/${serverId}/start/${encodeURIComponent(project)}`, { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) { msgEl.textContent = data.error || 'Start failed'; document.getElementById('start-close').classList.remove('hidden'); return; }
-        msgEl.textContent = 'Waiting for Cursor…';
+        if (!res.ok) {
+          setStartStep('request', 'error');
+          msgEl.textContent = data.error || 'Start failed';
+          document.getElementById('start-close').classList.remove('hidden');
+          return;
+        }
+        setStartStep('request', 'done');
+        setStartStep('launch', 'done');
+        setStartStep('connect', 'active');
+        msgEl.textContent = 'Waiting for Cursor connection…';
         const ready = await waitReady(serverId, project);
-        msgEl.textContent = 'Opening Cursor…';
-        window.open(ready.agent_url || data.agent_url, '_blank');
-        closeStartModal();
+        setStartStep('connect', 'done');
+        setStartStep('redirect', 'done');
+        pendingAgentUrl = ready.agent_url || data.agent_url;
+        msgEl.textContent = 'Worker connected. Review logs, then open Cursor.';
+        document.getElementById('start-open').classList.remove('hidden');
+        document.getElementById('start-close').classList.remove('hidden');
       } catch (e) {
-        msgEl.textContent = e.message === 'timeout' ? 'Timed out — worker may still be starting.' : (e.message || 'Failed');
+        if (e.message === 'stopped') {
+          setStartStep('connect', 'error');
+          msgEl.textContent = 'Worker stopped unexpectedly.';
+        } else if (e.message === 'timeout') {
+          setStartStep('connect', 'error');
+          msgEl.textContent = 'Timed out — check worker logs below. Fix the issue before opening Cursor.';
+        } else if (e.message !== 'unauthorized') {
+          setStartStep('connect', 'error');
+          const lines = (e.message || '').split('\n').filter(Boolean);
+          if (lines.length > 1) {
+            msgEl.textContent = 'Worker error — fix before opening Cursor:';
+            showStartLog(lines.join('\n'));
+          } else {
+            msgEl.textContent = 'Connection failed: ' + (e.message || 'unknown');
+          }
+        }
         document.getElementById('start-close').classList.remove('hidden');
       }
     }
@@ -833,9 +987,19 @@
       } catch (e) {} finally { busy = false; }
     }
 
-    if (pw()) {
-      api('/api/servers').then(r => { if (r.ok) showApp(); else showLogin(); }).catch(() => showLogin());
+    async function boot() {
+      if (!pw()) { showLogin(); return; }
+      try {
+        const res = await api('/api/servers');
+        if (res.ok) { showApp(); return; }
+      } catch (e) {
+        if (e.message === 'unauthorized') return;
+      }
+      clearPw();
+      showLogin();
     }
+
+    boot();
   </script>
 </body>
 </html>
