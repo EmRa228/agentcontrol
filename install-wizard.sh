@@ -32,26 +32,6 @@ ensure_docker() {
   fi
 }
 
-write_env_file() {
-  local proxy_url="$1"
-  mkdir -p "${CONFIG_DIR}"
-  if [[ -n "${proxy_url}" ]]; then
-    cat > "${CONFIG_DIR}/env" <<EOF
-HTTP_PROXY=${proxy_url}
-HTTPS_PROXY=${proxy_url}
-http_proxy=${proxy_url}
-https_proxy=${proxy_url}
-NO_PROXY=localhost,127.0.0.1
-EOF
-  else
-    cat > "${CONFIG_DIR}/env" <<'EOF'
-# Direct mode — no HTTP proxy
-NO_PROXY=localhost,127.0.0.1
-EOF
-  fi
-  chmod 600 "${CONFIG_DIR}/env"
-}
-
 write_config() {
   local scan_root="$1"
   mkdir -p "${CONFIG_DIR}" "${STATE_DIR}"
@@ -70,6 +50,17 @@ path.write_text(yaml.safe_dump(cfg, default_flow_style=False, sort_keys=False), 
 PY
 }
 
+normalize_network_mode() {
+  local raw="$1"
+  raw="$(echo "${raw}" | tr -d '[:space:]')"
+  case "${raw}" in
+    1|direct|Direct|DIRECT) echo "1" ;;
+    2|proxy|Proxy|PROXY|xray|x2ray) echo "2" ;;
+    "") echo "2" ;;
+    *) echo "2" ;;
+  esac
+}
+
 prompt_network_mode() {
   local choice
   echo "" >&2
@@ -79,16 +70,30 @@ prompt_network_mode() {
   echo "  1) Direct (no proxy)" >&2
   echo "  2) Via xray HTTP proxy (recommended on restricted networks)" >&2
   if [[ -n "${AGENTCONTROL_NETWORK_MODE:-}" ]]; then
-    choice="${AGENTCONTROL_NETWORK_MODE}"
+    choice="$(normalize_network_mode "${AGENTCONTROL_NETWORK_MODE}")"
     echo "Using AGENTCONTROL_NETWORK_MODE=${choice}" >&2
   elif [[ -t 0 ]]; then
     read -rp "Choice [1/2] (default 2): " choice
-    choice="${choice:-2}"
+    choice="$(normalize_network_mode "${choice:-2}")"
   else
     choice="2"
     log "Non-interactive mode: defaulting to proxy (2)"
   fi
   echo "${choice}"
+}
+
+configure_direct_mode() {
+  log "Direct mode selected — disabling xray proxy for Cursor traffic"
+  python3 - <<PY
+import json, sys
+sys.path.insert(0, "${INSTALL_DIR}")
+from xray_client import set_proxy_enabled
+
+result = set_proxy_enabled(False, restart=False)
+print(json.dumps(result, indent=2))
+if not result.get("ok"):
+    sys.exit(1)
+PY
 }
 
 prompt_proxy_port() {
@@ -302,13 +307,7 @@ main() {
     configure_xray_client "${proxy_port}"
     proxy_url="http://127.0.0.1:${proxy_port}"
   else
-    log "Direct mode selected (no xray changes)"
-    python3 - <<PY || true
-import sys
-sys.path.insert(0, "${INSTALL_DIR}")
-from xray_client import write_runtime_env
-write_runtime_env(None)
-PY
+    configure_direct_mode
   fi
 
   scan_root="$(prompt_scan_root)"
@@ -319,10 +318,7 @@ PY
 
   write_config "${scan_root}"
 
-  # env file already written by configure_xray_client in proxy mode
-  if [[ "${net_mode}" != "2" ]]; then
-    write_env_file ""
-  fi
+  # env + xray-client.yaml already written in proxy/direct configure steps
 
   optional_secret CURSOR_API_KEY "Cursor API key" "${CONFIG_DIR}/api-key"
   optional_secret PANEL_PASSWORD "Panel password" "${CONFIG_DIR}/auth-password"
