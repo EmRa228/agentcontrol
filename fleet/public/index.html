@@ -173,7 +173,7 @@
     <header>
       <div>
         <h1>AgentControl Fleet</h1>
-        <p class="sub">All servers in one view</p>
+        <p class="sub">All servers in one view · <span id="app-version">v…</span></p>
       </div>
       <div class="live" id="live">● connecting…</div>
     </header>
@@ -230,10 +230,14 @@
     const AUTH_KEY = 'agentcontrol_fleet_pw';
     const RECENT_KEY = 'agentcontrol_fleet_recent';
     const MAIN_SERVER_KEY = 'agentcontrol_fleet_main_server';
+    const POLL_INTERVAL_MS = 25000;
+    const POLL_BACKOFF_MAX_MS = 120000;
     const expanded = new Set();
     const expandedDocker = new Set();
-    let streamAbort = null;
-    let streamRetry = null;
+    let pollTimer = null;
+    let pollAbort = null;
+    let pollBackoffMs = 0;
+    let tabVisible = !document.hidden;
     let busy = false;
     let lastSnapshots = [];
     let pendingAgentUrl = null;
@@ -323,9 +327,65 @@
       return res;
     }
 
-    function stopStream() {
-      if (streamRetry) { clearTimeout(streamRetry); streamRetry = null; }
-      if (streamAbort) { streamAbort.abort(); streamAbort = null; }
+    function stopPolling() {
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+      if (pollAbort) { pollAbort.abort(); pollAbort = null; }
+    }
+
+    function scheduleNextPoll(delayMs) {
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(() => { pollFleetOnce(); }, delayMs);
+    }
+
+    async function pollFleetOnce() {
+      if (busy || document.getElementById('app').classList.contains('hidden') || !tabVisible) {
+        stopPolling();
+        return;
+      }
+      if (pollAbort) pollAbort.abort();
+      pollAbort = new AbortController();
+      setLiveState('● updating…');
+
+      try {
+        const res = await fetch('/api/fleet/snapshot', {
+          headers: {
+            'X-Fleet-Password': pw(),
+            'Accept': 'application/json',
+          },
+          signal: pollAbort.signal,
+        });
+        if (res.status === 401) {
+          clearPw();
+          showLogin();
+          return;
+        }
+        if (!res.ok) throw new Error('poll ' + res.status);
+        const data = await res.json();
+        if (!busy) {
+          renderServers(data.servers || []);
+          document.getElementById('msg').textContent = '';
+          document.getElementById('msg').className = '';
+        }
+        pollBackoffMs = 0;
+        setLiveState('● live');
+        scheduleNextPoll(POLL_INTERVAL_MS);
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        pollBackoffMs = Math.min(
+          POLL_BACKOFF_MAX_MS,
+          pollBackoffMs ? pollBackoffMs * 2 : POLL_INTERVAL_MS,
+        );
+        setLiveState('● retry in ' + Math.round(pollBackoffMs / 1000) + 's');
+        document.getElementById('msg').textContent = 'Refresh failed — retrying…';
+        document.getElementById('msg').className = 'warn';
+        scheduleNextPoll(pollBackoffMs);
+      }
+    }
+
+    function startPolling() {
+      stopPolling();
+      if (document.getElementById('app').classList.contains('hidden') || !tabVisible) return;
+      pollFleetOnce();
     }
 
     function setLiveState(text) {
@@ -335,81 +395,40 @@
     function showLogin() {
       document.getElementById('login').classList.remove('hidden');
       document.getElementById('app').classList.add('hidden');
-      stopStream();
+      stopPolling();
     }
 
     function showApp() {
       document.getElementById('login').classList.add('hidden');
       document.getElementById('app').classList.remove('hidden');
-      connectFleetStream();
+      loadVersionLabel();
+      startPolling();
     }
 
-    function parseSseChunk(buffer) {
-      const events = [];
-      const parts = buffer.split('\n\n');
-      const rest = parts.pop() || '';
-      for (const part of parts) {
-        const dataLine = part.split('\n').find(l => l.startsWith('data: '));
-        if (!dataLine) continue;
-        try {
-          events.push(JSON.parse(dataLine.slice(6)));
-        } catch (_) {}
-      }
-      return { events, rest };
-    }
-
-    async function connectFleetStream() {
-      stopStream();
-      if (document.getElementById('app').classList.contains('hidden')) return;
-
-      streamAbort = new AbortController();
-      setLiveState('● connecting…');
-
+    async function loadVersionLabel() {
       try {
-        const res = await fetch('/api/fleet/stream', {
-          headers: {
-            'X-Fleet-Password': pw(),
-            'Accept': 'text/event-stream',
-          },
-          signal: streamAbort.signal,
-        });
-
-        if (res.status === 401) {
-          clearPw();
-          showLogin();
-          return;
+        const res = await fetch('/version.json');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.version) {
+          document.getElementById('app-version').textContent = 'v' + data.version;
         }
-        if (!res.ok) throw new Error('stream ' + res.status);
-
-        setLiveState('● live (stream)');
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const parsed = parseSseChunk(buffer);
-          buffer = parsed.rest;
-          for (const data of parsed.events) {
-            if (!busy) {
-              renderServers(data.servers || []);
-              document.getElementById('msg').textContent = '';
-            }
-          }
-        }
-        throw new Error('stream ended');
-      } catch (e) {
-        if (e.name === 'AbortError') return;
-        setLiveState('● reconnecting…');
-        document.getElementById('msg').textContent = 'Stream disconnected — retrying…';
-        document.getElementById('msg').className = 'warn';
-        if (!document.getElementById('app').classList.contains('hidden')) {
-          streamRetry = setTimeout(connectFleetStream, 3000);
-        }
-      }
+      } catch (_) {}
     }
+
+    document.addEventListener('visibilitychange', () => {
+      tabVisible = !document.hidden;
+      if (tabVisible && !document.getElementById('app').classList.contains('hidden')) {
+        document.getElementById('msg').textContent = '';
+        document.getElementById('msg').className = '';
+        startPolling();
+      } else {
+        stopPolling();
+        setLiveState('○ paused');
+        document.getElementById('msg').textContent = 'Updates paused while tab is in background';
+        document.getElementById('msg').className = 'sub';
+      }
+    });
 
     async function doLogin() {
       const password = document.getElementById('login-pw').value;
@@ -429,7 +448,7 @@
 
     document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 
-    function logout() { clearPw(); stopStream(); showLogin(); }
+    function logout() { clearPw(); stopPolling(); showLogin(); }
 
     function esc(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
@@ -825,16 +844,22 @@
 
     async function refreshNow() {
       if (busy || document.getElementById('app').classList.contains('hidden')) return;
+      stopPolling();
       try {
         const res = await api('/api/fleet/snapshot');
         const data = await res.json();
         renderServers(data.servers || []);
         document.getElementById('msg').textContent = '';
+        document.getElementById('msg').className = '';
+        pollBackoffMs = 0;
+        setLiveState('● live');
       } catch (e) {
         if (e.message !== 'unauthorized') {
           document.getElementById('msg').textContent = 'Refresh failed';
           document.getElementById('msg').className = 'warn';
         }
+      } finally {
+        if (tabVisible) scheduleNextPoll(POLL_INTERVAL_MS);
       }
     }
 
@@ -988,6 +1013,7 @@
     }
 
     async function boot() {
+      loadVersionLabel();
       if (!pw()) { showLogin(); return; }
       try {
         const res = await api('/api/servers');

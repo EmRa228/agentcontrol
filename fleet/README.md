@@ -99,9 +99,9 @@ Docs: [https://developers.cloudflare.com/workers/configuration/routing/custom-do
    - **Panel password**: same password you use on that server’s AgentControl UI
 4. Expand a server card → **Start** / **Stop** projects
 
-The fleet polls every 4 seconds. No push or event storage.
+The fleet UI polls `/api/fleet/snapshot` every **25 seconds** while the browser tab is **visible**. When the tab is in the background, polling stops to save Cloudflare Worker requests. The **Refresh** button fetches an immediate snapshot.
 
-**Live updates use SSE** (`GET /api/fleet/stream`) — one long-lived connection per browser tab instead of polling `/api/fleet/snapshot` every few seconds. This saves Cloudflare Worker request quota. The **Refresh** button still uses a one-shot snapshot.
+Version is shown in the header (`fleet/version.json`, also at `/version.json` and `GET /api/version`).
 
 ## Local development
 

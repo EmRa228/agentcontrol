@@ -1,3 +1,5 @@
+import fleetVersion from "../version.json";
+
 export interface Env {
   KV: KVNamespace;
   ASSETS: Fetcher;
@@ -17,6 +19,7 @@ interface ServerRecord {
 }
 
 const KV_KEY = "servers";
+const FLEET_VERSION = fleetVersion as { component: string; version: string; updated: string };
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -116,11 +119,6 @@ function publicServer(s: StoredServer) {
   return { id: s.id, name: s.name, url: s.url, addedAt: s.addedAt };
 }
 
-const STREAM_INTERVAL_MS = 4000;
-const STREAM_HEARTBEAT_MS = 15000;
-/** Cloudflare Workers cap subrequests per invocation; SSE stays open so reconnect before the limit. */
-const STREAM_MAX_TICKS = 18;
-
 async function snapshotOneServer(server: StoredServer) {
   const base = { id: server.id, name: server.name, url: server.url };
   try {
@@ -178,76 +176,12 @@ async function buildFleetSnapshot(kv: KVNamespace) {
   return { servers: snapshots, at: Date.now() };
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error("aborted"));
-      return;
-    }
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(new Error("aborted"));
-      },
-      { once: true },
-    );
-  });
-}
-
-function fleetStreamResponse(request: Request, env: Env): Response {
-  const { readable, writable } = new TransformStream();
-  const writer = writable.getWriter();
-  const encoder = new TextEncoder();
-
-  const pump = async () => {
-    let lastHeartbeat = Date.now();
-    let tickCount = 0;
-    try {
-      while (!request.signal.aborted) {
-        const payload = await buildFleetSnapshot(env.KV);
-        await writer.write(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
-        tickCount += 1;
-
-        const now = Date.now();
-        if (now - lastHeartbeat >= STREAM_HEARTBEAT_MS) {
-          await writer.write(encoder.encode(`: ping ${now}\n\n`));
-          lastHeartbeat = now;
-        }
-
-        if (tickCount >= STREAM_MAX_TICKS) {
-          await writer.write(encoder.encode(`: reconnect ${now}\n\n`));
-          break;
-        }
-
-        await sleep(STREAM_INTERVAL_MS, request.signal);
-      }
-    } catch {
-      // client disconnected or sleep aborted
-    } finally {
-      try {
-        await writer.close();
-      } catch {
-        /* already closed */
-      }
-    }
-  };
-
-  void pump();
-
-  return new Response(readable, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
-  });
-}
-
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname;
+
+  if (path === "/api/version" && request.method === "GET") {
+    return json(FLEET_VERSION);
+  }
 
   if (path === "/api/login" && request.method === "POST") {
     const data = (await request.json().catch(() => ({}))) as { password?: string };
@@ -307,10 +241,6 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const servers = (await readServers(env.KV)).filter((s) => s.id !== id);
     await writeServers(env.KV, servers);
     return json({ ok: true });
-  }
-
-  if (path === "/api/fleet/stream" && request.method === "GET") {
-    return fleetStreamResponse(request, env);
   }
 
   if (path === "/api/fleet/snapshot" && request.method === "GET") {

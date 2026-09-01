@@ -45,6 +45,15 @@ WORKER_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 CURSOR_AGENTS_URL = "https://cursor.com/agents#workerId={worker_id}"
 MGMT_PORT_BASE = 32000
 MGMT_PORT_RANGE = 800
+VERSION_FILE = Path(__file__).resolve().parent / "version.json"
+
+
+def load_version() -> dict:
+    try:
+        return json.loads(VERSION_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {"component": "panel", "version": "0.0.0", "updated": ""}
+
 
 CONFIG_SEARCH = [
     Path("/etc/agentcontrol/config.yaml"),
@@ -1103,7 +1112,12 @@ def stop_worker(name: str) -> tuple[dict, int]:
 
 @app.get("/")
 def index():
-    return render_template("index.html", port=CFG["port"], scan_root=CFG["scan_root"])
+    return render_template(
+        "index.html",
+        port=CFG["port"],
+        scan_root=CFG["scan_root"],
+        version=load_version(),
+    )
 
 
 @app.post("/api/auth/login")
@@ -1409,9 +1423,22 @@ def api_system_history():
     return jsonify({"points": list(METRICS_HISTORY)})
 
 
+@app.get("/api/version")
+@app.get("/version.json")
+def api_version():
+    return jsonify(load_version())
+
+
 @app.get("/health")
 def health():
-    return jsonify({"ok": True})
+    version = load_version()
+    return jsonify(
+        {
+            "ok": True,
+            "component": version.get("component", "panel"),
+            "version": version.get("version", "0.0.0"),
+        }
+    )
 
 
 if __name__ == "__main__":

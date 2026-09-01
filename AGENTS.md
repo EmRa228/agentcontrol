@@ -10,6 +10,8 @@ Token-efficient context for AI agents. Prefer this file over re-reading `README.
 
 **AgentControl** is a lightweight Linux web panel that **starts/stops Cursor Cloud Agent workers** (`agent worker`) per project folder. Optional **Fleet** dashboard (Cloudflare Workers) aggregates many servers into one UI.
 
+**Versioning:** bump `version.json` (panel) and `fleet/version.json` (fleet) on every user-visible change; version is shown in each UI header and exposed via `/api/version`.
+
 | Component | Stack | Runs on |
 |-----------|-------|---------|
 | Single-server panel | Python 3.10+ Flask, vanilla HTML/JS | Each Linux VPS (**Docker** default, or legacy systemd) |
@@ -66,17 +68,28 @@ Docker **build** is direct (Debian/PyPI). **Proxy applies at runtime** via `/etc
 ```
 Browser → Worker (*.workers.dev or custom domain)
             ├─ KV: server list { id, name, url, password }
-            ├─ GET /api/fleet/stream  → SSE snapshot every 4s
+            ├─ GET /api/fleet/snapshot  → one-shot poll (used by UI)
             └─ proxy → each server /api/* with X-AgentControl-Auth
 ```
 
-**Critical:** Cloudflare Workers **cannot fetch raw IP addresses** (error 1003). Fleet URLs must use a **hostname** with grey-cloud DNS A record, e.g. `http://ac-tg-uk.example.com:30228`.
+**Live updates:** client polls `/api/fleet/snapshot` every **25s** while the tab is **visible**; polling **stops** when the tab is hidden (`document.visibilitychange`) to reduce Worker requests. Exponential backoff on errors (max 120s). Manual **Refresh** triggers an immediate snapshot.
 
-**Do not change `fleet/`** unless explicitly asked.
+**Version:** `fleet/version.json` → UI header, `/version.json`, `GET /api/version`.
+
+**Critical:** Cloudflare Workers **cannot fetch raw IP addresses** (error 1003). Fleet URLs must use a **hostname** with grey-cloud DNS A record, e.g. `http://ac-tg-uk.example.com:30228`.
 
 ---
 
-## How to run
+## Version files
+
+| File | Component | Shown in UI | API |
+|------|-----------|-------------|-----|
+| `version.json` (repo root) | panel | header subtitle `vX.Y.Z` | `GET /api/version`, `GET /version.json`, `GET /health` |
+| `fleet/version.json` | fleet | fleet header subtitle | `GET /api/version`, static `/version.json` |
+
+**Bump both** (keep versions in sync unless intentionally diverging) whenever you ship panel or fleet UI/backend changes. Copy `fleet/version.json` → `fleet/public/version.json` for static asset serving.
+
+---
 
 ```bash
 # Fresh install (interactive wizard)
@@ -208,8 +221,10 @@ First visit: `/api/setup/password` and `/api/setup/api-key` when files missing.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| GET | `/health` | no | `{ ok, component, version }` |
+| GET | `/api/version` | no | Panel `version.json` |
+| GET | `/version.json` | no | Panel `version.json` |
 | GET | `/` | no | Panel HTML |
-| GET | `/health` | no | `{ ok: true }` |
 | POST | `/api/auth/login` | no | Validate password |
 | GET | `/api/auth/status` | no | Auth + setup flags |
 | GET | `/api/setup/status` | no | Needs password / API key |
@@ -235,12 +250,12 @@ First visit: `/api/setup/password` and `/api/setup/api-key` when files missing.
 
 | Method | Path | Auth |
 |--------|------|------|
+| GET | `/api/version` | no |
 | POST | `/api/login` | body `{ password }` |
 | GET | `/api/servers` | Fleet password |
 | POST | `/api/servers` | Add server (probes `/api/system`) |
 | DELETE | `/api/servers/<id>` | Remove server |
-| GET | `/api/fleet/stream` | SSE live snapshots |
-| GET | `/api/fleet/snapshot` | One-shot snapshot |
+| GET | `/api/fleet/snapshot` | One-shot snapshot (UI poll target) |
 | POST | `/api/fleet/<serverId>/start\|stop/<project>` | Proxy |
 | GET | `/api/fleet/<serverId>/ready/<project>` | Proxy |
 
@@ -250,7 +265,8 @@ First visit: `/api/setup/password` and `/api/setup/api-key` when files missing.
 
 ```
 agentcontrol/
-├── AGENTS.md              ← this file
+├── AGENTS.md              ← this file (update on every change)
+├── version.json           ← panel version (bump on panel changes)
 ├── README.md              ← human install docs (EN + FA snippet)
 ├── bootstrap.sh           ← idempotent: git pull → install-wizard (or legacy install.sh)
 ├── install-wizard.sh      ← Docker + xray wizard
@@ -267,8 +283,10 @@ agentcontrol/
 │   ├── apply-xray-client.py
 │   └── setup-xray-proxy.sh
 └── fleet/
-    ├── src/index.ts       # Worker: proxy API, SSE, KV
-    ├── public/index.html  # Fleet UI
+    ├── version.json       # fleet version (sync to public/version.json)
+    ├── src/index.ts       # Worker: proxy API, KV, /api/version
+    ├── public/index.html  # Fleet UI (poll + visibility pause)
+    ├── public/version.json
     ├── wrangler.jsonc
     └── README.md
 ```
@@ -279,6 +297,7 @@ agentcontrol/
 
 ### Single-server (`templates/index.html`)
 
+- Version in header subtitle from `version.json` (template `{{ version.version }}`).
 - Dark theme CSS variables: `--bg`, `--card`, `--accent`, etc.
 - Auto-refresh every **2s**; pauses when modals open (`modalOpen`, `busy`).
 - Event delegation on `#list` for Start/Stop.
@@ -289,7 +308,13 @@ agentcontrol/
 
 ### Fleet (`fleet/public/index.html`)
 
-- Live updates via **SSE** (`/api/fleet/stream`), not polling.
+- Live updates via **polling** `GET /api/fleet/snapshot` every **25s** while tab is visible.
+- **Tab hidden:** polling stops; live indicator shows `○ paused` (saves Worker requests).
+- **Backoff:** failed polls retry with exponential delay up to 120s.
+- Start modal: 4-step progress, live worker logs, no auto-redirect to Cursor on errors.
+- Auth: `localStorage` key `agentcontrol_fleet_pw` (persistent login).
+- **Main panel** toolbar button + per-server **Open panel** / **Set main**.
+- Version in header from `/version.json`.
 - Server cards: 4 metrics; **2×2 grid mobile**, 4 columns desktop.
 - **Quick agents:** top 3 folders by mtime as chips on card header.
 - **Server sort:** `localStorage` `agentcontrol_fleet_recent` — recent servers float up.
@@ -334,7 +359,7 @@ Fleet: `cd fleet && npm run dev` (usually `http://localhost:8787`).
 1. **Panel:** `curl -H "X-AgentControl-Auth: pass" http://127.0.0.1:30228/api/system`
 2. **Panel UI:** login, metrics, start/stop, hide, xray save/test, Docker expand.
 3. **Docker:** `docker compose up -d --build`; `/health` OK; proxy env in container.
-4. **Fleet:** hostname URL only; SSE live; quick agents; mobile layout.
+4. **Fleet:** hostname URL only; poll + visibility pause; mobile layout; version label.
 5. **Restart:** workers reconcile via `reconcile_state()`.
 
 ---
@@ -350,8 +375,19 @@ Fleet: `cd fleet && npm run dev` (usually `http://localhost:8787`).
 | Start fails | No API key | `/etc/agentcontrol/api-key` or Settings |
 | Empty project list | Wrong `scan_root` / ignored | config + `.agentcontrol-ignore` |
 | Port 30228 in use | Docker + legacy systemd | `docker compose ps`; `systemctl stop agentcontrol` |
+| Fleet stream disconnects / stale data | Old SSE reconnect loop | Use snapshot polling (v1.2+); tab pause reduces load |
 | Buttons dead after refresh | No event delegation | Bind on `#list` / `#servers` parent |
 | Worker ID changed | `WORKER_NAMESPACE` modified | Never change UUID constant |
+
+---
+
+## Agent workflow
+
+On **every** code change that ships to users:
+
+1. Bump `version.json` and/or `fleet/version.json` (+ copy to `fleet/public/version.json`).
+2. Update **this file** (`AGENTS.md`) if behavior, APIs, or deploy steps changed.
+3. Panel: `docker compose up -d --build`. Fleet: `npm run deploy`.
 
 ---
 
@@ -361,6 +397,7 @@ Fleet: `cd fleet && npm run dev` (usually `http://localhost:8787`).
 
 - Keep diffs focused; match vanilla JS / Flask patterns.
 - Update README and this file when install paths or APIs change.
+- Bump `version.json` / `fleet/version.json` on every user-visible change.
 - After app changes on live server: `docker compose up -d --build`.
 - Test Fleet with hostname URLs only.
 
@@ -369,7 +406,7 @@ Fleet: `cd fleet && npm run dev` (usually `http://localhost:8787`).
 - Heavy frontend frameworks or databases unless requested.
 - Cloudflare Tunnel as requirement (design is direct HTTP per server).
 - Storing fleet passwords in client code or logs.
-- Changing `fleet/` unless explicitly asked.
+- Shipping UI/API changes without bumping `version.json`.
 
 ---
 

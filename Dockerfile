@@ -29,7 +29,7 @@ RUN set -eux; \
     fi; \
     pip install --no-cache-dir -r requirements.txt
 
-COPY app.py config.example.yaml xray_client.py ./
+COPY app.py config.example.yaml xray_client.py version.json ./
 COPY templates/ ./templates/
 COPY scripts/ ./scripts/
 COPY docker/entrypoint.sh /entrypoint.sh
