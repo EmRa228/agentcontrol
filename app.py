@@ -46,6 +46,11 @@ CURSOR_AGENTS_URL = "https://cursor.com/agents#workerId={worker_id}"
 MGMT_PORT_BASE = 32000
 MGMT_PORT_RANGE = 800
 VERSION_FILE = Path(__file__).resolve().parent / "version.json"
+GITHUB_RAW_BASE = os.environ.get(
+    "AGENTCONTROL_GITHUB_RAW",
+    "https://raw.githubusercontent.com/EmRa228/agentcontrol/main",
+)
+INSTALL_DIR = Path(os.environ.get("INSTALL_DIR", "/opt/agentcontrol"))
 
 
 def load_version() -> dict:
@@ -53,6 +58,84 @@ def load_version() -> dict:
         return json.loads(VERSION_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
         return {"component": "panel", "version": "0.0.0", "updated": ""}
+
+
+def version_tuple(value: str) -> tuple[int, int, int]:
+    parts: list[int] = []
+    for part in (value or "0").split("."):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return parts[0], parts[1], parts[2]
+
+
+def version_is_newer(remote: str, local: str) -> bool:
+    return version_tuple(remote) > version_tuple(local)
+
+
+def fetch_github_json(relative_path: str) -> dict:
+    url = f"{GITHUB_RAW_BASE.rstrip('/')}/{relative_path.lstrip('/')}"
+    with urlopen(url, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def update_in_progress() -> bool:
+    if not UPDATE_LOCK.is_file():
+        return False
+    try:
+        pid = int(UPDATE_LOCK.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        UPDATE_LOCK.unlink(missing_ok=True)
+        return False
+
+
+def read_update_log_tail(limit: int = 2000) -> str:
+    if not UPDATE_LOG.is_file():
+        return ""
+    try:
+        return UPDATE_LOG.read_text(encoding="utf-8", errors="ignore")[-limit:]
+    except OSError:
+        return ""
+
+
+def start_panel_update() -> tuple[dict, int]:
+    if update_in_progress():
+        return {"status": "already_running", "in_progress": True}, 409
+
+    script_path = f"{INSTALL_DIR}/scripts/panel-update.sh"
+    ensure_state_dir()
+    cmd = [
+        "nsenter",
+        "-t",
+        "1",
+        "-m",
+        "-u",
+        "-i",
+        "-n",
+        "-w",
+        "--",
+        "env",
+        f"INSTALL_DIR={INSTALL_DIR}",
+        f"STATE_DIR={STATE_DIR}",
+        "bash",
+        script_path,
+    ]
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return {"error": f"failed to start update: {exc}"}, 500
+
+    return {"status": "started", "in_progress": True}, 202
 
 
 CONFIG_SEARCH = [
@@ -111,6 +194,8 @@ def save_config_patch(updates: dict) -> None:
 CFG = load_config()
 STATE_DIR = Path(CFG["state_dir"])
 STATE_FILE = STATE_DIR / "workers.json"
+UPDATE_LOG = STATE_DIR / "update.log"
+UPDATE_LOCK = STATE_DIR / "update.lock"
 METRICS_HISTORY: deque = deque(maxlen=1800)
 _CPU_CACHE = {"percent": 0.0, "cores": 1, "at": 0.0}
 _DOCKER_CACHE = {"data": None, "at": 0.0}
@@ -1421,6 +1506,55 @@ def api_system():
 @app.get("/api/system/history")
 def api_system_history():
     return jsonify({"points": list(METRICS_HISTORY)})
+
+
+@app.get("/api/update/check")
+def api_update_check():
+    local = load_version()
+    try:
+        remote = fetch_github_json("version.json")
+    except (URLError, OSError, ValueError, json.JSONDecodeError) as exc:
+        return jsonify(
+            {
+                "local": local,
+                "remote": None,
+                "update_available": False,
+                "error": str(exc),
+            }
+        )
+    remote_version = str(remote.get("version", "0.0.0"))
+    return jsonify(
+        {
+            "local": local,
+            "remote": remote,
+            "update_available": version_is_newer(remote_version, local.get("version", "0.0.0")),
+            "in_progress": update_in_progress(),
+        }
+    )
+
+
+@app.get("/api/update/status")
+def api_update_status():
+    local = load_version()
+    remote = None
+    try:
+        remote = fetch_github_json("version.json")
+    except (URLError, OSError, ValueError, json.JSONDecodeError):
+        pass
+    return jsonify(
+        {
+            "local": local,
+            "remote": remote,
+            "in_progress": update_in_progress(),
+            "log_tail": read_update_log_tail(),
+        }
+    )
+
+
+@app.post("/api/update/apply")
+def api_update_apply():
+    result, code = start_panel_update()
+    return jsonify(result), code
 
 
 @app.get("/api/version")

@@ -19,7 +19,65 @@ interface ServerRecord {
 }
 
 const KV_KEY = "servers";
+const KV_UI_HTML = "fleet_ui_html";
+const KV_UI_VERSION = "fleet_ui_version";
+const GITHUB_RAW = "https://raw.githubusercontent.com/EmRa228/agentcontrol/main/fleet";
 const FLEET_VERSION = fleetVersion as { component: string; version: string; updated: string };
+
+interface VersionInfo {
+  component: string;
+  version: string;
+  updated: string;
+}
+
+function versionTuple(value: string): [number, number, number] {
+  const parts = value.split(".").map((part) => parseInt(part, 10) || 0);
+  while (parts.length < 3) parts.push(0);
+  return [parts[0], parts[1], parts[2]];
+}
+
+function versionIsNewer(remote: string, local: string): boolean {
+  const r = versionTuple(remote);
+  const l = versionTuple(local);
+  for (let i = 0; i < 3; i += 1) {
+    if (r[i] > l[i]) return true;
+    if (r[i] < l[i]) return false;
+  }
+  return false;
+}
+
+async function getActiveFleetVersion(kv: KVNamespace): Promise<VersionInfo> {
+  const cached = await kv.get(KV_UI_VERSION);
+  if (cached) {
+    try {
+      return JSON.parse(cached) as VersionInfo;
+    } catch {
+      /* fall through */
+    }
+  }
+  return FLEET_VERSION;
+}
+
+async function fetchRemoteFleetVersion(): Promise<VersionInfo> {
+  const res = await fetch(`${GITHUB_RAW}/version.json`, { signal: AbortSignal.timeout(12000) });
+  if (!res.ok) throw new Error(`GitHub version fetch failed: HTTP ${res.status}`);
+  return (await res.json()) as VersionInfo;
+}
+
+async function applyFleetUiUpdate(kv: KVNamespace): Promise<VersionInfo> {
+  const [versionRes, htmlRes] = await Promise.all([
+    fetch(`${GITHUB_RAW}/version.json`, { signal: AbortSignal.timeout(15000) }),
+    fetch(`${GITHUB_RAW}/public/index.html`, { signal: AbortSignal.timeout(25000) }),
+  ]);
+  if (!versionRes.ok || !htmlRes.ok) {
+    throw new Error("Failed to download fleet UI from GitHub");
+  }
+  const version = (await versionRes.json()) as VersionInfo;
+  const html = await htmlRes.text();
+  await kv.put(KV_UI_VERSION, JSON.stringify(version));
+  await kv.put(KV_UI_HTML, html);
+  return version;
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -180,7 +238,27 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const path = url.pathname;
 
   if (path === "/api/version" && request.method === "GET") {
-    return json(FLEET_VERSION);
+    const version = await getActiveFleetVersion(env.KV);
+    return json(version);
+  }
+
+  if (path === "/api/update/check" && request.method === "GET") {
+    const local = await getActiveFleetVersion(env.KV);
+    try {
+      const remote = await fetchRemoteFleetVersion();
+      return json({
+        local,
+        remote,
+        update_available: versionIsNewer(remote.version, local.version),
+      });
+    } catch (e) {
+      return json({
+        local,
+        remote: null,
+        update_available: false,
+        error: String(e),
+      });
+    }
   }
 
   if (path === "/api/login" && request.method === "POST") {
@@ -196,6 +274,15 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (!fleetAuth(request, env)) {
     return json({ error: "unauthorized" }, 401);
+  }
+
+  if (path === "/api/update/apply" && request.method === "POST") {
+    try {
+      const version = await applyFleetUiUpdate(env.KV);
+      return json({ status: "updated", version });
+    } catch (e) {
+      return json({ error: String(e) }, 500);
+    }
   }
 
   if (path === "/api/servers" && request.method === "GET") {
@@ -283,6 +370,24 @@ export default {
 
     if (url.pathname.startsWith("/api/")) {
       return handleApi(request, env, url);
+    }
+
+    if (url.pathname === "/version.json") {
+      const cached = await env.KV.get(KV_UI_VERSION);
+      if (cached) {
+        return new Response(cached, {
+          headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" },
+        });
+      }
+    }
+
+    if (url.pathname === "/" || url.pathname === "/index.html") {
+      const cached = await env.KV.get(KV_UI_HTML);
+      if (cached) {
+        return new Response(cached, {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+        });
+      }
     }
 
     return env.ASSETS.fetch(request);

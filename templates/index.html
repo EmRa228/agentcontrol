@@ -137,6 +137,11 @@
     .ctx-item.danger { color: var(--red); border-color: rgba(240,113,120,.35); }
     .ctx-item:hover { background: rgba(255,255,255,.03); }
     #msg { margin-top: 10px; text-align: center; color: var(--muted); font-size: .78rem; min-height: 1.2em; }
+    .update-banner {
+      margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; text-align: center;
+      font-size: .78rem; border: 1px solid rgba(91,140,255,.35);
+      background: rgba(91,140,255,.12); color: var(--accent);
+    }
     .error { color: var(--red); }
     .loading { text-align: center; color: var(--muted); padding: 20px; font-size: .85rem; grid-column: 1 / -1; }
     .api-key-block {
@@ -239,10 +244,11 @@
     <header>
       <div>
         <h1>AgentControl</h1>
-        <p class="sub">Port {{ port }} · {{ scan_root }} · v{{ version.version }}</p>
+        <p class="sub">Port {{ port }} · {{ scan_root }} · v{{ version.version }} · {{ version.updated }}</p>
       </div>
       <div class="live" id="live-indicator">● live</div>
     </header>
+    <p id="update-banner" class="update-banner hidden"></p>
 
     <div id="server-card">
       <div class="server-summary" onclick="toggleServerDetails()">
@@ -466,6 +472,53 @@
       if (!refreshTimer) refreshTimer = setInterval(refreshAll, 2000);
       loadSettingsPanel();
       refreshAll();
+      checkAndApplyUpdate();
+    }
+
+    async function checkAndApplyUpdate() {
+      const banner = document.getElementById('update-banner');
+      try {
+        const res = await apiFetch('/api/update/check');
+        const data = await res.json();
+        if (!data.update_available) return;
+        const target = data.remote?.version || '';
+        banner.classList.remove('hidden');
+        banner.textContent = target
+          ? `Downloading v${target} from GitHub and updating…`
+          : 'Checking GitHub for updates…';
+        await apiFetch('/api/update/apply', { method: 'POST' });
+        const start = Date.now();
+        while (Date.now() - start < 180000) {
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const health = await fetch('/health');
+            if (health.ok) {
+              const h = await health.json();
+              if (h.version === target) {
+                banner.textContent = `Updated to v${target} — reloading…`;
+                location.reload();
+                return;
+              }
+            }
+          } catch (_) {}
+          try {
+            const st = await apiFetch('/api/update/status');
+            const status = await st.json();
+            const lastLine = (status.log_tail || '').trim().split('\n').pop();
+            if (lastLine) banner.textContent = `Updating… ${lastLine}`;
+            if (!status.in_progress && status.local?.version === target) {
+              location.reload();
+              return;
+            }
+          } catch (_) {}
+        }
+        banner.textContent = 'Update is taking longer than expected — check /var/lib/agentcontrol/update.log';
+      } catch (e) {
+        if (e.message !== 'unauthorized' && e.message !== 'setup') {
+          banner.classList.remove('hidden');
+          banner.textContent = 'Auto-update check failed: ' + (e.message || 'unknown');
+        }
+      }
     }
 
     async function submitSetup() {

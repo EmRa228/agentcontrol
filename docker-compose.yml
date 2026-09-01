@@ -19,6 +19,7 @@ services:
     environment:
       SCAN_ROOT: ${SCAN_ROOT:-/root}
       PORT: "30228"
+      INSTALL_DIR: /opt/agentcontrol
       STATE_DIR: /var/lib/agentcontrol
       API_KEY_FILE: /etc/agentcontrol/api-key
       AUTH_PASSWORD_FILE: /etc/agentcontrol/auth-password
