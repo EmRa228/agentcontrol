@@ -373,6 +373,91 @@ def read_api_key() -> str | None:
     return key or None
 
 
+def verify_cursor_api_key(api_key: str) -> dict[str, object]:
+    """Check that Cursor accepts this personal API key for worker auth."""
+    key = api_key.strip()
+    if not key:
+        return {"valid": False, "error": "api_key required"}
+    if not key.startswith("crsr_"):
+        return {
+            "valid": False,
+            "error": "API key must be a Cursor personal key (starts with crsr_)",
+        }
+
+    agent_bin = find_agent_bin()
+    if not agent_bin:
+        return {"valid": False, "error": "agent CLI not found — run install.sh again"}
+
+    check_dir = Path("/tmp/agentcontrol-key-check")
+    check_dir.mkdir(parents=True, exist_ok=True)
+    env = apply_proxy_env(os.environ.copy())
+    env["CURSOR_API_KEY"] = key
+    env["PATH"] = "/root/.local/bin:" + env.get("PATH", "")
+
+    proc = subprocess.Popen(
+        [
+            agent_bin,
+            "worker",
+            "--worker-dir",
+            str(check_dir),
+            "--name",
+            "agentcontrol-key-check",
+            "start",
+            "--verbose",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+
+    output_lines: list[str] = []
+    deadline = time.time() + 25
+    try:
+        assert proc.stdout is not None
+        while time.time() < deadline:
+            line = proc.stdout.readline()
+            if not line:
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+                continue
+            output_lines.append(line)
+            lower = line.lower()
+            if "authenticated with api key" in lower:
+                return {"valid": True}
+            if "api key is invalid" in lower or (
+                "invalid" in lower and "api key" in lower
+            ):
+                return {
+                    "valid": False,
+                    "error": "invalid API key — create a new personal key at cursor.com/settings",
+                }
+        if proc.poll() is None:
+            return {"valid": False, "error": "API key verification timed out"}
+        tail = "".join(output_lines)[-500:].strip()
+        return {
+            "valid": False,
+            "error": "could not verify API key with Cursor",
+            "detail": tail or None,
+        }
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    proc.kill()
+                proc.wait(timeout=5)
+
+
 def fmt_bytes(num: int | float) -> str:
     units = ("B", "KB", "MB", "GB", "TB")
     size = float(num)
@@ -1263,8 +1348,24 @@ def api_setup_api_key():
     if api_key_configured():
         if not auth_enabled() or not password_ok(extract_auth_token()):
             return jsonify({"error": "unauthorized"}), 401
+
+    verify = request.args.get("verify", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
+    if verify:
+        check = verify_cursor_api_key(api_key)
+        if not check.get("valid"):
+            payload: dict[str, object] = {
+                "error": check.get("error") or "invalid API key",
+            }
+            if check.get("detail"):
+                payload["detail"] = check["detail"]
+            return jsonify(payload), 400
+
     write_api_key(api_key)
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "valid": True})
 
 
 @app.get("/api/models")

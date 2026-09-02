@@ -35,7 +35,7 @@ def _paths() -> tuple[Path, Path]:
 
 def default_client_settings() -> dict[str, Any]:
     return {
-        "enabled": True,
+        "enabled": False,
         "config_path": str(DEFAULT_XRAY_CONFIG),
         "proxy_listen": DEFAULT_PROXY_LISTEN,
         "proxy_port": DEFAULT_PROXY_PORT,
@@ -385,7 +385,7 @@ def _merge_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
         settings.update({k: v for k, v in raw.items() if v is not None})
     settings["proxy_port"] = int(settings.get("proxy_port") or DEFAULT_PROXY_PORT)
     settings["port"] = int(settings.get("port") or 443)
-    settings["enabled"] = bool(settings.get("enabled", True))
+    settings["enabled"] = bool(settings.get("enabled", False))
     settings["alter_id"] = int(settings.get("alter_id") or 0)
     return settings
 
@@ -989,7 +989,7 @@ def record_status(
     status.update(
         {
             "at": datetime.now(timezone.utc).isoformat(),
-            "enabled": merged.get("enabled", True),
+            "enabled": merged.get("enabled", False),
             "proxy_url": proxy_url(merged),
             "listening": listening,
             "xray_active": xray_service_active(),
@@ -1016,7 +1016,7 @@ def load_status() -> dict[str, Any]:
     merged = load_client_settings()
     return {
         "at": None,
-        "enabled": merged.get("enabled", True),
+        "enabled": merged.get("enabled", False),
         "proxy_url": proxy_url(merged),
         "listening": proxy_listening(merged),
         "xray_active": xray_service_active(),
@@ -1131,7 +1131,7 @@ def apply_client_settings(
 def public_settings(settings: dict[str, Any] | None = None) -> dict[str, Any]:
     merged = _merge_settings(settings or load_client_settings())
     public = {
-        "enabled": merged.get("enabled", True),
+        "enabled": merged.get("enabled", False),
         "config_path": merged.get("config_path"),
         "proxy_listen": merged.get("proxy_listen"),
         "proxy_port": merged.get("proxy_port"),
