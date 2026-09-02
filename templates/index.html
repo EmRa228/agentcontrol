@@ -312,6 +312,7 @@
             <button class="btn btn-primary btn-sm" type="button" onclick="saveApiKey()">Save API key</button>
           </div>
           <div class="api-key-hint" id="settings-api-status">—</div>
+          <p class="settings-note">Saved immediately to <code>/etc/agentcontrol/api-key</code>. New worker starts use it right away; stop any running worker first if you changed the key.</p>
           <p id="settings-msg" class="err"></p>
         </div>
         <div class="settings-block">
@@ -1265,8 +1266,11 @@
           body: JSON.stringify({ api_key: key }),
         });
         const data = await res.json();
-        msgEl.textContent = res.ok ? 'API key saved' : (data.error || 'Failed');
+        msgEl.textContent = res.ok ? 'API key saved and verified' : (data.error || 'Failed');
         msgEl.style.color = res.ok ? 'var(--green)' : 'var(--red)';
+        if (!res.ok && data.detail) {
+          msgEl.textContent += ' — see worker log for details';
+        }
         if (res.ok) document.getElementById('settings-api-key').value = '';
         refreshAll();
       } catch (e) { msgEl.textContent = 'Failed'; }
