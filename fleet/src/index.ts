@@ -62,12 +62,29 @@ async function getActiveFleetVersion(kv: KVNamespace): Promise<VersionInfo> {
   const cached = await kv.get(KV_UI_VERSION);
   if (cached) {
     try {
-      return JSON.parse(cached) as VersionInfo;
+      const kvVersion = JSON.parse(cached) as VersionInfo;
+      if (versionIsNewer(FLEET_VERSION.version, kvVersion.version)) {
+        return FLEET_VERSION;
+      }
+      return kvVersion;
     } catch {
       /* fall through */
     }
   }
   return FLEET_VERSION;
+}
+
+async function kvHtmlIsCurrent(kv: KVNamespace): Promise<boolean> {
+  const html = await kv.get(KV_UI_HTML);
+  if (!html) return false;
+  const cached = await kv.get(KV_UI_VERSION);
+  if (!cached) return false;
+  try {
+    const kvVersion = JSON.parse(cached) as VersionInfo;
+    return !versionIsNewer(FLEET_VERSION.version, kvVersion.version);
+  } catch {
+    return false;
+  }
 }
 
 async function fetchRemoteFleetVersion(): Promise<VersionInfo> {
@@ -621,20 +638,20 @@ export default {
     }
 
     if (url.pathname === "/version.json") {
-      const cached = await env.KV.get(KV_UI_VERSION);
-      if (cached) {
-        return new Response(cached, {
-          headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" },
-        });
-      }
+      const version = await getActiveFleetVersion(env.KV);
+      return new Response(JSON.stringify(version), {
+        headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" },
+      });
     }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      const cached = await env.KV.get(KV_UI_HTML);
-      if (cached) {
-        return new Response(cached, {
-          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
-        });
+      if (await kvHtmlIsCurrent(env.KV)) {
+        const cached = await env.KV.get(KV_UI_HTML);
+        if (cached) {
+          return new Response(cached, {
+            headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+          });
+        }
       }
     }
 
