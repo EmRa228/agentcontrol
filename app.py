@@ -184,29 +184,42 @@ def start_panel_update() -> tuple[dict, int]:
         return {"status": "already_running", "in_progress": True}, 409
 
     script_path = f"{INSTALL_DIR}/scripts/panel-update.sh"
+    if not Path(script_path).is_file():
+        return {"error": f"update script missing: {script_path}"}, 500
+
     ensure_state_dir()
-    cmd = [
-        "nsenter",
-        "-t",
-        "1",
-        "-m",
-        "-u",
-        "-i",
-        "-n",
-        "-w",
-        "--",
-        "env",
-        f"INSTALL_DIR={INSTALL_DIR}",
-        f"STATE_DIR={STATE_DIR}",
-        "bash",
-        script_path,
-    ]
+    env = {
+        **os.environ,
+        "INSTALL_DIR": str(INSTALL_DIR),
+        "STATE_DIR": str(STATE_DIR),
+    }
+    if running_inside_docker():
+        cmd = [
+            "nsenter",
+            "-t",
+            "1",
+            "-m",
+            "-u",
+            "-i",
+            "-n",
+            "-w",
+            "--",
+            "env",
+            f"INSTALL_DIR={INSTALL_DIR}",
+            f"STATE_DIR={STATE_DIR}",
+            "bash",
+            script_path,
+        ]
+    else:
+        cmd = ["bash", script_path]
     try:
         subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=env,
             start_new_session=True,
+            cwd=str(INSTALL_DIR),
         )
     except OSError as exc:
         return {"error": f"failed to start update: {exc}"}, 500
@@ -1411,6 +1424,9 @@ def index():
         port=CFG["port"],
         scan_root=CFG["scan_root"],
         version=load_version(),
+        hostname=socket.gethostname(),
+        ip=primary_ip() or "",
+        host_label=request.host or socket.gethostname(),
     )
 
 

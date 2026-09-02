@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AgentControl</title>
+  <title>{{ host_label }} · {{ hostname }}{% if ip %} · {{ ip }}{% endif %} | AgentControl</title>
   <style>
     :root {
       --bg: #0b0d12; --card: #141820; --border: #252b38; --text: #eef1f6;
@@ -23,6 +23,7 @@
     .btn-primary { background: var(--accent); color: #fff; }
     .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
     .btn-sm { padding: 7px 12px; font-size: .78rem; }
+    .btn.loading, .btn:disabled { opacity: 0.65; cursor: wait; }
     .err { color: var(--red); font-size: .78rem; min-height: 1.2em; margin-top: 8px; }
     header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
     h1 { font-size: 1.15rem; }
@@ -260,6 +261,7 @@
 
     <div class="toolbar">
       <button class="btn btn-primary btn-sm" type="button" onclick="refreshAll()">Refresh</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="panel-update-btn" onclick="checkAndApplyUpdate(true)">Update panel</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openMetricsModal()">Metrics &amp; charts</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openSettingsModal()">Settings</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy pool</button>
@@ -557,19 +559,47 @@
       if (!refreshTimer) refreshTimer = setInterval(refreshAll, 2000);
       loadSettingsPanel();
       refreshAll();
-      checkAndApplyUpdate();
+      checkAndApplyUpdate(false);
     }
 
-    async function checkAndApplyUpdate() {
+    function updatePageTitle(sys) {
+      const host = window.location.hostname || '';
+      const hn = sys?.hostname || '{{ hostname }}';
+      const ip = sys?.ip || '{{ ip }}';
+      const workers = sys?.panel?.running_workers ?? 0;
+      const parts = [host, hn];
+      if (ip) parts.push(ip);
+      parts.push(workers + 'w');
+      document.title = parts.join(' · ') + ' | AgentControl';
+    }
+
+    async function checkAndApplyUpdate(apply = false) {
       const banner = document.getElementById('update-banner');
+      const btn = document.getElementById('panel-update-btn');
       try {
         const res = await apiFetch('/api/update/check');
         const data = await res.json();
-        if (!data.update_available) return;
-        const target = data.remote?.version || '';
+        const localV = data.local?.version || '?';
+        const remoteV = data.remote?.version || '';
+        if (btn) {
+          btn.textContent = data.update_available ? `Update v${localV}→${remoteV}` : `Panel v${localV}`;
+        }
+        if (!data.update_available) {
+          if (apply) {
+            banner.classList.remove('hidden');
+            banner.textContent = `Panel is up to date (v${localV}).`;
+            setTimeout(() => banner.classList.add('hidden'), 4000);
+          }
+          return;
+        }
         banner.classList.remove('hidden');
-        banner.textContent = target
-          ? `Downloading v${target} from GitHub and updating…`
+        if (!apply) {
+          banner.innerHTML = `Panel v${localV} → v${remoteV} available. <button class="btn btn-sm btn-primary" type="button" onclick="checkAndApplyUpdate(true)">Update now</button>`;
+          return;
+        }
+        if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Updating…'; }
+        banner.textContent = remoteV
+          ? `Downloading v${remoteV} from GitHub and updating…`
           : 'Checking GitHub for updates…';
         await apiFetch('/api/update/apply', { method: 'POST' });
         const start = Date.now();
@@ -579,8 +609,8 @@
             const health = await fetch('/health');
             if (health.ok) {
               const h = await health.json();
-              if (h.version === target) {
-                banner.textContent = `Updated to v${target} — reloading…`;
+              if (h.version === remoteV) {
+                banner.textContent = `Updated to v${remoteV} — reloading…`;
                 location.reload();
                 return;
               }
@@ -591,7 +621,7 @@
             const status = await st.json();
             const lastLine = (status.log_tail || '').trim().split('\n').pop();
             if (lastLine) banner.textContent = `Updating… ${lastLine}`;
-            if (!status.in_progress && status.local?.version === target) {
+            if (!status.in_progress && status.local?.version === remoteV) {
               location.reload();
               return;
             }
@@ -601,8 +631,10 @@
       } catch (e) {
         if (e.message !== 'unauthorized' && e.message !== 'setup') {
           banner.classList.remove('hidden');
-          banner.textContent = 'Auto-update check failed: ' + (e.message || 'unknown');
+          banner.textContent = 'Update check failed: ' + (e.message || 'unknown');
         }
+      } finally {
+        if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
       }
     }
 
@@ -1514,6 +1546,7 @@
         const hist = await results[1].json();
         history = hist.points || [];
         renderSystem(sys);
+        updatePageTitle(sys);
         if (!skipFolders && results[2]) {
           renderFolders((await results[2].json()).folders);
         }

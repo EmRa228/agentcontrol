@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Non-interactive panel update: git pull from GitHub + rebuild Docker (or restart systemd).
+# Non-interactive panel update: git pull from GitHub + restart systemd service.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-/opt/agentcontrol}"
 STATE_DIR="${STATE_DIR:-/var/lib/agentcontrol}"
 LOCK_FILE="${STATE_DIR}/update.lock"
 LOG_FILE="${STATE_DIR}/update.log"
+REPO_URL="${AGENTCONTROL_REPO:-https://github.com/EmRa228/agentcontrol.git}"
+
+if [[ ! -d "${INSTALL_DIR}/.git" ]] && [[ -d "${SCRIPT_DIR}/.git" ]]; then
+  INSTALL_DIR="${SCRIPT_DIR}"
+fi
 
 mkdir -p "${STATE_DIR}"
 
@@ -15,23 +21,43 @@ if [[ -f "${LOCK_FILE}" ]]; then
     echo "Update already running (pid ${pid})" | tee -a "${LOG_FILE}"
     exit 0
   fi
+  rm -f "${LOCK_FILE}"
 fi
 
 echo "$$" > "${LOCK_FILE}"
 trap 'rm -f "${LOCK_FILE}"' EXIT
 
+log() { echo "$*" | tee -a "${LOG_FILE}"; }
+
 {
-  echo "=== panel update started $(date -Iseconds) ==="
+  log "=== panel update started $(date -Iseconds) ==="
+  log "INSTALL_DIR=${INSTALL_DIR}"
+
+  if [[ ! -d "${INSTALL_DIR}/.git" ]]; then
+    log "No git repo at ${INSTALL_DIR} — cloning"
+    mkdir -p "$(dirname "${INSTALL_DIR}")"
+    git clone "${REPO_URL}" "${INSTALL_DIR}"
+  fi
+
   cd "${INSTALL_DIR}"
   git fetch origin main
   git reset --hard origin/main
   chmod +x bootstrap.sh install.sh install-wizard.sh scripts/*.sh scripts/*.py 2>/dev/null || true
 
-  if systemctl is-active agentcontrol &>/dev/null; then
-    systemctl restart agentcontrol
-  else
-    echo "No agentcontrol systemd service — run: bash ${INSTALL_DIR}/install.sh"
+  if [[ -d "${INSTALL_DIR}/venv" ]]; then
+    "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/requirements.txt" -q
   fi
 
-  echo "=== panel update finished $(date -Iseconds) ==="
+  if systemctl is-active agentcontrol &>/dev/null; then
+    systemctl restart agentcontrol
+    log "agentcontrol.service restarted"
+  elif [[ -f /.dockerenv ]]; then
+    log "ERROR: panel runs in Docker — migrate to host: bash scripts/migrate-from-docker.sh"
+    exit 1
+  else
+    log "No agentcontrol systemd service — run: bash ${INSTALL_DIR}/install.sh"
+    exit 1
+  fi
+
+  log "=== panel update finished $(date -Iseconds) ==="
 } >> "${LOG_FILE}" 2>&1

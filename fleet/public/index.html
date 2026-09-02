@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AgentControl Fleet</title>
+  <title>Fleet AgentControl</title>
   <style>
     :root {
       --bg: #0b0d12; --card: #141820; --border: #252b38; --text: #eef1f6;
@@ -98,6 +98,7 @@
     <div class="toolbar">
       <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy settings</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="fleet-update-btn" onclick="checkFleetUpdate(true)">Update fleet UI</button>
       <button class="btn btn-ghost btn-sm" type="button" id="refresh-btn" onclick="refreshNow()">Refresh</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="logout()">Sign out</button>
     </div>
@@ -586,37 +587,80 @@
       } catch (_) {} finally { setLoading(stopKey, false); }
     }
 
-    async function checkFleetUpdate() {
+    function updateFleetTitle() {
+      const host = window.location.hostname || 'fleet';
+      document.title = `${host} | Fleet AgentControl`;
+    }
+
+    async function checkFleetUpdate(manual = false) {
+      const banner = document.getElementById('update-banner');
+      const btn = document.getElementById('fleet-update-btn');
       try {
         const res = await api('/api/update/check');
         const data = await res.json();
-        const banner = document.getElementById('update-banner');
-        if (data.update_available) {
+        const localV = data.local?.version || '?';
+        const remoteV = data.remote?.version || '';
+        if (btn) {
+          btn.textContent = data.update_available
+            ? `Update UI v${localV}→${remoteV}`
+            : `Fleet UI v${localV}`;
+        }
+        document.getElementById('app-version').textContent = 'v' + localV;
+        if (data.error) {
           banner.classList.remove('hidden');
-          banner.innerHTML = `Fleet UI update available (v${data.remote.version}). <button class="btn btn-sm btn-primary" onclick="applyFleetUpdate()">Update now</button>`;
-        } else banner.classList.add('hidden');
-      } catch (_) {}
+          banner.textContent = `Update check failed: ${data.error}`;
+          return;
+        }
+        if (!data.update_available) {
+          if (manual) {
+            banner.classList.remove('hidden');
+            banner.textContent = `Fleet UI is up to date (v${localV}).`;
+            setTimeout(() => banner.classList.add('hidden'), 4000);
+          } else {
+            banner.classList.add('hidden');
+          }
+          return;
+        }
+        banner.classList.remove('hidden');
+        if (!manual) {
+          banner.innerHTML = `Fleet UI v${localV} → v${remoteV} available. <button class="btn btn-sm btn-primary" type="button" onclick="checkFleetUpdate(true)">Update now</button>`;
+          return;
+        }
+        banner.textContent = `Downloading fleet UI v${remoteV}…`;
+        await api('/api/update/apply', { method: 'POST' });
+        const start = Date.now();
+        while (Date.now() - start < 120000) {
+          await new Promise(r => setTimeout(r, 2000));
+          const verRes = await api('/api/version');
+          const ver = await verRes.json();
+          if (ver.version === remoteV) {
+            banner.textContent = `Updated to v${remoteV} — reloading…`;
+            location.reload();
+            return;
+          }
+        }
+        banner.textContent = 'Fleet update is taking longer than expected — try again';
+      } catch (e) {
+        banner.classList.remove('hidden');
+        banner.textContent = 'Update check failed: ' + (e.message || 'unknown');
+      }
     }
 
     async function applyFleetUpdate() {
-      const banner = document.getElementById('update-banner');
-      const btn = banner.querySelector('button');
-      await withButtonLoading(btn, async () => {
-        await api('/api/update/apply', { method: 'POST' });
-        location.reload();
-      });
+      await checkFleetUpdate(true);
     }
 
     async function boot() {
+      updateFleetTitle();
       loadVersionLabel();
       if (!pw()) { showLogin(); return; }
       try {
         const res = await api('/api/servers');
         if (!res.ok) { showLogin(); return; }
         showApp();
-        checkFleetUpdate();
-        await updateAllServers();
+        await checkFleetUpdate(false);
         await pollFleet();
+        setInterval(() => checkFleetUpdate(false), 300000);
       } catch (e) { if (e.message !== 'unauthorized') showLogin(); }
     }
 
