@@ -10,14 +10,13 @@
       --muted: #8b93a7; --accent: #5b8cff; --green: #3dd68c; --yellow: #e8c468; --red: #f07178;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 14px; overflow-x: hidden; }
-    .wrap { max-width: 1400px; margin: 0 auto; overflow-x: hidden; }
+    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .wrap { max-width: 1440px; margin: 0 auto; padding: 20px 24px 40px; }
     .hidden { display: none !important; }
-    .gate { min-height: 70vh; display: flex; align-items: center; justify-content: center; }
-    .panel { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
-    .panel h1 { font-size: 1.1rem; margin-bottom: 6px; }
-    .panel p { color: var(--muted); font-size: .82rem; margin-bottom: 12px; line-height: 1.45; }
-    input, select { width: 100%; border: 1px solid var(--border); background: #0d1016; color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: .88rem; }
+    .gate { min-height: 70vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .panel { width: 100%; max-width: 400px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+    input, select, textarea { width: 100%; border: 1px solid var(--border); background: #0d1016; color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: .88rem; }
+    textarea { min-height: 80px; resize: vertical; font-family: ui-monospace, monospace; font-size: .78rem; }
     label { display: block; font-size: .72rem; color: var(--muted); margin: 10px 0 4px; }
     .btn { border: none; border-radius: 8px; padding: 9px 14px; font-weight: 600; cursor: pointer; font-size: .82rem; }
     .btn-primary { background: var(--accent); color: #fff; }
@@ -25,150 +24,61 @@
     .btn-sm { padding: 6px 10px; font-size: .75rem; }
     .btn-danger { background: rgba(240,113,120,.15); color: var(--red); border: 1px solid rgba(240,113,120,.3); }
     .err { color: var(--red); font-size: .78rem; min-height: 1.2em; margin-top: 8px; }
-    header { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-    h1 { font-size: 1.2rem; }
-    .sub { color: var(--muted); font-size: .75rem; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+    h1 { font-size: 1.35rem; }
+    h2 { font-size: 1rem; margin-bottom: 10px; }
+    .sub { color: var(--muted); font-size: .78rem; line-height: 1.4; }
     .live { color: var(--green); font-size: .72rem; }
-    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
-    .server {
-      background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-    }
-    .server.offline { border-color: rgba(240,113,120,.35); }
-    .server-head { padding: 10px 12px; cursor: pointer; }
-    .server-head:hover { background: rgba(255,255,255,.02); }
-    .server-title { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
-    .server-name { font-weight: 700; font-size: .92rem; }
-    .server-url { font-size: .68rem; color: var(--muted); margin-top: 2px; word-break: break-all; }
-    .badge { font-size: .62rem; padding: 2px 6px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .section { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; }
+    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .section-title { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+    .overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .stat { background: #0d1016; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+    .stat .label { font-size: .62rem; color: var(--muted); text-transform: uppercase; }
+    .stat .value { font-size: 1.1rem; font-weight: 700; margin-top: 4px; }
+    .alerts { display: flex; flex-direction: column; gap: 6px; }
+    .alert { padding: 8px 10px; border-radius: 8px; font-size: .78rem; border: 1px solid var(--border); background: #0d1016; }
+    .alert.ok { border-color: rgba(61,214,140,.3); color: var(--green); }
+    .alert.warn { border-color: rgba(232,196,104,.35); color: var(--yellow); }
+    .alert.error { border-color: rgba(240,113,120,.35); color: var(--red); }
+    .projects-table, .servers-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    .projects-table th, .servers-table th { text-align: left; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    .projects-table td, .servers-table td { padding: 10px; border-bottom: 1px solid rgba(37,43,56,.6); vertical-align: middle; }
+    .projects-table tr:hover, .servers-table tr:hover { background: rgba(255,255,255,.02); }
+    .proj-name { font-weight: 600; }
+    .badge { font-size: .62rem; padding: 2px 7px; border-radius: 999px; font-weight: 700; }
     .badge.ok { background: rgba(61,214,140,.15); color: var(--green); }
     .badge.bad { background: rgba(240,113,120,.15); color: var(--red); }
-    .server-metrics {
-      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: 100%; min-width: 0;
-    }
-    @media (min-width: 640px) {
-      .server-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-    }
-    .metric {
-      background: #0d1016; border: 1px solid var(--border); border-radius: 8px; padding: 5px 6px; min-width: 0;
-    }
-    .metric.ok { border-color: rgba(61,214,140,.25); }
-    .metric.warn { border-color: rgba(232,196,104,.35); }
-    .metric.bad { border-color: rgba(240,113,120,.4); }
-    .metric-row { display: flex; gap: 5px; align-items: stretch; min-height: 46px; }
-    .metric-info { flex: 0 0 46%; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
-    .metric-head { display: flex; align-items: center; gap: 4px; }
-    .metric .label { font-size: .58rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-    .metric-line { font-size: .7rem; font-weight: 700; line-height: 1.25; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .metric-line .dim { color: var(--muted); font-weight: 500; }
-    .status {
-      width: 13px; height: 13px; border-radius: 50%; display: inline-flex; align-items: center;
-      justify-content: center; font-size: .55rem; font-weight: 800; flex-shrink: 0;
-    }
-    .status.ok { background: rgba(61,214,140,.18); color: var(--green); }
-    .status.warn { background: rgba(232,196,104,.18); color: var(--yellow); }
-    .status.bad { background: rgba(240,113,120,.18); color: var(--red); }
-    .metric-chart { flex: 1; min-width: 0; display: flex; align-items: flex-end; }
-    .metric-chart canvas { width: 100%; height: 46px; display: block; }
-    .server-body { border-top: 1px solid var(--border); padding: 10px 12px 12px; display: none; }
-    .server.open .server-body { display: block; }
-    .charts { display: grid; gap: 8px; margin-bottom: 10px; }
-    .chart-box { background: #0d1016; border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
-    .chart-box h3 { font-size: .7rem; color: var(--muted); margin-bottom: 4px; }
-    .chart-box canvas { width: 100%; height: 56px; display: block; }
-    .legend { font-size: .6rem; color: var(--muted); margin-top: 3px; }
-    .legend i { display: inline-block; width: 10px; height: 2px; margin-right: 3px; vertical-align: middle; }
-    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; font-size: .74rem; margin-bottom: 10px; }
-    .detail-grid .full { grid-column: 1 / -1; }
-    .detail-grid span { color: var(--muted); }
-    .section-title { font-size: .72rem; color: var(--muted); margin: 8px 0 5px; text-transform: uppercase; letter-spacing: .05em; }
-    .docker-list { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
-    .docker-totals { font-size: .68rem; color: var(--muted); margin: 2px 0 6px; }
-    .docker-group { background: #0d1016; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    .docker-group-head {
-      display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
-      padding: 7px 9px; cursor: pointer; user-select: none;
-    }
-    .docker-group-head:hover { background: rgba(255,255,255,.02); }
-    .docker-group-title { font-size: .74rem; font-weight: 700; }
-    .docker-group-sub { font-size: .6rem; color: var(--muted); margin-top: 2px; }
-    .docker-group-pct { font-size: .64rem; color: var(--muted); text-align: right; white-space: nowrap; }
-    .docker-group-pct strong { color: var(--text); }
-    .share-bars { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
-    .share-row { display: grid; grid-template-columns: 30px 1fr 34px; gap: 5px; align-items: center; font-size: .58rem; color: var(--muted); }
-    .share-row .bar { height: 6px; background: #0a0c10; border-radius: 999px; overflow: hidden; }
-    .share-row .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
-    .share-row .bar > i.warn { background: var(--yellow); }
-    .share-row .bar > i.bad { background: var(--red); }
-    .share-row .pct { text-align: right; color: var(--text); font-weight: 600; }
-    .docker-group-body { border-top: 1px solid var(--border); padding: 5px 7px 7px; display: none; }
-    .docker-group.open .docker-group-body { display: block; }
-    .docker-group-chevron { color: var(--muted); font-size: .65rem; margin-left: 4px; }
-    .docker-item { padding: 5px 3px; border-top: 1px solid rgba(37,43,56,.6); font-size: .64rem; }
-    .docker-item:first-child { border-top: none; }
-    .docker-item-name { font-weight: 600; margin-bottom: 3px; }
-    .projects { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
-    .proj {
-      display: grid; grid-template-columns: 52px 1fr auto; gap: 6px; align-items: center;
-      padding: 5px 6px; background: #0d1016; border: 1px solid var(--border); border-radius: 6px;
-    }
-    .proj.running { border-color: rgba(61,214,140,.3); }
-    .proj-name { font-size: .78rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .proj-time { font-size: .62rem; color: var(--muted); }
-    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-    .dot.on { background: var(--green); }
-    .modal-overlay {
-      position: fixed; inset: 0; background: rgba(11,13,18,.9); display: flex; align-items: center;
-      justify-content: center; padding: 16px; z-index: 50;
-    }
-    .modal { width: 100%; max-width: 400px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-    .modal h2 { font-size: 1rem; margin-bottom: 10px; }
-    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
-    #msg { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 10px; min-height: 1.2em; }
-    .update-banner {
-      margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; text-align: center;
-      font-size: .78rem; border: 1px solid rgba(91,140,255,.35);
-      background: rgba(91,140,255,.12); color: var(--accent);
-    }
-    .warn { color: var(--yellow); }
-    .expand-hint { font-size: .65rem; color: var(--muted); margin-top: 6px; }
-    .quick-agents { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; min-width: 0; }
-    .quick-agent {
-      border: 1px solid var(--border); background: #0d1016; color: var(--text);
-      border-radius: 6px; padding: 4px 8px; font-size: .7rem; font-weight: 600; cursor: pointer;
-      max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0;
-    }
-    .quick-agent:hover { background: rgba(255,255,255,.04); }
-    .quick-agent.running { border-color: rgba(61,214,140,.35); color: var(--green); }
-    .quick-agents-label { font-size: .6rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 8px; }
-    .modal-steps { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
-    .modal-steps li {
-      display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--muted);
-    }
-    .modal-steps li.active { color: var(--text); }
-    .modal-steps li.done { color: var(--green); }
-    .modal-steps li.error { color: var(--red); }
-    .step-dot {
-      width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border);
-      display: inline-flex; align-items: center; justify-content: center; font-size: .6rem; flex-shrink: 0;
-    }
-    .modal-steps li.active .step-dot { border-color: var(--accent); }
-    .modal-steps li.done .step-dot { border-color: var(--green); background: rgba(61,214,140,.15); }
-    .modal-steps li.error .step-dot { border-color: var(--red); }
-    .start-log {
-      margin-top: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
-      background: rgba(0,0,0,.25); font-family: ui-monospace, monospace; font-size: .62rem;
-      line-height: 1.45; max-height: 180px; overflow: auto; white-space: pre-wrap; color: #c9d3e7;
-    }
+    .badge.run { background: rgba(91,140,255,.15); color: var(--accent); }
+    .link { color: var(--accent); text-decoration: none; }
+    .link:hover { text-decoration: underline; }
+    .server-row { cursor: pointer; }
+    .metric-mini { display: flex; gap: 8px; flex-wrap: wrap; font-size: .7rem; color: var(--muted); }
+    .metric-mini span b { color: var(--text); }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(11,13,18,.92); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; overflow: auto; }
+    .modal { width: 100%; max-width: 720px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; max-height: 90vh; overflow: auto; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } .wrap { padding: 12px; } }
+    .update-banner { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; text-align: center; font-size: .78rem; border: 1px solid rgba(91,140,255,.35); background: rgba(91,140,255,.12); color: var(--accent); }
+    .proxy-log { margin-top: 10px; padding: 10px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; font-size: .68rem; max-height: 160px; overflow: auto; font-family: ui-monospace, monospace; }
+    .server-detail-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 12px 0; }
+    .chart-box { background: #0d1016; border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+    .chart-box h3 { font-size: .65rem; color: var(--muted); margin-bottom: 4px; }
+    canvas { width: 100%; display: block; }
+    .proj-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .proj-item { display: grid; grid-template-columns: 60px 1fr auto; gap: 8px; align-items: center; padding: 8px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; }
+    #msg { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 12px; }
   </style>
 </head>
 <body>
   <div id="login" class="gate">
     <div class="panel">
       <h1>AgentControl Fleet</h1>
-      <p>Enter the fleet password. It is saved in this browser (localStorage) so you won't need to sign in again.</p>
+      <p class="sub">Enter the fleet password. Saved in this browser until you sign out.</p>
       <label>Fleet password</label>
-      <input id="login-pw" type="password" autocomplete="current-password" placeholder="Fleet password">
+      <input id="login-pw" type="password" autocomplete="current-password">
       <button class="btn btn-primary" type="button" style="width:100%;margin-top:12px" onclick="doLogin()">Sign in</button>
       <p id="login-err" class="err"></p>
     </div>
@@ -178,34 +88,54 @@
     <header>
       <div>
         <h1>AgentControl Fleet</h1>
-        <p class="sub">All servers in one view · <span id="app-version">v…</span> · <span id="app-version-date"></span></p>
+        <p class="sub">Multi-server overview · <span id="app-version">v…</span></p>
       </div>
       <div class="live" id="live">● connecting…</div>
     </header>
     <p id="update-banner" class="update-banner hidden"></p>
     <div class="toolbar">
       <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
-      <button class="btn btn-ghost btn-sm" type="button" onclick="openMainPanel()">Main panel</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy settings</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="refreshNow()">Refresh</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="logout()">Sign out</button>
     </div>
-    <div id="servers" class="grid"><p class="sub">Loading…</p></div>
+
+    <section class="section" id="recent-section">
+      <div class="section-head">
+        <div class="section-title">Recent projects (all servers)</div>
+        <button class="btn btn-ghost btn-sm" type="button" id="toggle-all-projects" onclick="toggleAllProjects()">All projects</button>
+      </div>
+      <table class="projects-table">
+        <thead><tr><th>Project</th><th>Server</th><th>Last activity</th><th>Status</th><th></th></tr></thead>
+        <tbody id="recent-projects"></tbody>
+      </table>
+    </section>
+
+    <section class="section" id="overview-section">
+      <div class="section-title" style="margin-bottom:10px">Fleet status</div>
+      <div class="overview" id="overview-stats"></div>
+      <div class="alerts" id="overview-alerts"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">Servers</div>
+      </div>
+      <table class="servers-table">
+        <thead><tr><th>Name</th><th>Host / IP</th><th>Version</th><th>CPU</th><th>RAM</th><th>Workers</th><th>Proxy</th><th></th></tr></thead>
+        <tbody id="servers-table"></tbody>
+      </table>
+    </section>
     <p id="msg"></p>
   </div>
 
   <div id="add-modal" class="modal-overlay hidden">
-    <div class="modal">
+    <div class="modal" style="max-width:420px">
       <h2>Add server</h2>
-      <p class="sub" style="margin-bottom:10px">
-        Use a <strong>hostname</strong>, not a raw IP — Cloudflare Workers block direct IP access (error 1003).
-        Example: <code>http://ac-tg-uk.aksbaz.com:30228</code> with an A record (grey cloud) pointing to your server.
-      </p>
-      <label>Name</label>
-      <input id="add-name" placeholder="e.g. tg-uk">
-      <label>URL (hostname only)</label>
-      <input id="add-url" placeholder="http://ac-tg-uk.aksbaz.com:30228">
-      <label>Panel password</label>
-      <input id="add-password" type="password" placeholder="AgentControl password">
+      <p class="sub">Use a hostname (not raw IP) — Cloudflare Workers block direct IPs.</p>
+      <label>Name</label><input id="add-name" placeholder="e.g. iran-1">
+      <label>URL</label><input id="add-url" placeholder="http://ac.example.com:30228">
+      <label>Panel password</label><input id="add-password" type="password">
       <div class="modal-actions">
         <button class="btn btn-ghost btn-sm" type="button" onclick="closeAddModal()">Cancel</button>
         <button class="btn btn-primary btn-sm" type="button" onclick="addServer()">Add</button>
@@ -214,839 +144,356 @@
     </div>
   </div>
 
+  <div id="server-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 id="server-modal-title">Server</h2>
+      <p class="sub" id="server-modal-url"></p>
+      <div class="server-detail-metrics" id="server-modal-metrics"></div>
+      <div class="section-title">Projects</div>
+      <div class="proj-list" id="server-modal-projects"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" type="button" onclick="openServerPanel()">Open panel</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="closeServerModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="proxy-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Fleet proxy settings</h2>
+      <p class="sub">Push proxy links and subscriptions to all servers. Each server runs failover on worker start.</p>
+      <label><input type="checkbox" id="proxy-enabled" style="width:auto;margin-right:6px"> Enable proxy on all servers</label>
+      <label>Proxy share links (one per line)</label>
+      <textarea id="proxy-links" placeholder="vless://...&#10;trojan://..."></textarea>
+      <label>Subscription URLs (one per line)</label>
+      <textarea id="proxy-subs" placeholder="https://sub.example.com/..."></textarea>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" type="button" onclick="closeProxyModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" type="button" onclick="pushProxy()">Apply to all servers</button>
+      </div>
+      <div class="proxy-log hidden" id="proxy-push-log"></div>
+      <p id="proxy-err" class="err"></p>
+    </div>
+  </div>
+
   <div id="start-modal" class="modal-overlay hidden">
     <div class="modal" style="max-width:420px">
       <h2 id="start-title">Starting…</h2>
-      <ul class="modal-steps" id="start-steps">
-        <li data-step="request"><span class="step-dot">1</span>Send start request</li>
-        <li data-step="launch"><span class="step-dot">2</span>Launch worker process</li>
-        <li data-step="connect"><span class="step-dot">3</span>Connect to Cursor cloud</li>
-        <li data-step="redirect"><span class="step-dot">4</span>Open Cursor</li>
-      </ul>
-      <p id="start-msg" class="err" style="min-height:1.2em"></p>
-      <pre id="start-log" class="start-log hidden"></pre>
-      <div class="modal-actions" style="margin-top:14px">
-        <button class="btn btn-ghost btn-sm hidden" id="start-open" type="button" onclick="openCursorFromStartModal()">Open Cursor</button>
-        <button class="btn btn-ghost btn-sm hidden" id="start-close" type="button" onclick="closeStartModal()">Close</button>
+      <p id="start-msg" class="err"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm hidden" id="start-open" type="button" onclick="openCursor()">Open Cursor</button>
+        <button class="btn btn-ghost btn-sm" id="start-close" type="button" onclick="closeStartModal()">Close</button>
       </div>
     </div>
   </div>
 
   <script>
     const AUTH_KEY = 'agentcontrol_fleet_pw';
-    const RECENT_KEY = 'agentcontrol_fleet_recent';
-    const MAIN_SERVER_KEY = 'agentcontrol_fleet_main_server';
-    const POLL_INTERVAL_MS = 25000;
-    const POLL_BACKOFF_MAX_MS = 120000;
-    const expanded = new Set();
-    const expandedDocker = new Set();
-    let pollTimer = null;
-    let pollAbort = null;
-    let pollBackoffMs = 0;
-    let tabVisible = !document.hidden;
+    const POLL_MS = 25000;
+    let lastSnapshot = null;
+    let showAllProjects = false;
     let busy = false;
-    let lastSnapshots = [];
+    let pollTimer = null;
+    let modalServer = null;
     let pendingAgentUrl = null;
-
-    function sid(id) { return String(id).replace(/[^a-zA-Z0-9_-]/g, '_'); }
-
-    function loadRecent() {
-      try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '{}'); } catch { return {}; }
-    }
-
-    function touchServerRecent(id) {
-      const recent = loadRecent();
-      recent[id] = Date.now();
-      localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
-    }
-
-    function sortServers(snapshots) {
-      const recent = loadRecent();
-      return [...snapshots].sort((a, b) => {
-        const diff = (recent[b.id] || 0) - (recent[a.id] || 0);
-        return diff || String(a.name).localeCompare(String(b.name));
-      });
-    }
-
-    function topFolders(folders, limit = 3) {
-      return (folders || []).slice(0, limit);
-    }
-
-    function renderQuickAgents(s) {
-      const items = topFolders(s.folders);
-      if (!items.length) return '';
-      const chips = items.map(f => {
-        const enc = encodeURIComponent(f.name);
-        const attrs = f.running
-          ? `class="quick-agent running" data-stop="${esc(s.id)}" data-proj="${enc}" type="button"`
-          : `class="quick-agent" data-start="${esc(s.id)}" data-proj="${enc}" type="button"`;
-        return `<button ${attrs} title="${esc(f.name)}">${esc(f.name)}</button>`;
-      }).join('');
-      return `<div class="quick-agents-label">Recent projects</div><div class="quick-agents">${chips}</div>`;
-    }
 
     function pw() { return localStorage.getItem(AUTH_KEY) || ''; }
     function setPw(v) { localStorage.setItem(AUTH_KEY, v); }
     function clearPw() { localStorage.removeItem(AUTH_KEY); }
-
-    function getMainServer() {
-      const mainId = localStorage.getItem(MAIN_SERVER_KEY);
-      if (mainId) {
-        const found = lastSnapshots.find(s => s.id === mainId && s.online);
-        if (found) return found;
-      }
-      return lastSnapshots.find(s => s.online) || lastSnapshots[0] || null;
-    }
-
-    function setMainServer(id) {
-      localStorage.setItem(MAIN_SERVER_KEY, id);
-      renderServers(lastSnapshots);
-    }
-
-    function openMainPanel() {
-      const server = getMainServer();
-      if (!server) {
-        document.getElementById('msg').textContent = 'Add a server first';
-        document.getElementById('msg').className = 'warn';
-        return;
-      }
-      if (!server.online) {
-        document.getElementById('msg').textContent = 'Main server is offline';
-        document.getElementById('msg').className = 'warn';
-        return;
-      }
-      window.open(server.url, '_blank');
+    function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+    function relTime(ts) {
+      if (!ts) return '—';
+      const sec = Math.floor((Date.now() - ts * (ts < 1e12 ? 1000 : 1)) / 1000);
+      if (sec < 0) return 'just now';
+      if (sec < 60) return sec + 's ago';
+      if (sec < 3600) return Math.floor(sec/60) + 'm ago';
+      if (sec < 86400) return Math.floor(sec/3600) + 'h ago';
+      return Math.floor(sec/86400) + 'd ago';
     }
 
     async function api(path, opts = {}) {
-      opts.headers = {
-        'Content-Type': 'application/json',
-        'X-Fleet-Password': pw(),
-        ...(opts.headers || {}),
-      };
+      opts.headers = { 'Content-Type': 'application/json', 'X-Fleet-Password': pw(), ...(opts.headers || {}) };
       const res = await fetch(path, opts);
-      if (res.status === 401) {
-        clearPw();
-        showLogin();
-        throw new Error('unauthorized');
-      }
+      if (res.status === 401) { clearPw(); showLogin(); throw new Error('unauthorized'); }
       return res;
     }
 
-    function stopPolling() {
-      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-      if (pollAbort) { pollAbort.abort(); pollAbort = null; }
-    }
+    function showLogin() { document.getElementById('login').classList.remove('hidden'); document.getElementById('app').classList.add('hidden'); stopPoll(); }
+    function showApp() { document.getElementById('login').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); startPoll(); }
+    function stopPoll() { if (pollTimer) clearTimeout(pollTimer); pollTimer = null; }
+    function startPoll() { stopPoll(); pollTimer = setTimeout(pollFleet, POLL_MS); }
 
-    function scheduleNextPoll(delayMs) {
-      if (pollTimer) clearTimeout(pollTimer);
-      pollTimer = setTimeout(() => { pollFleetOnce(); }, delayMs);
-    }
-
-    async function pollFleetOnce() {
-      if (busy || document.getElementById('app').classList.contains('hidden') || !tabVisible) {
-        stopPolling();
-        return;
-      }
-      if (pollAbort) pollAbort.abort();
-      pollAbort = new AbortController();
-      setLiveState('● updating…');
-
+    async function doLogin() {
+      const p = document.getElementById('login-pw').value;
+      setPw(p);
       try {
-        const res = await fetch('/api/fleet/snapshot', {
-          headers: {
-            'X-Fleet-Password': pw(),
-            'Accept': 'application/json',
-          },
-          signal: pollAbort.signal,
-        });
-        if (res.status === 401) {
-          clearPw();
-          showLogin();
-          return;
-        }
-        if (!res.ok) throw new Error('poll ' + res.status);
-        const data = await res.json();
-        if (!busy) {
-          renderServers(data.servers || []);
-          document.getElementById('msg').textContent = '';
-          document.getElementById('msg').className = '';
-        }
-        pollBackoffMs = 0;
-        setLiveState('● live');
-        scheduleNextPoll(POLL_INTERVAL_MS);
-      } catch (e) {
-        if (e.name === 'AbortError') return;
-        pollBackoffMs = Math.min(
-          POLL_BACKOFF_MAX_MS,
-          pollBackoffMs ? pollBackoffMs * 2 : POLL_INTERVAL_MS,
-        );
-        setLiveState('● retry in ' + Math.round(pollBackoffMs / 1000) + 's');
-        document.getElementById('msg').textContent = 'Refresh failed — retrying…';
-        document.getElementById('msg').className = 'warn';
-        scheduleNextPoll(pollBackoffMs);
-      }
+        const res = await api('/api/servers');
+        if (res.ok) showApp();
+        else document.getElementById('login-err').textContent = 'Wrong password';
+      } catch (e) { document.getElementById('login-err').textContent = e.message; }
     }
 
-    function startPolling() {
-      stopPolling();
-      if (document.getElementById('app').classList.contains('hidden') || !tabVisible) return;
-      pollFleetOnce();
-    }
-
-    function setLiveState(text) {
-      document.getElementById('live').textContent = text;
-    }
-
-    function showLogin() {
-      document.getElementById('login').classList.remove('hidden');
-      document.getElementById('app').classList.add('hidden');
-      stopPolling();
-    }
-
-    function showApp() {
-      document.getElementById('login').classList.add('hidden');
-      document.getElementById('app').classList.remove('hidden');
-      loadVersionLabel();
-      checkAndApplyFleetUpdate();
-      startPolling();
-    }
-
-    async function checkAndApplyFleetUpdate() {
-      const banner = document.getElementById('update-banner');
-      try {
-        const res = await api('/api/update/check');
-        const data = await res.json();
-        if (!data.update_available) return;
-        const target = data.remote?.version || '';
-        banner.classList.remove('hidden');
-        banner.textContent = target
-          ? `Downloading fleet v${target} from GitHub…`
-          : 'Checking GitHub for fleet updates…';
-        const applyRes = await api('/api/update/apply', { method: 'POST' });
-        const applyData = await applyRes.json();
-        if (!applyRes.ok) {
-          banner.textContent = applyData.error || 'Fleet update failed';
-          return;
-        }
-        banner.textContent = `Updated to v${applyData.version?.version || target} — reloading…`;
-        location.reload();
-      } catch (e) {
-        if (e.message !== 'unauthorized') {
-          banner.classList.remove('hidden');
-          banner.textContent = 'Auto-update check failed';
-        }
-      }
-    }
+    function logout() { clearPw(); showLogin(); }
 
     async function loadVersionLabel() {
       try {
-        const res = await fetch('/version.json');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.version) {
-          document.getElementById('app-version').textContent = 'v' + data.version;
-        }
-        if (data.updated) {
-          document.getElementById('app-version-date').textContent = data.updated;
-        }
+        const res = await fetch('/api/version');
+        const v = await res.json();
+        document.getElementById('app-version').textContent = 'v' + (v.version || '?');
       } catch (_) {}
     }
 
-    document.addEventListener('visibilitychange', () => {
-      tabVisible = !document.hidden;
-      if (tabVisible && !document.getElementById('app').classList.contains('hidden')) {
-        document.getElementById('msg').textContent = '';
-        document.getElementById('msg').className = '';
-        startPolling();
+    async function touchServer(serverId) {
+      try { await api('/api/servers/touch', { method: 'POST', body: JSON.stringify({ serverId }) }); } catch (_) {}
+    }
+
+    function renderOverview(data) {
+      const ov = data.overview || {};
+      document.getElementById('overview-stats').innerHTML = `
+        <div class="stat"><div class="label">Online</div><div class="value">${ov.online ?? 0}</div></div>
+        <div class="stat"><div class="label">Offline</div><div class="value">${ov.offline ?? 0}</div></div>
+        <div class="stat"><div class="label">Workers</div><div class="value">${ov.workers ?? 0}</div></div>
+        <div class="stat"><div class="label">Proxy issues</div><div class="value">${ov.proxyIssues ?? 0}</div></div>`;
+      const alertsEl = document.getElementById('overview-alerts');
+      if (ov.ok) {
+        alertsEl.innerHTML = '<div class="alert ok">✓ All servers look good</div>';
       } else {
-        stopPolling();
-        setLiveState('○ paused');
-        document.getElementById('msg').textContent = 'Updates paused while tab is in background';
-        document.getElementById('msg').className = 'sub';
-      }
-    });
-
-    async function doLogin() {
-      const password = document.getElementById('login-pw').value;
-      const err = document.getElementById('login-err');
-      err.textContent = '';
-      setPw(password);
-      try {
-        const res = await api('/api/login', { method: 'POST', body: JSON.stringify({ password }) });
-        const data = await res.json();
-        if (!res.ok) { clearPw(); err.textContent = data.error || 'Failed'; return; }
-        showApp();
-      } catch (e) {
-        err.textContent = 'Login failed';
-        clearPw();
+        alertsEl.innerHTML = (ov.alerts || []).map(a =>
+          `<div class="alert ${a.level}"><strong>${esc(a.server)}</strong> — ${esc(a.message)}</div>`
+        ).join('');
       }
     }
 
-    document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-
-    function logout() { clearPw(); stopPolling(); showLogin(); }
-
-    function esc(s) {
-      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-    }
-
-    function healthLevel(pct, loadMode) {
-      if (loadMode) {
-        if (pct >= 100) return 'bad';
-        if (pct >= 70) return 'warn';
-        return 'ok';
+    function renderRecentProjects(data) {
+      const items = showAllProjects ? (data.recentProjectsAll || data.recentProjects || []) : (data.recentProjects || []);
+      const tbody = document.getElementById('recent-projects');
+      if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="sub">No recent projects yet</td></tr>';
+        return;
       }
-      if (pct >= 90) return 'bad';
-      if (pct >= 75) return 'warn';
-      return 'ok';
-    }
-
-    function statusIcon(level) {
-      return level === 'bad' ? '✕' : level === 'warn' ? '!' : '✓';
-    }
-
-    function applyMetricStatus(serverId, key, level) {
-      const card = document.getElementById(`m-${key}-${serverId}`);
-      const st = document.getElementById(`st-${key}-${serverId}`);
-      if (card) card.className = 'metric ' + level;
-      if (st) { st.className = 'status ' + level; st.textContent = statusIcon(level); }
-    }
-
-    function pctClass(p) { return p >= 90 ? 'bad' : p >= 75 ? 'warn' : ''; }
-
-    function drawGrid(ctx, w, h, maxY, percentMode) {
-      ctx.strokeStyle = 'rgba(139,147,167,.15)';
-      ctx.lineWidth = 1;
-      if (percentMode) {
-        [0.5, 1].forEach(frac => {
-          const y = h - 2 - frac * (h - 4);
-          ctx.beginPath();
-          ctx.moveTo(1, y);
-          ctx.lineTo(w - 1, y);
-          ctx.stroke();
-        });
-      }
-    }
-
-    function plotLine(ctx, values, w, h, max, color, dashed) {
-      if (!values.length) return;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      if (dashed) ctx.setLineDash([3, 2]); else ctx.setLineDash([]);
-      ctx.beginPath();
-      values.forEach((v, i) => {
-        const x = (i / Math.max(values.length - 1, 1)) * (w - 2) + 1;
-        const y = h - 2 - (Math.min(v, max) / max) * (h - 4);
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      });
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    function drawSparkline(canvasId, series, opts = {}) {
-      const c = document.getElementById(canvasId);
-      if (!c) return;
-      const ctx = c.getContext('2d');
-      const w = c.width, h = c.height;
-      ctx.clearRect(0, 0, w, h);
-      const max = opts.max ?? 100;
-      drawGrid(ctx, w, h, max, opts.percent !== false);
-      const list = Array.isArray(series[0]) ? series : [series];
-      const colors = opts.colors || ['#5b8cff'];
-      const dashed = opts.dashed || [];
-      list.forEach((values, idx) => plotLine(ctx, values, w, h, max, colors[idx] || colors[0], dashed[idx]));
-    }
-
-    function drawChart(canvasId, series, opts = {}) {
-      const c = document.getElementById(canvasId);
-      if (!c) return;
-      const ctx = c.getContext('2d');
-      const w = c.width, h = c.height;
-      ctx.clearRect(0, 0, w, h);
-      const max = opts.max ?? 100;
-      drawGrid(ctx, w, h, max, opts.percent !== false);
-      const list = Array.isArray(series[0]) ? series : [series];
-      const colors = opts.colors || ['#5b8cff'];
-      const dashed = opts.dashed || [];
-      list.forEach((values, idx) => {
-        if (!values.length) return;
-        const color = colors[idx] || colors[0];
-        if (!dashed[idx]) {
-          ctx.fillStyle = color + '22';
-          ctx.beginPath();
-          values.forEach((v, i) => {
-            const x = (i / Math.max(values.length - 1, 1)) * (w - 4) + 2;
-            const y = h - 4 - (Math.min(v, max) / max) * (h - 8);
-            i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-          });
-          ctx.lineTo(w - 2, h - 2);
-          ctx.lineTo(2, h - 2);
-          ctx.closePath();
-          ctx.fill();
-        }
-        plotLine(ctx, values, w, h, max, color, dashed[idx]);
-      });
-    }
-
-    function netMax(values) {
-      const peak = values.length ? Math.max(...values) : 0;
-      return Math.max(peak * 1.2, 1024);
-    }
-
-    function renderShareBars(cpuShare, memShare) {
-      return `<div class="share-bars">
-        <div class="share-row"><span>CPU</span><div class="bar"><i class="${pctClass(cpuShare)}" style="width:${Math.min(cpuShare,100)}%"></i></div><span class="pct">${cpuShare.toFixed(1)}%</span></div>
-        <div class="share-row"><span>RAM</span><div class="bar"><i class="${pctClass(memShare)}" style="width:${Math.min(memShare,100)}%;background:var(--green)"></i></div><span class="pct">${memShare.toFixed(1)}%</span></div>
-      </div>`;
-    }
-
-    function renderDockerGroups(serverId, docker) {
-      if (!docker || !docker.available) return '<div class="full" style="color:var(--muted)">Docker not installed</div>';
-      const groups = docker.groups || [];
-      if (!groups.length) return '<div class="full" style="color:var(--muted)">No running containers</div>';
-      const totals = docker.totals || {};
-      const head = `<div class="full docker-totals">Docker total: <strong>${(totals.cpu_percent||0).toFixed(1)}% CPU</strong> · <strong>${totals.mem_human||'0 B'} RAM</strong></div>`;
-      const body = groups.map(g => {
-        const key = `${serverId}:${g.id}`;
-        const open = expandedDocker.has(key) ? ' open' : '';
-        const chev = expandedDocker.has(key) ? '▾' : '▸';
-        const kind = g.type === 'compose' ? `compose · ${g.container_count} containers` : 'standalone';
-        const items = (g.containers || []).map(c => `
-          <div class="docker-item">
-            <div class="docker-item-name">${esc(c.service || c.name)}</div>
-            ${renderShareBars(c.cpu_share || 0, c.mem_share || 0)}
-            <div style="font-size:.58rem;color:var(--muted);margin-top:3px">${c.cpu_percent.toFixed(1)}% host CPU · ${c.mem_usage}</div>
-          </div>`).join('');
-        return `<div class="docker-group${open}" data-docker-group="${esc(key)}">
-          <div class="docker-group-head" data-docker-toggle="${esc(key)}">
-            <div>
-              <div class="docker-group-title">${esc(g.label)} <span class="docker-group-chevron">${chev}</span></div>
-              <div class="docker-group-sub">${kind}</div>
-              ${renderShareBars(g.cpu_share || 0, g.mem_share || 0)}
-            </div>
-            <div class="docker-group-pct"><strong>${g.cpu_share.toFixed(1)}%</strong> CPU<br><strong>${g.mem_share.toFixed(1)}%</strong> RAM</div>
-          </div>
-          <div class="docker-group-body">${items}</div>
-        </div>`;
+      tbody.innerHTML = items.map(p => {
+        const status = p.running ? '<span class="badge run">running</span>' : '<span class="badge">idle</span>';
+        const btn = p.running
+          ? `<button class="btn btn-danger btn-sm" onclick="stopWorker('${esc(p.serverId)}','${encodeURIComponent(p.project)}')">Stop</button>`
+          : `<button class="btn btn-primary btn-sm" onclick="startWorker('${esc(p.serverId)}','${encodeURIComponent(p.project)}')">Start</button>`;
+        return `<tr>
+          <td class="proj-name">${esc(p.project)}</td>
+          <td>${esc(p.serverName)}</td>
+          <td>${relTime(p.touchedAt)}</td>
+          <td>${status}</td>
+          <td>${btn}</td>
+        </tr>`;
       }).join('');
-      return `<div class="full docker-list">${head}${body}</div>`;
+      document.getElementById('toggle-all-projects').textContent = showAllProjects ? 'Show recent 10' : 'All projects';
     }
 
-    function metricCard(serverId, key, label) {
-      return `<div class="metric" id="m-${key}-${serverId}">
-        <div class="metric-row">
-          <div class="metric-info">
-            <div class="metric-head"><span class="label">${label}</span><span class="status ok" id="st-${key}-${serverId}">✓</span></div>
-            <div class="metric-line" id="line-${key}-${serverId}">—</div>
-          </div>
-          <div class="metric-chart"><canvas id="spark-${key}-${serverId}" width="100" height="46"></canvas></div>
-        </div>
-      </div>`;
+    function proxyBadge(s) {
+      const p = s.proxy;
+      if (!p) return '—';
+      if (!p.enabled) return '<span class="badge">direct</span>';
+      if (p.listening) return '<span class="badge ok">OK</span>';
+      return '<span class="badge bad">down</span>';
     }
 
-    function renderServerMetricsHtml(serverId) {
-      return `<div class="server-metrics">
-        ${metricCard(serverId, 'cpu', 'CPU')}
-        ${metricCard(serverId, 'ram', 'RAM')}
-        ${metricCard(serverId, 'disk', 'Disk')}
-        ${metricCard(serverId, 'net', 'Network')}
-      </div>
-      <div class="expand-hint">Click card for charts, Docker &amp; all projects</div>`;
-    }
-
-    function renderServerDetailsHtml(s, serverId) {
-      const sys = s.system || {};
-      const cpu = sys.cpu || {};
-      const mem = sys.memory || {};
-      const disk = sys.disk_root || {};
-      const net = sys.network || {};
-      const panel = sys.panel || {};
-      const docker = sys.docker || {};
-      const swapPct = mem.swap_percent;
-      const loadPct = cpu.load_percent || 0;
-      const dockerSummary = docker.available
-        ? `${docker.running} running / ${docker.total} total · v${docker.version || '?'}`
-        : 'Docker not installed';
-      const histLen = (s.history || []).length;
-
-      return `<div class="charts">
-        <div class="chart-box">
-          <h3>CPU % (blue) · Load % (orange)</h3>
-          <canvas id="chart-cpu-${serverId}" width="520" height="56"></canvas>
-          <div class="legend"><i style="background:#5b8cff"></i>CPU <i style="background:#f0a060;margin-left:6px"></i>Load</div>
-        </div>
-        <div class="chart-box"><h3>RAM %</h3><canvas id="chart-ram-${serverId}" width="520" height="56"></canvas></div>
-        <div class="chart-box"><h3>Disk %</h3><canvas id="chart-disk-${serverId}" width="520" height="56"></canvas></div>
-        <div class="chart-box"><h3>Network throughput</h3><canvas id="chart-net-${serverId}" width="520" height="56"></canvas></div>
-      </div>
-      <div class="detail-grid">
-        <div class="full"><strong>${esc(sys.hostname || '—')}</strong> · ${esc(sys.ip || '—')}</div>
-        <div class="full">${esc(sys.os || '—')} · kernel ${esc(sys.kernel || '—')}</div>
-        <div><span>Uptime:</span> ${esc(sys.uptime_human || '—')}</div>
-        <div><span>Load:</span> ${cpu.load_1 ?? '—'} / ${cpu.load_5 ?? '—'} / ${cpu.load_15 ?? '—'} (${loadPct}% of ${cpu.cores ?? '?'} cores)</div>
-        <div class="full"><span>Network:</span> ↓ ${esc(net.rx_rate_human || '—')} · ↑ ${esc(net.tx_rate_human || '—')}</div>
-        <div class="full"><span>Disk /:</span> ${esc(disk.used_human || '—')} / ${esc(disk.total_human || '—')} (${esc(disk.free_human || '—')} free)</div>
-        ${sys.disk_scan_root ? `<div class="full"><span>Disk ${esc(panel.scan_root || '')}:</span> ${esc(sys.disk_scan_root.used_human)} / ${esc(sys.disk_scan_root.total_human)}</div>` : ''}
-        <div><span>Workers:</span> ${panel.running_workers ?? 0} active · ${panel.project_count ?? 0} projects</div>
-        <div><span>Swap:</span> ${swapPct != null ? swapPct + '% · ' + esc(mem.swap_used_human || '—') : 'none'}</div>
-        <div><span>Agent CLI:</span> ${esc((sys.agent || {}).version || 'not installed')}</div>
-        <div><span>API key:</span> ${(sys.agent || {}).api_key_set ? 'configured' : 'missing'}</div>
-        <div class="full section-title">Docker · ${dockerSummary}</div>
-        ${renderDockerGroups(serverId, docker)}
-        <div class="full" style="color:var(--muted);font-size:.65rem;margin-top:4px">History: ${histLen} samples</div>
-      </div>`;
-    }
-
-    function paintServerCharts(s) {
-      if (!s.online) return;
-      const serverId = sid(s.id);
-      const sys = s.system || {};
-      const cpu = sys.cpu || {};
-      const mem = sys.memory || {};
-      const disk = sys.disk_root || {};
-      const net = sys.network || {};
-      const history = s.history || [];
-      const loadPct = cpu.load_percent || 0;
-      const swapPct = mem.swap_percent;
-
-      const cpuLvl = healthLevel(Math.max(cpu.percent || 0, loadPct), true);
-      const ramPct = mem.percent || 0;
-      const ramLvl = healthLevel(Math.max(ramPct, swapPct != null ? swapPct : 0), false);
-      const diskLvl = healthLevel(disk.percent || 0, false);
-
-      applyMetricStatus(serverId, 'cpu', cpuLvl);
-      applyMetricStatus(serverId, 'ram', ramLvl);
-      applyMetricStatus(serverId, 'disk', diskLvl);
-      applyMetricStatus(serverId, 'net', 'ok');
-
-      const line = (key, html) => {
-        const el = document.getElementById(`line-${key}-${serverId}`);
-        if (el) el.innerHTML = html;
-      };
-
-      line('cpu', `${cpu.percent ?? '—'}% <span class="dim">· ${cpu.cores ?? '?'}c · load ${loadPct}%</span>`);
-      const swapNote = swapPct != null ? ` · swap ${swapPct}%` : '';
-      line('ram', `${mem.percent ?? '—'}%<span class="dim">${swapNote} · ${mem.used_human || '—'}/${mem.total_human || '—'}</span>`);
-      line('disk', `${disk.percent ?? '—'}% <span class="dim">· ${disk.used_human || '—'}/${disk.total_human || '—'}</span>`);
-      line('net', `↓${net.rx_rate_human || '—'} <span class="dim">↑${net.tx_rate_human || '—'}</span>`);
-
-      const cpuHist = history.map(p => p.cpu ?? 0);
-      const loadHist = history.map(p => p.load_pct ?? 0);
-      const ramHist = history.map(p => p.ram ?? 0);
-      const diskHist = history.map(p => p.disk ?? 0);
-      const netHist = history.map(p => p.net ?? 0);
-      const netPeak = netMax(netHist);
-
-      drawSparkline(`spark-cpu-${serverId}`, [cpuHist.slice(-30), loadHist.slice(-30)], {
-        max: 100, percent: true, colors: ['#5b8cff', '#f0a060'], dashed: [false, true],
-      });
-      drawSparkline(`spark-ram-${serverId}`, ramHist.slice(-30), { max: 100, percent: true, colors: ['#3dd68c'] });
-      drawSparkline(`spark-disk-${serverId}`, diskHist.slice(-30), { max: 100, percent: true, colors: ['#e8c468'] });
-      drawSparkline(`spark-net-${serverId}`, netHist.slice(-30), { max: netPeak, percent: false, colors: ['#9b8cff'] });
-
-      if (!expanded.has(s.id)) return;
-
-      drawChart(`chart-cpu-${serverId}`, [cpuHist, loadHist], {
-        max: 100, percent: true, colors: ['#5b8cff', '#f0a060'], dashed: [false, true],
-      });
-      drawChart(`chart-ram-${serverId}`, ramHist, { max: 100, percent: true, colors: ['#3dd68c'] });
-      drawChart(`chart-disk-${serverId}`, diskHist, { max: 100, percent: true, colors: ['#e8c468'] });
-      drawChart(`chart-net-${serverId}`, netHist, { max: netPeak, percent: false, colors: ['#9b8cff'] });
-    }
-
-    function renderServers(snapshots) {
-      lastSnapshots = sortServers(snapshots);
-      const el = document.getElementById('servers');
-      if (!lastSnapshots.length) {
-        el.innerHTML = '<p class="sub">No servers yet. Click <strong>Add server</strong>.</p>';
+    function renderServersTable(servers) {
+      const tbody = document.getElementById('servers-table');
+      if (!servers.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="sub">No servers — click Add server</td></tr>';
         return;
       }
-      el.innerHTML = lastSnapshots.map(s => {
-        const open = expanded.has(s.id) ? ' open' : '';
-        const offline = !s.online ? ' offline' : '';
-        const badge = s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">${esc(s.error || 'offline')}</span>`;
-        const serverId = sid(s.id);
-        const isMain = localStorage.getItem(MAIN_SERVER_KEY) === s.id;
-        const mainBtn = s.online
-          ? `<button class="btn btn-ghost btn-sm" data-main="${esc(s.id)}" type="button">${isMain ? '★ Main' : 'Set main'}</button>`
-          : '';
-        const metrics = s.online
-          ? renderServerMetricsHtml(serverId) + renderQuickAgents(s)
-          : `<p class="sub" style="margin-top:8px">${esc(s.error || 'Unreachable')}</p>`;
-        const folders = (s.folders || []).map(f => {
-          const enc = encodeURIComponent(f.name);
-          const btn = f.running
-            ? `<button class="btn btn-sm btn-danger" data-stop="${esc(s.id)}" data-proj="${enc}">Stop</button>`
-            : `<button class="btn btn-sm btn-primary" data-start="${esc(s.id)}" data-proj="${enc}">Start</button>`;
-          return `<div class="proj ${f.running ? 'running' : ''}">
-            ${btn}
-            <div><div class="proj-name">${esc(f.name)}</div><div class="proj-time">${esc(f.mtime_relative || '')}</div></div>
-            <span class="dot ${f.running ? 'on' : ''}"></span>
-          </div>`;
-        }).join('');
-        const details = s.online ? renderServerDetailsHtml(s, serverId) : '';
-        return `<div class="server${open}${offline}" data-id="${esc(s.id)}">
-          <div class="server-head" data-toggle="${esc(s.id)}">
-            <div class="server-title">
-              <div><div class="server-name">${esc(s.name)}</div><div class="server-url">${esc(s.url)}</div></div>
-              ${badge}
-            </div>
-            ${metrics}
-          </div>
-          <div class="server-body">
-            ${details}
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px">
-              <span class="section-title" style="margin:0">${(s.folders || []).length} projects</span>
-              <div style="display:flex;gap:6px">
-                ${mainBtn}
-                <button class="btn btn-ghost btn-sm" data-open-panel="${esc(s.id)}" type="button">Open panel</button>
-                <button class="btn btn-ghost btn-sm" data-remove="${esc(s.id)}" type="button">Remove</button>
-              </div>
-            </div>
-            <div class="projects">${folders || '<p class="sub">No projects</p>'}</div>
-          </div>
-        </div>`;
+      tbody.innerHTML = servers.map(s => {
+        const sm = s.summary || {};
+        const host = s.hostname ? `${esc(s.hostname)}` : '—';
+        const ip = s.ip ? `<span class="sub"> · ${esc(s.ip)}</span>` : '';
+        const ver = s.version ? `v${esc(s.version)}` : '—';
+        const badge = s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">offline</span>`;
+        return `<tr class="server-row" data-server="${esc(s.id)}">
+          <td><strong>${esc(s.name)}</strong> ${badge}</td>
+          <td>${host}${ip}<br><a class="link sub" href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(s.url)}</a></td>
+          <td>${ver}</td>
+          <td>${sm.cpu != null ? sm.cpu + '%' : '—'}</td>
+          <td>${sm.ram != null ? sm.ram + '%' : '—'}</td>
+          <td>${sm.workers ?? 0}</td>
+          <td>${proxyBadge(s)}</td>
+          <td><button class="btn btn-ghost btn-sm" type="button" data-open="${esc(s.id)}">Details</button></td>
+        </tr>`;
       }).join('');
-
-      lastSnapshots.forEach(s => paintServerCharts(s));
+      tbody.querySelectorAll('.server-row').forEach(row => {
+        row.addEventListener('click', () => openServerModal(row.dataset.server));
+      });
+      tbody.querySelectorAll('[data-open]').forEach(btn => {
+        btn.addEventListener('click', e => { e.stopPropagation(); openServerModal(btn.dataset.open); });
+      });
     }
 
-    document.getElementById('servers').addEventListener('click', async (e) => {
-      const start = e.target.closest('[data-start]');
-      if (start && !busy) {
-        e.stopPropagation();
-        touchServerRecent(start.dataset.start);
-        startWorker(start.dataset.start, decodeURIComponent(start.dataset.proj));
-        return;
-      }
-      const stop = e.target.closest('[data-stop]');
-      if (stop && !busy) {
-        e.stopPropagation();
-        touchServerRecent(stop.dataset.stop);
-        stopWorker(stop.dataset.stop, decodeURIComponent(stop.dataset.proj));
-        return;
-      }
+    function openServerModal(id) {
+      const s = (lastSnapshot?.servers || []).find(x => x.id === id);
+      if (!s) return;
+      modalServer = s;
+      touchServer(id);
+      document.getElementById('server-modal-title').textContent = s.name;
+      document.getElementById('server-modal-url').textContent = s.url + (s.ip ? ' · ' + s.ip : '');
+      const sm = s.summary || {};
+      document.getElementById('server-modal-metrics').innerHTML = `
+        <div class="chart-box"><h3>CPU</h3><div>${sm.cpu ?? '—'}% · load ${sm.load_pct ?? '—'}%</div></div>
+        <div class="chart-box"><h3>RAM</h3><div>${sm.ram ?? '—'}%</div></div>
+        <div class="chart-box"><h3>Disk</h3><div>${sm.disk ?? '—'}%</div></div>
+        <div class="chart-box"><h3>Workers</h3><div>${sm.workers ?? 0} / ${sm.projects ?? 0} projects</div></div>`;
+      const projs = (s.folders || []).map(f => {
+        const enc = encodeURIComponent(f.name);
+        const btn = f.running
+          ? `<button class="btn btn-danger btn-sm" onclick="stopWorker('${esc(s.id)}','${enc}')">Stop</button>`
+          : `<button class="btn btn-primary btn-sm" onclick="startWorker('${esc(s.id)}','${enc}')">Start</button>`;
+        return `<div class="proj-item">${btn}<div><div class="proj-name">${esc(f.name)}</div><div class="sub">${esc(f.touched_relative || f.mtime_relative || '')}</div></div><span class="badge ${f.running?'run':''}">${f.running?'on':'off'}</span></div>`;
+      }).join('');
+      document.getElementById('server-modal-projects').innerHTML = projs || '<p class="sub">No projects</p>';
+      document.getElementById('server-modal').classList.remove('hidden');
+      pollFleet();
+    }
 
-      const dockerToggle = e.target.closest('[data-docker-toggle]');
-      if (dockerToggle) {
-        e.stopPropagation();
-        const key = dockerToggle.dataset.dockerToggle;
-        if (expandedDocker.has(key)) expandedDocker.delete(key); else expandedDocker.add(key);
-        const el = dockerToggle.closest('.docker-group');
-        if (el) {
-          const open = expandedDocker.has(key);
-          el.classList.toggle('open', open);
-          const chev = el.querySelector('.docker-group-chevron');
-          if (chev) chev.textContent = open ? '▾' : '▸';
-        }
-        return;
-      }
+    function closeServerModal() { document.getElementById('server-modal').classList.add('hidden'); modalServer = null; }
+    function openServerPanel() { if (modalServer?.url) window.open(modalServer.url, '_blank'); }
 
-      const t = e.target.closest('[data-toggle]');
-      if (t) {
-        const id = t.dataset.toggle;
-        if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
-        touchServerRecent(id);
-        document.querySelectorAll('.server').forEach(el => el.classList.toggle('open', expanded.has(el.dataset.id)));
-        const snap = lastSnapshots.find(s => s.id === id);
-        if (snap) requestAnimationFrame(() => paintServerCharts(snap));
-        renderServers(lastSnapshots);
-        return;
-      }
-      const rem = e.target.closest('[data-remove]');
-      if (rem && confirm('Remove this server from fleet?')) {
-        await api('/api/servers/' + rem.dataset.remove, { method: 'DELETE' });
-        expanded.delete(rem.dataset.remove);
-        if (localStorage.getItem(MAIN_SERVER_KEY) === rem.dataset.remove) {
-          localStorage.removeItem(MAIN_SERVER_KEY);
-        }
-        refreshNow();
-        return;
-      }
-      const mainBtn = e.target.closest('[data-main]');
-      if (mainBtn) {
-        e.stopPropagation();
-        setMainServer(mainBtn.dataset.main);
-        return;
-      }
-      const openPanel = e.target.closest('[data-open-panel]');
-      if (openPanel) {
-        e.stopPropagation();
-        const snap = lastSnapshots.find(s => s.id === openPanel.dataset.openPanel);
-        if (snap && snap.url) window.open(snap.url, '_blank');
-        return;
-      }
-    });
+    function toggleAllProjects() { showAllProjects = !showAllProjects; if (lastSnapshot) renderRecentProjects(lastSnapshot); }
 
-    async function refreshNow() {
-      if (busy || document.getElementById('app').classList.contains('hidden')) return;
-      stopPolling();
+    function renderSnapshot(data) {
+      lastSnapshot = data;
+      renderOverview(data);
+      renderRecentProjects(data);
+      renderServersTable(data.servers || []);
+      document.getElementById('live').textContent = '● live · ' + new Date().toLocaleTimeString();
+    }
+
+    async function pollFleet() {
+      if (document.getElementById('app').classList.contains('hidden')) return;
       try {
         const res = await api('/api/fleet/snapshot');
         const data = await res.json();
-        renderServers(data.servers || []);
+        renderSnapshot(data);
         document.getElementById('msg').textContent = '';
-        document.getElementById('msg').className = '';
-        pollBackoffMs = 0;
-        setLiveState('● live');
       } catch (e) {
-        if (e.message !== 'unauthorized') {
-          document.getElementById('msg').textContent = 'Refresh failed';
-          document.getElementById('msg').className = 'warn';
-        }
-      } finally {
-        if (tabVisible) scheduleNextPoll(POLL_INTERVAL_MS);
+        if (e.message !== 'unauthorized') document.getElementById('live').textContent = '● error';
       }
+      startPoll();
     }
 
-    function openAddModal() {
-      document.getElementById('add-modal').classList.remove('hidden');
-      document.getElementById('add-err').textContent = '';
+    async function refreshNow() { stopPoll(); await pollFleet(); }
+
+    async function updateAllServers() {
+      try {
+        const res = await api('/api/fleet/update-all', { method: 'POST' });
+        const data = await res.json();
+        const ok = (data.results || []).filter(r => r.ok).length;
+        const total = (data.results || []).length;
+        document.getElementById('msg').textContent = `Panel update started on ${ok}/${total} servers`;
+      } catch (_) {}
     }
+
+    function openAddModal() { document.getElementById('add-modal').classList.remove('hidden'); }
     function closeAddModal() { document.getElementById('add-modal').classList.add('hidden'); }
 
     async function addServer() {
-      const err = document.getElementById('add-err');
-      err.textContent = '';
-      const body = {
-        name: document.getElementById('add-name').value.trim(),
-        url: document.getElementById('add-url').value.trim(),
-        password: document.getElementById('add-password').value,
-      };
+      const name = document.getElementById('add-name').value.trim();
+      const url = document.getElementById('add-url').value.trim();
+      const password = document.getElementById('add-password').value.trim();
       try {
-        const res = await api('/api/servers', { method: 'POST', body: JSON.stringify(body) });
+        const res = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name, url, password }) });
         const data = await res.json();
-        if (!res.ok) { err.textContent = data.error || 'Failed'; return; }
+        if (!res.ok) { document.getElementById('add-err').textContent = data.error || 'Failed'; return; }
         closeAddModal();
-        document.getElementById('add-name').value = '';
-        document.getElementById('add-url').value = '';
-        document.getElementById('add-password').value = '';
         refreshNow();
-      } catch (e) { err.textContent = 'Failed'; }
+      } catch (e) { document.getElementById('add-err').textContent = e.message; }
     }
 
-    function setStartStep(step, state) {
-      document.querySelectorAll('#start-steps li').forEach(li => {
-        li.classList.remove('active', 'done', 'error');
-        const key = li.dataset.step;
-        const order = ['request', 'launch', 'connect', 'redirect'];
-        const si = order.indexOf(step);
-        const ki = order.indexOf(key);
-        if (state === 'error' && key === step) li.classList.add('error');
-        else if (ki < si) li.classList.add('done');
-        else if (ki === si) li.classList.add(state === 'done' ? 'done' : 'active');
-      });
-    }
+    function openProxyModal() { document.getElementById('proxy-modal').classList.remove('hidden'); }
+    function closeProxyModal() { document.getElementById('proxy-modal').classList.add('hidden'); }
 
-    function showStartLog(text) {
-      const el = document.getElementById('start-log');
-      if (!text) {
-        el.classList.add('hidden');
-        el.textContent = '';
-        return;
-      }
-      el.classList.remove('hidden');
-      el.textContent = text;
-      el.scrollTop = el.scrollHeight;
-    }
-
-    function openCursorFromStartModal() {
-      if (!pendingAgentUrl) return;
-      window.open(pendingAgentUrl, '_blank');
+    async function pushProxy() {
+      const enabled = document.getElementById('proxy-enabled').checked;
+      const links = document.getElementById('proxy-links').value.split('\n').map(s => s.trim()).filter(Boolean);
+      const subs = document.getElementById('proxy-subs').value.split('\n').map(s => s.trim()).filter(Boolean);
+      const payload = {
+        enabled,
+        replace: true,
+        proxies: links.map((share_url, i) => ({ share_url, name: 'fleet-' + (i + 1) })),
+        subscriptions: subs.map((url, i) => ({ url, name: 'fleet-sub-' + (i + 1) })),
+      };
+      const logEl = document.getElementById('proxy-push-log');
+      logEl.classList.remove('hidden');
+      logEl.textContent = 'Pushing to all servers…';
+      try {
+        const res = await api('/api/fleet/proxy/push', { method: 'POST', body: JSON.stringify(payload) });
+        const data = await res.json();
+        logEl.textContent = JSON.stringify(data.results || data, null, 2);
+        document.getElementById('proxy-err').textContent = data.ok ? 'Applied' : 'Some servers failed';
+        refreshNow();
+      } catch (e) { document.getElementById('proxy-err').textContent = e.message; }
     }
 
     function openStartModal(title) {
-      pendingAgentUrl = null;
       document.getElementById('start-title').textContent = title;
-      document.getElementById('start-msg').textContent = '';
-      document.getElementById('start-close').classList.add('hidden');
+      document.getElementById('start-msg').textContent = 'Starting…';
       document.getElementById('start-open').classList.add('hidden');
-      showStartLog('');
       document.getElementById('start-modal').classList.remove('hidden');
-      setStartStep('request', 'active');
-      busy = true;
     }
-    function closeStartModal() {
-      document.getElementById('start-modal').classList.add('hidden');
-      document.getElementById('start-open').classList.add('hidden');
-      pendingAgentUrl = null;
-      busy = false;
-      refreshNow();
-    }
+    function closeStartModal() { document.getElementById('start-modal').classList.add('hidden'); pendingAgentUrl = null; }
+    function openCursor() { if (pendingAgentUrl) window.open(pendingAgentUrl, '_blank'); closeStartModal(); }
 
     async function waitReady(serverId, project) {
       const start = Date.now();
-      const msgEl = document.getElementById('start-msg');
       while (Date.now() - start < 60000) {
-        const res = await api(`/api/fleet/${serverId}/ready/${encodeURIComponent(project)}`);
+        const res = await api(`/api/fleet/${serverId}/ready/${project}`);
         const data = await res.json();
         if (!data.running) throw new Error('stopped');
-        if (data.log_tail) showStartLog(data.log_tail);
-        if (data.has_errors) {
-          const errText = (data.log_errors || []).join('\n') || 'Worker reported errors in log';
-          throw new Error(errText);
-        }
         if (data.ready) return data;
-        msgEl.textContent = 'Waiting for Cursor connection…';
         await new Promise(r => setTimeout(r, 1500));
       }
       throw new Error('timeout');
     }
 
     async function startWorker(serverId, project) {
-      openStartModal('Starting ' + project);
-      const msgEl = document.getElementById('start-msg');
+      if (busy) return;
+      busy = true;
+      openStartModal('Starting ' + decodeURIComponent(project));
       try {
-        setStartStep('request', 'active');
-        const res = await api(`/api/fleet/${serverId}/start/${encodeURIComponent(project)}`, { method: 'POST' });
+        await api(`/api/fleet/${serverId}/touch/${project}`, { method: 'POST' });
+        const res = await api(`/api/fleet/${serverId}/start/${project}`, { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) {
-          setStartStep('request', 'error');
-          msgEl.textContent = data.error || 'Start failed';
-          document.getElementById('start-close').classList.remove('hidden');
-          return;
-        }
-        setStartStep('request', 'done');
-        setStartStep('launch', 'done');
-        setStartStep('connect', 'active');
-        msgEl.textContent = 'Waiting for Cursor connection…';
+        if (!res.ok) throw new Error(data.error || 'Start failed');
+        document.getElementById('start-msg').textContent = 'Connecting…';
         const ready = await waitReady(serverId, project);
-        setStartStep('connect', 'done');
-        setStartStep('redirect', 'done');
         pendingAgentUrl = ready.agent_url || data.agent_url;
-        msgEl.textContent = 'Worker connected. Review logs, then open Cursor.';
+        document.getElementById('start-msg').textContent = 'Connected — open Cursor when ready.';
         document.getElementById('start-open').classList.remove('hidden');
-        document.getElementById('start-close').classList.remove('hidden');
+        refreshNow();
       } catch (e) {
-        if (e.message === 'stopped') {
-          setStartStep('connect', 'error');
-          msgEl.textContent = 'Worker stopped unexpectedly.';
-        } else if (e.message === 'timeout') {
-          setStartStep('connect', 'error');
-          msgEl.textContent = 'Timed out — check worker logs below. Fix the issue before opening Cursor.';
-        } else if (e.message !== 'unauthorized') {
-          setStartStep('connect', 'error');
-          const lines = (e.message || '').split('\n').filter(Boolean);
-          if (lines.length > 1) {
-            msgEl.textContent = 'Worker error — fix before opening Cursor:';
-            showStartLog(lines.join('\n'));
-          } else {
-            msgEl.textContent = 'Connection failed: ' + (e.message || 'unknown');
-          }
-        }
-        document.getElementById('start-close').classList.remove('hidden');
-      }
+        document.getElementById('start-msg').textContent = e.message;
+      } finally { busy = false; }
     }
 
     async function stopWorker(serverId, project) {
       busy = true;
-      document.getElementById('msg').textContent = 'Stopping…';
       try {
-        await api(`/api/fleet/${serverId}/stop/${encodeURIComponent(project)}`, { method: 'POST' });
-        document.getElementById('msg').textContent = 'Stopped';
+        await api(`/api/fleet/${serverId}/stop/${project}`, { method: 'POST' });
         refreshNow();
-      } catch (e) {} finally { busy = false; }
+      } catch (_) {} finally { busy = false; }
+    }
+
+    async function checkFleetUpdate() {
+      try {
+        const res = await api('/api/update/check');
+        const data = await res.json();
+        const banner = document.getElementById('update-banner');
+        if (data.update_available) {
+          banner.classList.remove('hidden');
+          banner.innerHTML = `Fleet UI update available (v${data.remote.version}). <button class="btn btn-sm btn-primary" onclick="applyFleetUpdate()">Update now</button>`;
+        } else banner.classList.add('hidden');
+      } catch (_) {}
+    }
+
+    async function applyFleetUpdate() {
+      await api('/api/update/apply', { method: 'POST' });
+      location.reload();
     }
 
     async function boot() {
@@ -1054,14 +501,15 @@
       if (!pw()) { showLogin(); return; }
       try {
         const res = await api('/api/servers');
-        if (res.ok) { showApp(); return; }
-      } catch (e) {
-        if (e.message === 'unauthorized') return;
-      }
-      clearPw();
-      showLogin();
+        if (!res.ok) { showLogin(); return; }
+        showApp();
+        checkFleetUpdate();
+        await updateAllServers();
+        await pollFleet();
+      } catch (e) { if (e.message !== 'unauthorized') showLogin(); }
     }
 
+    document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
     boot();
   </script>
 </body>

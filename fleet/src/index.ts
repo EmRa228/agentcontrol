@@ -12,15 +12,26 @@ interface StoredServer {
   url: string;
   password: string;
   addedAt: number;
+  lastAccessedAt?: number;
 }
 
 interface ServerRecord {
   servers: StoredServer[];
 }
 
+interface RecentProject {
+  serverId: string;
+  serverName: string;
+  serverUrl: string;
+  project: string;
+  touchedAt: number;
+  running?: boolean;
+}
+
 const KV_KEY = "servers";
 const KV_UI_HTML = "fleet_ui_html";
 const KV_UI_VERSION = "fleet_ui_version";
+const KV_RECENT = "recent_projects";
 const GITHUB_RAW = "https://raw.githubusercontent.com/EmRa228/agentcontrol/main/fleet";
 const FLEET_VERSION = fleetVersion as { component: string; version: string; updated: string };
 
@@ -135,6 +146,48 @@ async function writeServers(kv: KVNamespace, servers: StoredServer[]): Promise<v
   await kv.put(KV_KEY, JSON.stringify(payload));
 }
 
+async function readRecentProjects(kv: KVNamespace): Promise<RecentProject[]> {
+  const raw = await kv.get(KV_RECENT);
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as RecentProject[];
+  } catch {
+    return [];
+  }
+}
+
+async function writeRecentProjects(kv: KVNamespace, items: RecentProject[]): Promise<void> {
+  await kv.put(KV_RECENT, JSON.stringify(items.slice(0, 200)));
+}
+
+async function touchRecentProject(
+  kv: KVNamespace,
+  server: StoredServer,
+  project: string,
+  running?: boolean,
+): Promise<void> {
+  const items = await readRecentProjects(kv);
+  const now = Date.now();
+  const filtered = items.filter((i) => !(i.serverId === server.id && i.project === project));
+  filtered.unshift({
+    serverId: server.id,
+    serverName: server.name,
+    serverUrl: server.url,
+    project,
+    touchedAt: now,
+    running,
+  });
+  await writeRecentProjects(kv, filtered);
+}
+
+async function touchServerAccess(kv: KVNamespace, serverId: string): Promise<void> {
+  const servers = await readServers(kv);
+  const idx = servers.findIndex((s) => s.id === serverId);
+  if (idx < 0) return;
+  servers[idx].lastAccessedAt = Date.now();
+  await writeServers(kv, servers);
+}
+
 async function proxyAgent(
   server: StoredServer,
   path: string,
@@ -148,7 +201,7 @@ async function proxyAgent(
       "X-AgentControl-Auth": server.password,
       Accept: "application/json",
     },
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(45000),
   };
   if (body !== undefined) {
     init.headers = { ...init.headers, "content-type": "application/json" };
@@ -174,11 +227,108 @@ async function readJsonSafe(res: Response): Promise<unknown> {
 }
 
 function publicServer(s: StoredServer) {
-  return { id: s.id, name: s.name, url: s.url, addedAt: s.addedAt };
+  return {
+    id: s.id,
+    name: s.name,
+    url: s.url,
+    addedAt: s.addedAt,
+    lastAccessedAt: s.lastAccessedAt || s.addedAt,
+  };
+}
+
+function sortSnapshotsByRecent<T extends { id: string; lastAccessedAt?: number }>(snapshots: T[]): T[] {
+  return [...snapshots].sort((a, b) => (b.lastAccessedAt || 0) - (a.lastAccessedAt || 0));
+}
+
+function buildOverview(snapshots: Array<Record<string, unknown>>) {
+  const alerts: Array<{ level: string; server: string; message: string }> = [];
+  let online = 0;
+  let offline = 0;
+  let workers = 0;
+  let proxyIssues = 0;
+
+  for (const s of snapshots) {
+    const name = String(s.name || s.id);
+    if (s.online) {
+      online += 1;
+      const summary = s.summary as { workers?: number } | undefined;
+      workers += summary?.workers || 0;
+      const proxy = s.proxy as { enabled?: boolean; listening?: boolean } | undefined;
+      if (proxy?.enabled && !proxy?.listening) {
+        proxyIssues += 1;
+        alerts.push({ level: "error", server: name, message: "Proxy enabled but not listening" });
+      }
+      const sys = s.system as { cpu?: { percent?: number }; memory?: { percent?: number }; disk_root?: { percent?: number } } | undefined;
+      if ((sys?.cpu?.percent || 0) > 90) {
+        alerts.push({ level: "warn", server: name, message: `High CPU: ${sys?.cpu?.percent}%` });
+      }
+      if ((sys?.memory?.percent || 0) > 90) {
+        alerts.push({ level: "warn", server: name, message: `High RAM: ${sys?.memory?.percent}%` });
+      }
+      if ((sys?.disk_root?.percent || 0) > 90) {
+        alerts.push({ level: "warn", server: name, message: `High disk: ${sys?.disk_root?.percent}%` });
+      }
+    } else {
+      offline += 1;
+      alerts.push({ level: "error", server: name, message: String(s.error || "Server offline") });
+    }
+  }
+
+  return {
+    ok: alerts.length === 0,
+    online,
+    offline,
+    workers,
+    proxyIssues,
+    alerts,
+    message: alerts.length ? `${alerts.length} issue(s) need attention` : "All servers look good",
+  };
+}
+
+function aggregateRecentProjects(
+  snapshots: Array<Record<string, unknown>>,
+  kvRecent: RecentProject[],
+  limit = 10,
+): RecentProject[] {
+  const fromSnapshots: RecentProject[] = [];
+  for (const s of snapshots) {
+    if (!s.online) continue;
+    const folders = (s.folders || []) as Array<{
+      name: string;
+      running?: boolean;
+      touched_at?: number;
+      touched_relative?: string;
+      mtime?: number;
+    }>;
+    for (const f of folders) {
+      fromSnapshots.push({
+        serverId: String(s.id),
+        serverName: String(s.name),
+        serverUrl: String(s.url),
+        project: f.name,
+        touchedAt: f.touched_at || f.mtime || 0,
+        running: f.running,
+      });
+    }
+  }
+  const merged = new Map<string, RecentProject>();
+  for (const item of [...kvRecent, ...fromSnapshots]) {
+    const key = `${item.serverId}:${item.project}`;
+    const existing = merged.get(key);
+    if (!existing || item.touchedAt > existing.touchedAt) {
+      merged.set(key, item);
+    }
+  }
+  return [...merged.values()].sort((a, b) => b.touchedAt - a.touchedAt).slice(0, limit);
 }
 
 async function snapshotOneServer(server: StoredServer) {
-  const base = { id: server.id, name: server.name, url: server.url };
+  const base = {
+    id: server.id,
+    name: server.name,
+    url: server.url,
+    lastAccessedAt: server.lastAccessedAt || server.addedAt,
+  };
   try {
     const bundleRes = await proxyAgent(server, "/api/fleet/bundle");
     if (bundleRes.status === 401) {
@@ -195,6 +345,8 @@ async function snapshotOneServer(server: StoredServer) {
       system?: Record<string, unknown>;
       folders?: unknown[];
       history?: unknown[];
+      version?: VersionInfo;
+      proxy?: Record<string, unknown>;
     };
     const system = bundle.system || {};
     const folders = bundle.folders || [];
@@ -205,10 +357,16 @@ async function snapshotOneServer(server: StoredServer) {
       swap_used_human?: string | null;
     } | undefined;
     const disk = system.disk_root as { percent?: number } | undefined;
-    const panel = system.panel as { running_workers?: number; project_count?: number } | undefined;
+    const panel = system.panel as { running_workers?: number; project_count?: number; version?: string } | undefined;
+    const hostname = system.hostname as string | undefined;
+    const ip = system.ip as string | undefined;
     return {
       ...base,
       online: true,
+      version: bundle.version?.version || panel?.version || null,
+      hostname: hostname || null,
+      ip: ip || null,
+      proxy: bundle.proxy || null,
       summary: {
         cpu: cpu?.percent ?? null,
         load_pct: cpu?.load_percent ?? null,
@@ -231,7 +389,57 @@ async function snapshotOneServer(server: StoredServer) {
 async function buildFleetSnapshot(kv: KVNamespace) {
   const servers = await readServers(kv);
   const snapshots = await Promise.all(servers.map(snapshotOneServer));
-  return { servers: snapshots, at: Date.now() };
+  const sorted = sortSnapshotsByRecent(snapshots);
+  const recentKv = await readRecentProjects(kv);
+  const recentProjects = aggregateRecentProjects(sorted, recentKv, 10);
+  const overview = buildOverview(sorted);
+  return {
+    servers: sorted,
+    recentProjects,
+    recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
+    overview,
+    at: Date.now(),
+  };
+}
+
+async function pushProxyToServers(kv: KVNamespace, config: Record<string, unknown>) {
+  const servers = await readServers(kv);
+  const results = [];
+  for (const server of servers) {
+    try {
+      const res = await proxyAgent(server, "/api/proxy/pool", "POST", config);
+      results.push({
+        server: server.name,
+        id: server.id,
+        ok: res.ok,
+        status: res.status,
+        body: await readJsonSafe(res),
+      });
+    } catch (e) {
+      results.push({ server: server.name, id: server.id, ok: false, error: String(e) });
+    }
+  }
+  return results;
+}
+
+async function updateAllPanels(kv: KVNamespace) {
+  const servers = await readServers(kv);
+  const results = [];
+  for (const server of servers) {
+    try {
+      const res = await proxyAgent(server, "/api/update/apply", "POST");
+      results.push({
+        server: server.name,
+        id: server.id,
+        ok: res.ok || res.status === 202,
+        status: res.status,
+        body: await readJsonSafe(res),
+      });
+    } catch (e) {
+      results.push({ server: server.name, id: server.id, ok: false, error: String(e) });
+    }
+  }
+  return results;
 }
 
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
@@ -316,6 +524,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       url: baseUrl,
       password,
       addedAt: Date.now(),
+      lastAccessedAt: Date.now(),
     };
     servers.push(entry);
     await writeServers(env.KV, servers);
@@ -330,8 +539,27 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({ ok: true });
   }
 
+  if (path === "/api/servers/touch" && request.method === "POST") {
+    const data = (await request.json().catch(() => ({}))) as { serverId?: string };
+    const serverId = String(data.serverId || "").trim();
+    if (!serverId) return json({ error: "serverId required" }, 400);
+    await touchServerAccess(env.KV, serverId);
+    return json({ ok: true });
+  }
+
   if (path === "/api/fleet/snapshot" && request.method === "GET") {
     return json(await buildFleetSnapshot(env.KV));
+  }
+
+  if (path === "/api/fleet/update-all" && request.method === "POST") {
+    const results = await updateAllPanels(env.KV);
+    return json({ ok: true, results });
+  }
+
+  if (path === "/api/fleet/proxy/push" && request.method === "POST") {
+    const data = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const results = await pushProxyToServers(env.KV, data);
+    return json({ ok: results.every((r) => r.ok), results });
   }
 
   const startMatch = path.match(/^\/api\/fleet\/([^/]+)\/start\/([^/]+)$/);
@@ -339,6 +567,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const [, serverId, project] = startMatch;
     const server = (await readServers(env.KV)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
+    await touchServerAccess(env.KV, serverId);
+    await touchRecentProject(env.KV, server, decodeURIComponent(project), true);
     const res = await proxyAgent(server, `/api/start/${encodeURIComponent(project)}`, "POST");
     return json(await readJsonSafe(res), res.status);
   }
@@ -348,8 +578,21 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const [, serverId, project] = stopMatch;
     const server = (await readServers(env.KV)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
+    await touchServerAccess(env.KV, serverId);
+    await touchRecentProject(env.KV, server, decodeURIComponent(project), false);
     const res = await proxyAgent(server, `/api/stop/${encodeURIComponent(project)}`, "POST");
     return json(await readJsonSafe(res), res.status);
+  }
+
+  const touchMatch = path.match(/^\/api\/fleet\/([^/]+)\/touch\/([^/]+)$/);
+  if (touchMatch && request.method === "POST") {
+    const [, serverId, project] = touchMatch;
+    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    if (!server) return json({ error: "server not found" }, 404);
+    await touchServerAccess(env.KV, serverId);
+    await touchRecentProject(env.KV, server, decodeURIComponent(project));
+    await proxyAgent(server, `/api/projects/touch/${encodeURIComponent(project)}`, "POST");
+    return json({ ok: true });
   }
 
   const readyMatch = path.match(/^\/api\/fleet\/([^/]+)\/ready\/([^/]+)$/);

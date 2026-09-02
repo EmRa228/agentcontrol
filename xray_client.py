@@ -790,9 +790,18 @@ _PROXY_ENV_KEYS = (
 )
 
 
+def _proxy_mode_enabled() -> bool:
+    try:
+        from proxy_pool import is_proxy_mode_enabled
+
+        return is_proxy_mode_enabled()
+    except ImportError:
+        return bool(load_client_settings().get("enabled"))
+
+
 def load_runtime_proxy_env() -> dict[str, str]:
     """Load HTTP proxy variables for Cursor agent / Node processes."""
-    if not load_client_settings().get("enabled"):
+    if not _proxy_mode_enabled():
         return {}
 
     env_path = Path("/etc/agentcontrol/env")
@@ -812,12 +821,14 @@ def load_runtime_proxy_env() -> dict[str, str]:
         or values.get("http_proxy")
         or ""
     )
-    if not proxy and load_client_settings().get("enabled"):
+    if not proxy:
         proxy = proxy_url()
 
     if not proxy:
         return {}
 
+    # Strict: only localhost bypass — no direct Cursor traffic when proxy mode is on.
+    no_proxy = "localhost,127.0.0.1,::1"
     return {
         "HTTP_PROXY": proxy,
         "HTTPS_PROXY": proxy,
@@ -826,15 +837,19 @@ def load_runtime_proxy_env() -> dict[str, str]:
         "ALL_PROXY": proxy,
         "all_proxy": proxy,
         "NODE_USE_ENV_PROXY": "1",
-        "NO_PROXY": values.get("NO_PROXY", "localhost,127.0.0.1"),
+        "NO_PROXY": no_proxy,
+        "no_proxy": no_proxy,
+        "AGENTCONTROL_PROXY_MODE": "1",
     }
 
 
 def apply_proxy_env(env: dict[str, str] | None = None) -> dict[str, str]:
     merged = dict(env or os.environ)
-    if not load_client_settings().get("enabled"):
+    if not _proxy_mode_enabled():
         for key in _PROXY_ENV_KEYS:
             merged.pop(key, None)
+        merged.pop("AGENTCONTROL_PROXY_MODE", None)
+        merged.pop("no_proxy", None)
         return merged
     merged.update(load_runtime_proxy_env())
     return merged

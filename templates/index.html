@@ -10,8 +10,8 @@
       --muted: #8b93a7; --accent: #5b8cff; --green: #3dd68c; --yellow: #e8c468; --red: #f07178;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 12px; }
-    .wrap { max-width: 900px; margin: 0 auto; }
+    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 16px 20px; }
+    .wrap { max-width: 1200px; margin: 0 auto; }
     .hidden { display: none !important; }
     .gate { position: fixed; inset: 0; background: rgba(11,13,18,.97); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
     .panel { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
@@ -92,7 +92,15 @@
     }
     .docker-item:first-child { border-top: none; }
     .docker-item-name { font-weight: 600; margin-bottom: 4px; }
-    #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; }
+    #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; margin-bottom: 16px; }
+    @media (min-width: 1100px) { #list { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); } }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+    .toolbar .pill { font-size: .72rem; color: var(--muted); padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); }
+    .pool-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; max-height: 200px; overflow: auto; }
+    .pool-item { padding: 8px 10px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; font-size: .75rem; display: flex; justify-content: space-between; gap: 8px; }
+    .pool-item.ok { border-color: rgba(61,214,140,.3); }
+    .pool-item.bad { border-color: rgba(240,113,120,.35); }
+    .modal-wide { max-width: 720px; width: 100%; max-height: 90vh; overflow: auto; }
     .row {
       display: grid; grid-template-columns: 58px 1fr; gap: 6px; align-items: center;
       background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
@@ -250,7 +258,23 @@
     </header>
     <p id="update-banner" class="update-banner hidden"></p>
 
-    <div id="server-card">
+    <div class="toolbar">
+      <button class="btn btn-primary btn-sm" type="button" onclick="refreshAll()">Refresh</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="openMetricsModal()">Metrics &amp; charts</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="openSettingsModal()">Settings</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy pool</button>
+      <span class="pill" id="toolbar-proxy-pill">Proxy: …</span>
+      <span class="pill" id="toolbar-cpu-pill">CPU: …</span>
+    </div>
+
+    <div class="section-title">Projects — hold to hide · tap Start / Stop</div>
+    <div id="list"><p class="loading">Loading projects…</p></div>
+    <p id="msg"></p>
+
+    <div id="metrics-modal" class="modal-overlay hidden">
+      <div class="modal modal-wide">
+        <h3>Server metrics</h3>
+        <div id="server-card">
       <div class="server-summary" onclick="toggleServerDetails()">
         <div class="metric" id="metric-cpu">
           <div class="metric-row">
@@ -375,10 +399,70 @@
         </div>
       </div>
     </div>
+        <div class="modal-actions" style="margin-top:12px">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="closeMetricsModal()">Close</button>
+        </div>
+      </div>
+    </div>
 
-    <div class="section-title">Projects</div>
-    <div id="list"><p class="loading">Loading projects…</p></div>
-    <p id="msg"></p>
+    <div id="settings-modal" class="modal-overlay hidden">
+      <div class="modal modal-wide">
+        <h3>Settings</h3>
+        <div class="api-key-block">
+          <div class="section-title">Cursor API key</div>
+          <div class="api-key-row">
+            <input id="settings-api-key-modal" type="password" placeholder="crsr_..." autocomplete="off">
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveApiKeyFromModal()">Save API key</button>
+          </div>
+          <div class="api-key-hint" id="settings-api-status-modal">Verified via proxy when proxy mode is on</div>
+          <p id="settings-msg-modal" class="err"></p>
+        </div>
+        <div class="settings-block">
+          <div class="section-title">Default agent model</div>
+          <div class="settings-row">
+            <select id="settings-model-modal"><option value="">Loading…</option></select>
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveDefaultModelFromModal()">Save model</button>
+          </div>
+          <div class="api-key-hint" id="settings-model-status-modal">—</div>
+        </div>
+        <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" onclick="closeSettingsModal()">Close</button></div>
+      </div>
+    </div>
+
+    <div id="proxy-modal" class="modal-overlay hidden">
+      <div class="modal modal-wide">
+        <h3>Proxy pool</h3>
+        <p class="settings-note">All Cursor traffic uses the local xray HTTP proxy when enabled — no direct connection to Cursor.</p>
+        <div class="xray-mode">
+          <div>
+            <label for="pool-enabled">Proxy mode</label>
+            <div class="hint" id="pool-mode-hint">Best proxy selected on each worker start</div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:.75rem;color:var(--muted)">
+            <span>Direct</span>
+            <input id="pool-enabled" type="checkbox" onchange="onPoolEnabledChange()">
+            <span>Proxy</span>
+          </label>
+        </div>
+        <div class="section-title">Share links</div>
+        <textarea id="pool-links-input" placeholder="One vless/trojan/vmess/ss link per line"></textarea>
+        <button class="btn btn-ghost btn-sm" type="button" style="margin-top:8px" onclick="addPoolLinks()">Add links</button>
+        <div class="section-title">Subscriptions</div>
+        <input id="pool-sub-url" placeholder="https://subscription-url…">
+        <button class="btn btn-ghost btn-sm" type="button" style="margin-top:8px" onclick="addPoolSubscription()">Add subscription</button>
+        <div class="xray-actions">
+          <button class="btn btn-primary btn-sm" type="button" onclick="testPoolProxies()">Test all</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="ensurePoolProxy()">Ensure / failover now</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="refreshPoolSubscriptions()">Refresh subscriptions</button>
+        </div>
+        <div class="section-title">Proxies</div>
+        <div class="pool-list" id="pool-proxy-list"></div>
+        <div class="xray-status-row" id="pool-pills"></div>
+        <div class="api-key-hint" id="pool-status-text">—</div>
+        <pre class="xray-log hidden" id="pool-log"></pre>
+        <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" onclick="closeProxyModal()">Close</button></div>
+      </div>
+    </div>
   </div>
 
   <div id="start-modal" class="modal-overlay hidden">
@@ -801,6 +885,8 @@
       statusEl.textContent = s.agent.api_key_set
         ? 'API key is configured on this server.'
         : 'No API key saved yet — workers cannot start.';
+      const cpuPill = document.getElementById('toolbar-cpu-pill');
+      if (cpuPill) cpuPill.textContent = `CPU ${s.cpu.percent}% · RAM ${s.memory.percent}%`;
       statusEl.className = 'api-key-hint' + (s.agent.api_key_set ? ' ok' : '');
 
       const dockerSummary = s.docker.available
@@ -823,6 +909,139 @@
         <div class="full" style="color:var(--muted);font-size:.72rem;margin-top:6px">History: ${history.length} samples (~${Math.round(history.length * 2 / 60)} min) · refreshes every 2s</div>`;
     }
 
+    function openMetricsModal() {
+      document.getElementById('metrics-modal').classList.remove('hidden');
+      document.getElementById('server-details').classList.add('open');
+      loadSettingsPanel();
+    }
+    function closeMetricsModal() { document.getElementById('metrics-modal').classList.add('hidden'); }
+    function openSettingsModal() {
+      document.getElementById('settings-modal').classList.remove('hidden');
+      loadSettingsPanel();
+      syncModelSelects();
+    }
+    function closeSettingsModal() { document.getElementById('settings-modal').classList.add('hidden'); }
+    function openProxyModal() {
+      document.getElementById('proxy-modal').classList.remove('hidden');
+      refreshPoolStatus();
+    }
+    function closeProxyModal() { document.getElementById('proxy-modal').classList.add('hidden'); }
+
+    function syncModelSelects() {
+      const main = document.getElementById('settings-model');
+      const modal = document.getElementById('settings-model-modal');
+      if (main && modal) { modal.innerHTML = main.innerHTML; modal.value = main.value; }
+    }
+
+    async function saveApiKeyFromModal() {
+      document.getElementById('settings-api-key').value = document.getElementById('settings-api-key-modal').value;
+      await saveApiKey();
+      document.getElementById('settings-msg-modal').textContent = document.getElementById('settings-msg').textContent;
+    }
+
+    async function saveDefaultModelFromModal() {
+      document.getElementById('settings-model').value = document.getElementById('settings-model-modal').value;
+      await saveDefaultModel();
+      document.getElementById('settings-model-status-modal').textContent =
+        document.getElementById('settings-model-status').textContent;
+    }
+
+    function renderPoolStatus(data) {
+      const enabled = data.enabled;
+      const pill = document.getElementById('toolbar-proxy-pill');
+      if (pill) {
+        if (!enabled) pill.textContent = 'Proxy: direct';
+        else if (data.listening) pill.textContent = 'Proxy: ' + (data.active_proxy?.name || 'active');
+        else pill.textContent = 'Proxy: down';
+      }
+      document.getElementById('pool-enabled').checked = !!enabled;
+      const list = document.getElementById('pool-proxy-list');
+      const proxies = data.proxies || [];
+      list.innerHTML = proxies.length ? proxies.map(p => {
+        const chk = p.last_check || {};
+        const cls = chk.ok ? 'ok' : (chk.at ? 'bad' : '');
+        const lat = chk.latency_ms != null ? chk.latency_ms + 'ms' : '—';
+        const active = data.active_proxy_id === p.id ? ' ★' : '';
+        return `<div class="pool-item ${cls}"><span><strong>${esc(p.name || p.id)}</strong>${active}<br><span style="color:var(--muted)">${esc(p.share_preview || '')}</span></span><span>${chk.ok ? 'OK ' + lat : esc(chk.error || 'untested')}</span></div>`;
+      }).join('') : '<p class="settings-note">No proxies — add links or subscriptions</p>';
+      const pills = [];
+      if (enabled) pills.push(pill(data.listening ? 'Listening' : 'Not listening', data.listening));
+      if (data.last_check_at) pills.push(pill('Last check ' + new Date(data.last_check_at).toLocaleTimeString(), true));
+      document.getElementById('pool-pills').innerHTML = pills.join('');
+      const sel = data.last_selection;
+      document.getElementById('pool-status-text').textContent = sel
+        ? `Active: ${sel.name || sel.proxy_id || '—'} · ${sel.reason || ''}`
+        : (data.recent_logs && data.recent_logs[0] ? data.recent_logs[0].message : '—');
+    }
+
+    async function refreshPoolStatus(live) {
+      try {
+        const res = await apiFetch('/api/proxy/pool' + (live ? '?live=1' : ''));
+        const data = await res.json();
+        renderPoolStatus(data);
+      } catch (e) {}
+    }
+
+    async function onPoolEnabledChange() {
+      const enabled = document.getElementById('pool-enabled').checked;
+      const res = await apiFetch('/api/proxy/pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await res.json();
+      if (!res.ok) document.getElementById('pool-status-text').textContent = data.error || 'Failed';
+      await refreshPoolStatus(true);
+      await refreshXrayStatus(true);
+    }
+
+    async function addPoolLinks() {
+      const lines = document.getElementById('pool-links-input').value.split('\n').map(s => s.trim()).filter(Boolean);
+      for (const share_url of lines) {
+        await apiFetch('/api/proxy/pool/link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ share_url }),
+        });
+      }
+      document.getElementById('pool-links-input').value = '';
+      await refreshPoolStatus(true);
+    }
+
+    async function addPoolSubscription() {
+      const url = document.getElementById('pool-sub-url').value.trim();
+      if (!url) return;
+      await apiFetch('/api/proxy/pool/subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      document.getElementById('pool-sub-url').value = '';
+      await refreshPoolStatus(true);
+    }
+
+    async function testPoolProxies() {
+      document.getElementById('pool-status-text').textContent = 'Testing all proxies…';
+      const res = await apiFetch('/api/proxy/pool/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json();
+      const logEl = document.getElementById('pool-log');
+      logEl.classList.remove('hidden');
+      logEl.textContent = JSON.stringify(data.report || data, null, 2);
+      renderPoolStatus(data.status || data);
+    }
+
+    async function ensurePoolProxy() {
+      const res = await apiFetch('/api/proxy/pool/ensure?force=1', { method: 'POST' });
+      const data = await res.json();
+      renderPoolStatus(data.status || data);
+      document.getElementById('pool-status-text').textContent = data.ok ? 'Proxy ready' : (data.error || 'Failed');
+    }
+
+    async function refreshPoolSubscriptions() {
+      await apiFetch('/api/proxy/pool/refresh', { method: 'POST' });
+      await refreshPoolStatus(true);
+    }
+
     function toggleServerDetails() {
       const el = document.getElementById('server-details');
       el.classList.toggle('open');
@@ -843,7 +1062,7 @@
         const action = f.running
           ? '<button type="button" class="action stop" data-action="stop">Stop</button>'
           : '<button type="button" class="action start" data-action="start">Start</button>';
-        return `<div class="row${running}" data-name="${esc(f.name)}" data-path="${esc(f.path)}">${action}<div><div class="name">${esc(f.name)}</div><div class="time">${esc(f.mtime_relative)}</div></div></div>`;
+        return `<div class="row${running}" data-name="${esc(f.name)}" data-path="${esc(f.path)}">${action}<div><div class="name">${esc(f.name)}</div><div class="time">${esc(f.touched_relative || f.mtime_relative)}</div></div></div>`;
       }).join('');
     }
 
@@ -1298,6 +1517,7 @@
         if (!skipFolders && results[2]) {
           renderFolders((await results[2].json()).folders);
         }
+        refreshPoolStatus();
       } catch (e) {
         if (e.message === 'unauthorized') return;
         if (e.message === 'setup') return;
@@ -1351,6 +1571,7 @@
     async function startAgent(name) {
       if (busy) return;
       busy = true;
+      try { await apiFetch('/api/projects/touch/' + encodeURIComponent(name), { method: 'POST' }); } catch (_) {}
       openStartModal(name);
       const msgEl = document.getElementById('start-modal-msg');
       try {

@@ -39,6 +39,18 @@ from xray_client import (
     test_cursor_api,
     test_proxy,
 )
+from proxy_pool import (
+    add_proxy_link,
+    add_subscription,
+    apply_pool_config,
+    ensure_proxy_ready,
+    migrate_legacy_to_pool,
+    pool_status,
+    refresh_all_subscriptions,
+    select_and_apply_best,
+    set_pool_enabled,
+    test_all_proxies,
+)
 
 IGNORE_MARKER = ".agentcontrol-ignore"
 WORKER_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -78,8 +90,14 @@ def version_is_newer(remote: str, local: str) -> bool:
 
 def fetch_github_json(relative_path: str) -> dict:
     url = f"{GITHUB_RAW_BASE.rstrip('/')}/{relative_path.lstrip('/')}"
-    with urlopen(url, timeout=15) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        from proxy_pool import cursor_urlopen
+
+        with cursor_urlopen(url, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except ImportError:
+        with urlopen(url, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
 
 
 def update_in_progress() -> bool:
@@ -194,6 +212,7 @@ def save_config_patch(updates: dict) -> None:
 CFG = load_config()
 STATE_DIR = Path(CFG["state_dir"])
 STATE_FILE = STATE_DIR / "workers.json"
+RECENT_TOUCHES_FILE = STATE_DIR / "recent-touches.json"
 UPDATE_LOG = STATE_DIR / "update.log"
 UPDATE_LOCK = STATE_DIR / "update.lock"
 METRICS_HISTORY: deque = deque(maxlen=1800)
@@ -387,6 +406,13 @@ def verify_cursor_api_key(api_key: str) -> dict[str, object]:
     agent_bin = find_agent_bin()
     if not agent_bin:
         return {"valid": False, "error": "agent CLI not found — run install.sh again"}
+
+    proxy_gate = ensure_proxy_ready()
+    if not proxy_gate.get("ok") and proxy_gate.get("mode") != "direct":
+        return {
+            "valid": False,
+            "error": proxy_gate.get("error") or "proxy is not ready — fix proxy settings first",
+        }
 
     check_dir = Path("/tmp/agentcontrol-key-check")
     check_dir.mkdir(parents=True, exist_ok=True)
@@ -971,6 +997,7 @@ def collect_system_info() -> dict:
             "project_count": len(folders),
             "running_workers": len(running_workers),
             "running_worker_names": running_workers,
+            "version": load_version().get("version"),
         },
         "docker": docker_stats(),
         "network": net,
@@ -1041,12 +1068,36 @@ def folder_mtime(path: Path) -> float:
         return 0.0
 
 
+def load_recent_touches() -> dict[str, float]:
+    if not RECENT_TOUCHES_FILE.is_file():
+        return {}
+    try:
+        raw = json.loads(RECENT_TOUCHES_FILE.read_text(encoding="utf-8"))
+        return {str(k): float(v) for k, v in raw.items()}
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return {}
+
+
+def save_recent_touches(touches: dict[str, float]) -> None:
+    ensure_state_dir()
+    RECENT_TOUCHES_FILE.write_text(json.dumps(touches, indent=2) + "\n", encoding="utf-8")
+
+
+def touch_project(name: str) -> float:
+    touches = load_recent_touches()
+    now = time.time()
+    touches[name] = now
+    save_recent_touches(touches)
+    return now
+
+
 def list_folders() -> list[dict]:
     root = Path(CFG["scan_root"])
     if not root.is_dir():
         return []
 
     state = reconcile_state()
+    touches = load_recent_touches()
     folders = []
     for entry in root.iterdir():
         if not entry.is_dir() or is_excluded(entry.name) or is_folder_ignored(entry):
@@ -1056,6 +1107,7 @@ def list_folders() -> list[dict]:
         pid = info.get("pid")
         running = bool(pid and is_running(pid))
         mtime = folder_mtime(entry)
+        touched = touches.get(name) or mtime
         folders.append(
             {
                 "name": name,
@@ -1067,10 +1119,12 @@ def list_folders() -> list[dict]:
                 "pid": pid if running else None,
                 "mtime": mtime,
                 "mtime_relative": relative_time_en(mtime),
+                "touched_at": touched,
+                "touched_relative": relative_time_en(touched),
             }
         )
 
-    folders.sort(key=lambda item: item["mtime"], reverse=True)
+    folders.sort(key=lambda item: item.get("touched_at") or item["mtime"], reverse=True)
     return folders
 
 
@@ -1175,6 +1229,12 @@ def start_worker(name: str) -> tuple[dict, int]:
         }, 500
 
     xray_settings = load_client_settings()
+    proxy_gate = ensure_proxy_ready()
+    if not proxy_gate.get("ok") and proxy_gate.get("mode") != "direct":
+        return {
+            "error": proxy_gate.get("error")
+            or "HTTP proxy is not ready. Fix proxy pool in Settings before starting workers.",
+        }, 503
     if xray_settings.get("enabled") and not proxy_listening(xray_settings):
         return {
             "error": "HTTP proxy is not listening on "
@@ -1198,6 +1258,7 @@ def start_worker(name: str) -> tuple[dict, int]:
         os.utime(path, None)
     except OSError:
         pass
+    touch_project(name)
 
     worker_id = worker_id_for(name)
     port = mgmt_port(name)
@@ -1517,14 +1578,120 @@ def api_fleet_bundle():
     for item in folders:
         if item["running"]:
             item["ready"] = worker_ready(item["name"])
+    migrate_legacy_to_pool()
     return jsonify(
         {
             "system": collect_system_info(),
             "folders": folders,
             "history": list(METRICS_HISTORY),
             "scan_root": CFG["scan_root"],
+            "version": load_version(),
+            "proxy": pool_status(),
         }
     )
+
+
+@app.post("/api/projects/touch/<name>")
+def api_projects_touch(name: str):
+    path = folder_path(name)
+    if not path:
+        return jsonify({"error": "folder not found"}), 404
+    touched = touch_project(name)
+    return jsonify({"ok": True, "name": name, "touched_at": touched})
+
+
+@app.get("/api/proxy/pool")
+def api_proxy_pool_get():
+    migrate_legacy_to_pool()
+    live = request.args.get("live") == "1"
+    status = pool_status()
+    if live and status.get("enabled"):
+        status["live_test"] = test_all_proxies(load_pool_safe(), apply_each=False)
+    return jsonify(status)
+
+
+def load_pool_safe():
+    from proxy_pool import load_pool
+
+    return load_pool()
+
+
+@app.post("/api/proxy/pool")
+def api_proxy_pool_save():
+    data = request.get_json(silent=True) or {}
+    try:
+        if "enabled" in data and len(data) == 1:
+            result = set_pool_enabled(bool(data["enabled"]))
+        else:
+            result = apply_pool_config(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (FileNotFoundError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(result)
+
+
+@app.post("/api/proxy/pool/subscription")
+def api_proxy_pool_subscription():
+    data = request.get_json(silent=True) or {}
+    url = str(data.get("url") or "").strip()
+    name = str(data.get("name") or "").strip()
+    if not url:
+        return jsonify({"error": "url required"}), 400
+    try:
+        entry = add_subscription(load_pool_safe(), url, name=name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "subscription": entry, "status": pool_status()})
+
+
+@app.post("/api/proxy/pool/link")
+def api_proxy_pool_link():
+    data = request.get_json(silent=True) or {}
+    share_url = str(data.get("share_url") or data.get("vless_url") or "").strip()
+    name = str(data.get("name") or "").strip()
+    if not share_url:
+        return jsonify({"error": "share_url required"}), 400
+    try:
+        entry = add_proxy_link(load_pool_safe(), share_url, name=name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "proxy": public_proxy_entry_safe(entry), "status": pool_status()})
+
+
+def public_proxy_entry_safe(entry):
+    from proxy_pool import public_proxy_entry
+
+    return public_proxy_entry(entry)
+
+
+@app.post("/api/proxy/pool/refresh")
+def api_proxy_pool_refresh():
+    pool = refresh_all_subscriptions(load_pool_safe())
+    return jsonify({"ok": True, "status": pool_status()})
+
+
+@app.post("/api/proxy/pool/test")
+def api_proxy_pool_test():
+    data = request.get_json(silent=True) or {}
+    apply_each = bool(data.get("apply_each", True))
+    report = test_all_proxies(load_pool_safe(), apply_each=apply_each)
+    return jsonify({"ok": bool(report.get("working")), "report": report, "status": pool_status()})
+
+
+@app.post("/api/proxy/pool/ensure")
+def api_proxy_pool_ensure():
+    force = request.args.get("force") == "1"
+    result = ensure_proxy_ready(force_reselect=force)
+    code = 200 if result.get("ok") else 503
+    return jsonify({**result, "status": pool_status()}), code
+
+
+@app.post("/api/proxy/pool/select")
+def api_proxy_pool_select():
+    result = select_and_apply_best(load_pool_safe())
+    code = 200 if result.get("ok") else 503
+    return jsonify({**result, "status": pool_status()}), code
 
 
 @app.get("/api/folders")
