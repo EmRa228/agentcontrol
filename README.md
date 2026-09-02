@@ -38,6 +38,19 @@ Non-interactive with API key:
 sudo CURSOR_API_KEY=YOUR_KEY /opt/agentcontrol/install.sh
 ```
 
+Interactive wizard (network mode, scan root, optional API key — **default: direct, no proxy**):
+
+```bash
+sudo /opt/agentcontrol/install-wizard.sh
+# or: sudo WIZARD=1 /opt/agentcontrol/bootstrap.sh
+```
+
+Non-interactive proxy mode (xray):
+
+```bash
+sudo AGENTCONTROL_NETWORK_MODE=2 AGENTCONTROL_PROXY_PORT=30229 SCAN_ROOT=/root /opt/agentcontrol/install-wizard.sh
+```
+
 Update later:
 
 ```bash
@@ -45,21 +58,7 @@ sudo /opt/agentcontrol/bootstrap.sh
 # or: cd /opt/agentcontrol && git pull && sudo bash install.sh
 ```
 
-Guard file after host install: `/etc/agentcontrol/HOST_ONLY` — blocks `install-wizard.sh` / Docker panel.
-
-### Docker wizard (not recommended for Compose repos)
-
-Workers started from a Docker panel **cannot** use host `docker.sock`. Only use if every repo is host-native:
-
-```bash
-sudo DOCKER_INSTALL=1 /opt/agentcontrol/bootstrap.sh
-```
-
-Interactive proxy wizard (direct vs xray, default proxy port `30229`):
-
-```bash
-sudo DOCKER_INSTALL=1 FORCE_DOCKER_INSTALL=1 /opt/agentcontrol/install-wizard.sh
-```
+Guard file after host install: `/etc/agentcontrol/HOST_ONLY` — blocks Docker panel (`docker compose`).
 
 Fresh reinstall (removes legacy `agentstart`):
 
@@ -119,15 +118,6 @@ Host systemd (default):
 systemctl status agentcontrol
 systemctl restart agentcontrol
 journalctl -u agentcontrol -f
-```
-
-Docker (only if you explicitly used `DOCKER_INSTALL=1`):
-
-```bash
-cd /opt/agentcontrol
-docker compose ps
-docker compose logs -f
-docker compose restart
 ```
 
 Worker logs: `/var/lib/agentcontrol/<folder>.log`  

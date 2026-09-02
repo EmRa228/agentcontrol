@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Interactive Docker install wizard for AgentControl.
+# Interactive host install wizard for AgentControl (systemd — never Docker).
+# Workers must inherit host /var/run/docker.sock; the panel never runs in a container.
 set -euo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/agentcontrol}"
@@ -17,32 +18,17 @@ need_root() {
   fi
 }
 
-refuse_docker_install() {
-  if [[ -f /etc/agentcontrol/HOST_ONLY ]] && [[ "${FORCE_DOCKER_INSTALL:-}" != "1" ]]; then
-    echo "ERROR: This host requires AgentControl on systemd (see /etc/agentcontrol/HOST_ONLY)." >&2
-    echo "Run: bash ${INSTALL_DIR}/install.sh" >&2
-    exit 1
-  fi
-  if [[ "${FORCE_DOCKER_INSTALL:-}" != "1" ]]; then
-    echo "ERROR: install-wizard.sh deploys the panel in Docker — workers lose /var/run/docker.sock." >&2
-    echo "Use host install instead: bash ${INSTALL_DIR}/install.sh" >&2
-    echo "To override (not recommended): FORCE_DOCKER_INSTALL=1 $0" >&2
-    exit 1
-  fi
-}
-
-ensure_docker() {
-  if command -v docker &>/dev/null && docker compose version &>/dev/null; then
+stop_docker_panel() {
+  if ! command -v docker &>/dev/null; then
     return
   fi
-  log "Installing Docker..."
-  if command -v apt-get &>/dev/null; then
-    apt-get update -qq
-    apt-get install -y -qq docker.io docker-compose-plugin
-    systemctl enable --now docker
-  else
-    echo "Docker is required. Install docker + docker compose plugin, then rerun." >&2
-    exit 1
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx agentcontrol; then
+    log "Stopping legacy AgentControl Docker container"
+    docker stop agentcontrol 2>/dev/null || true
+    docker rm agentcontrol 2>/dev/null || true
+  fi
+  if [[ -f "${INSTALL_DIR}/docker-compose.yml" ]]; then
+    (cd "${INSTALL_DIR}" && docker compose down --remove-orphans 2>/dev/null) || true
   fi
 }
 
@@ -70,34 +56,34 @@ normalize_network_mode() {
   case "${raw}" in
     1|direct|Direct|DIRECT) echo "1" ;;
     2|proxy|Proxy|PROXY|xray|x2ray) echo "2" ;;
-    "") echo "2" ;;
-    *) echo "2" ;;
+    "") echo "1" ;;
+    *) echo "1" ;;
   esac
 }
 
 prompt_network_mode() {
   local choice
   echo "" >&2
-  echo "=== AgentControl install wizard ===" >&2
+  echo "=== AgentControl install wizard (host systemd) ===" >&2
   echo "" >&2
-  echo "Network mode for install and Cursor agent traffic:" >&2
-  echo "  1) Direct (no proxy)" >&2
-  echo "  2) Via xray HTTP proxy (recommended on restricted networks)" >&2
+  echo "Network mode for Cursor agent traffic:" >&2
+  echo "  1) Direct (no proxy) — default" >&2
+  echo "  2) Via xray HTTP proxy (restricted networks)" >&2
   if [[ -n "${AGENTCONTROL_NETWORK_MODE:-}" ]]; then
     choice="$(normalize_network_mode "${AGENTCONTROL_NETWORK_MODE}")"
     echo "Using AGENTCONTROL_NETWORK_MODE=${choice}" >&2
   elif [[ -t 0 ]]; then
-    read -rp "Choice [1/2] (default 2): " choice
-    choice="$(normalize_network_mode "${choice:-2}")"
+    read -rp "Choice [1/2] (default 1): " choice
+    choice="$(normalize_network_mode "${choice:-1}")"
   else
-    choice="2"
-    log "Non-interactive mode: defaulting to proxy (2)"
+    choice="1"
+    log "Non-interactive mode: defaulting to direct (1)"
   fi
   echo "${choice}"
 }
 
 configure_direct_mode() {
-  log "Direct mode selected — disabling xray proxy for Cursor traffic"
+  log "Direct mode — disabling xray proxy for Cursor traffic"
   python3 - <<PY
 import json, sys
 sys.path.insert(0, "${INSTALL_DIR}")
@@ -308,8 +294,7 @@ PY
 
 main() {
   need_root
-  refuse_docker_install
-  ensure_docker
+  stop_docker_panel
 
   cd "${INSTALL_DIR}"
   chmod +x "${INSTALL_DIR}/install-wizard.sh" "${INSTALL_DIR}/scripts/setup-xray-proxy.sh" "${INSTALL_DIR}/scripts/apply-xray-client.py" 2>/dev/null || true
@@ -333,30 +318,12 @@ main() {
 
   write_config "${scan_root}"
 
-  # env + xray-client.yaml already written in proxy/direct configure steps
-
   optional_secret CURSOR_API_KEY "Cursor API key" "${CONFIG_DIR}/api-key"
   optional_secret PANEL_PASSWORD "Panel password" "${CONFIG_DIR}/auth-password"
 
   export SCAN_ROOT="${scan_root}"
-  export BUILD_HTTP_PROXY=""
-  export BUILD_HTTPS_PROXY=""
-  unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
-
-  if [[ -n "${proxy_url}" ]]; then
-    log "Building Docker image (direct build; xray proxy applies at runtime)"
-  else
-    log "Building Docker image (direct)"
-  fi
-  docker compose build \
-    --build-arg AGENT_HTTP_PROXY="" \
-    --build-arg AGENT_HTTPS_PROXY=""
-
-  systemctl stop agentcontrol 2>/dev/null || true
-  systemctl disable agentcontrol 2>/dev/null || true
-
-  log "Starting container"
-  docker compose up -d
+  log "Installing panel on host (systemd) — workers will use host docker.sock"
+  bash "${INSTALL_DIR}/install.sh"
 
   local ip
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -364,8 +331,8 @@ main() {
   echo "Done."
   echo "Panel:  http://${ip:-localhost}:30228"
   echo "Config: ${CONFIG_DIR}/config.yaml"
-  echo "Proxy:  ${proxy_url:-direct}"
-  echo "Logs:   docker compose -f ${INSTALL_DIR}/docker-compose.yml logs -f"
+  echo "Network: ${proxy_url:-direct}"
+  echo "Logs:   journalctl -u agentcontrol -f"
 }
 
 main "$@"

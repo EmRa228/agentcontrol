@@ -130,18 +130,20 @@ npm run deploy
 
 ## Install wizard (`install-wizard.sh`)
 
-Called by `bootstrap.sh` unless `LEGACY_INSTALL=1`.
+Interactive **host systemd** install. Never starts Docker or workers inside a container.
 
 | Prompt / env | Default | Notes |
 |---|---|---|
-| Network mode `1`/`2` | `2` (proxy) | `AGENTCONTROL_NETWORK_MODE` |
-| Proxy port | `30229` | `AGENTCONTROL_PROXY_PORT`; local HTTP inbound only |
+| Network mode `1`/`2` | **`1` (direct)** | `AGENTCONTROL_NETWORK_MODE` |
+| Proxy port | `30229` | only when mode `2`; `AGENTCONTROL_PROXY_PORT` |
 | scan_root | `/root` | `SCAN_ROOT` |
 | xray client fields | import from host | `XRAY_IMPORT_ONLY=1` skips prompts |
 | Cursor API key | optional | `CURSOR_API_KEY` or dashboard later |
 | Panel password | optional | `PANEL_PASSWORD` or dashboard later |
 
-xray env (non-interactive): `XRAY_ADDRESS`, `XRAY_PORT`, `XRAY_UUID`, `XRAY_SERVER_NAME`, `XRAY_PUBLIC_KEY`, `XRAY_SHORT_ID`, `XRAY_FINGERPRINT`, `XRAY_FLOW`.
+Ends by calling `install.sh` (systemd). Removes any legacy `agentcontrol` Docker container first.
+
+xray env (non-interactive proxy): `AGENTCONTROL_NETWORK_MODE=2`, `XRAY_SHARE_URL` or `XRAY_ADDRESS`, …
 
 ---
 
@@ -262,8 +264,8 @@ agentcontrol/
 ├── AGENTS.md              ← this file (update on every change)
 ├── version.json           ← panel version (bump on panel changes)
 ├── README.md              ← human install docs (EN + FA snippet)
-├── bootstrap.sh           ← idempotent: git pull → install-wizard (or legacy install.sh)
-├── install-wizard.sh      ← Docker + xray wizard
+├── bootstrap.sh           ← idempotent: git pull → install.sh (or install-wizard with WIZARD=1)
+├── install-wizard.sh      ← interactive host wizard (direct default) → install.sh
 ├── install.sh             ← legacy systemd install
 ├── app.py                 ← Flask backend + worker lifecycle
 ├── xray_client.py         ← xray client apply/import/test
