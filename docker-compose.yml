@@ -1,4 +1,5 @@
 services:
+  # DEPRECATED — do not use. Workers need host /var/run/docker.sock; use install.sh instead.
   agentcontrol:
     build:
       context: .

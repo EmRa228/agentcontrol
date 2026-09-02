@@ -14,7 +14,7 @@ Token-efficient context for AI agents. Prefer this file over re-reading `README.
 
 | Component | Stack | Runs on |
 |-----------|-------|---------|
-| Single-server panel | Python 3.10+ Flask, vanilla HTML/JS | Each Linux VPS (**Docker** default, or legacy systemd) |
+| Single-server panel | Python 3.10+ Flask, vanilla HTML/JS | Each Linux VPS (**host systemd** — Docker panel disabled) |
 | Fleet dashboard | Cloudflare Workers (TypeScript), KV, static `public/` | Cloudflare edge |
 
 - Lists project folders under `scan_root` (default `/root`).
@@ -46,11 +46,11 @@ Host xray (127.0.0.1:30229 HTTP inbound) ─► VLESS+Reality outbound ─► up
 
 | Runtime | Role |
 |---|---|
-| **Docker** (default) | `agentcontrol` container: Flask + agent CLI; `network_mode: host`, `pid: host` |
+| **Host systemd** (default) | `agentcontrol.service` → venv + `app.py` on host; workers inherit `/var/run/docker.sock` |
 | **Host xray** | Local HTTP proxy (default `127.0.0.1:30229`) + upstream outbound |
-| **Legacy systemd** | `agentcontrol.service` → venv + `app.py` |
+| ~~Docker~~ | **Disabled** — `docker/entrypoint.sh` exits; use `install.sh` or `scripts/migrate-from-docker.sh` |
 
-**Default install is Docker.** Container mounts: `${SCAN_ROOT}`, `/etc/agentcontrol`, `/var/lib/agentcontrol`, `/usr/local/etc/xray`.
+**Default install is host systemd** (`bootstrap.sh` → `install.sh`). Docker panel/workers cannot access host `docker.sock`.
 
 Docker **build** is direct (Debian/PyPI). **Proxy applies at runtime** via `/etc/agentcontrol/env`.
 
@@ -92,24 +92,18 @@ Browser → Worker (*.workers.dev or custom domain)
 ---
 
 ```bash
-# Fresh install (interactive wizard)
+# Fresh install (host systemd)
 sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && /opt/agentcontrol/bootstrap.sh'
+
+# Migrate off Docker panel (one-time, on host SSH)
+sudo bash /opt/agentcontrol/scripts/migrate-from-docker.sh
 
 # Update / reinstall (idempotent)
 sudo /opt/agentcontrol/bootstrap.sh
 
-# Non-interactive — proxy mode, import existing xray client
-sudo XRAY_IMPORT_ONLY=1 AGENTCONTROL_NETWORK_MODE=2 AGENTCONTROL_PROXY_PORT=30229 SCAN_ROOT=/root /opt/agentcontrol/bootstrap.sh
-
-# Legacy systemd (no Docker)
-sudo LEGACY_INSTALL=1 /opt/agentcontrol/bootstrap.sh
-
-# Docker ops
-cd /opt/agentcontrol
-docker compose ps
-docker compose logs -f
-docker compose up -d --build    # after app/template changes
-docker compose restart
+# Host ops
+systemctl status agentcontrol
+journalctl -u agentcontrol -f
 curl -sS http://127.0.0.1:30228/health
 ```
 
@@ -117,8 +111,8 @@ Open firewall: `30228/tcp`.
 
 | If you changed… | Command |
 |---|---|
-| `app.py`, `templates/`, `xray_client.py`, `Dockerfile` | `docker compose up -d --build` |
-| `install-wizard.sh`, `scripts/*` only | rerun `./bootstrap.sh` |
+| `app.py`, `templates/`, `xray_client.py` | `cd /opt/agentcontrol && git pull && sudo bash install.sh` |
+| `install.sh`, `scripts/*` only | `sudo bash /opt/agentcontrol/bootstrap.sh` |
 | `/etc/agentcontrol/xray-client.yaml` manually | `python3 scripts/apply-xray-client.py` |
 
 ### Fleet deploy

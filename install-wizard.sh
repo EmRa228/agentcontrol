@@ -17,6 +17,20 @@ need_root() {
   fi
 }
 
+refuse_docker_install() {
+  if [[ -f /etc/agentcontrol/HOST_ONLY ]] && [[ "${FORCE_DOCKER_INSTALL:-}" != "1" ]]; then
+    echo "ERROR: This host requires AgentControl on systemd (see /etc/agentcontrol/HOST_ONLY)." >&2
+    echo "Run: bash ${INSTALL_DIR}/install.sh" >&2
+    exit 1
+  fi
+  if [[ "${FORCE_DOCKER_INSTALL:-}" != "1" ]]; then
+    echo "ERROR: install-wizard.sh deploys the panel in Docker — workers lose /var/run/docker.sock." >&2
+    echo "Use host install instead: bash ${INSTALL_DIR}/install.sh" >&2
+    echo "To override (not recommended): FORCE_DOCKER_INSTALL=1 $0" >&2
+    exit 1
+  fi
+}
+
 ensure_docker() {
   if command -v docker &>/dev/null && docker compose version &>/dev/null; then
     return
@@ -294,6 +308,7 @@ PY
 
 main() {
   need_root
+  refuse_docker_install
   ensure_docker
 
   cd "${INSTALL_DIR}"

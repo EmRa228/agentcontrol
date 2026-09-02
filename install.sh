@@ -149,6 +149,18 @@ install_app() {
   systemctl daemon-reload
   systemctl enable agentcontrol
   systemctl restart agentcontrol
+  write_host_only_guard
+}
+
+write_host_only_guard() {
+  mkdir -p "${CONFIG_DIR}"
+  cat > "${CONFIG_DIR}/HOST_ONLY" <<EOF
+# AgentControl must run on host systemd (${INSTALL_DIR}), not Docker.
+# Do NOT run: install-wizard.sh, docker compose up (agentcontrol service)
+# To update panel: cd ${INSTALL_DIR} && git pull && bash install.sh
+installed_at=$(date -Iseconds)
+EOF
+  chmod 644 "${CONFIG_DIR}/HOST_ONLY"
 }
 
 main() {

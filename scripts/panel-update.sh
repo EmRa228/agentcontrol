@@ -27,12 +27,14 @@ trap 'rm -f "${LOCK_FILE}"' EXIT
   git reset --hard origin/main
   chmod +x bootstrap.sh install.sh install-wizard.sh scripts/*.sh scripts/*.py 2>/dev/null || true
 
-  if command -v docker &>/dev/null && [[ -f docker-compose.yml ]] && docker compose version &>/dev/null; then
-    docker compose up -d --build
-  elif systemctl is-active agentcontrol &>/dev/null; then
+  if systemctl is-active agentcontrol &>/dev/null; then
     systemctl restart agentcontrol
+  elif [[ -f /etc/agentcontrol/HOST_ONLY ]]; then
+    echo "HOST_ONLY set — skipping docker compose; run install.sh if systemd is missing"
+  elif command -v docker &>/dev/null && [[ -f docker-compose.yml ]] && docker compose version &>/dev/null; then
+    docker compose up -d --build
   else
-    echo "No docker compose or systemd service found — files updated on disk only"
+    echo "No systemd service or docker compose — files updated on disk only"
   fi
 
   echo "=== panel update finished $(date -Iseconds) ==="

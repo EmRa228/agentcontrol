@@ -24,32 +24,41 @@ Mobile-friendly UI with per-server password protection.
 - [Cursor agent CLI](https://cursor.com/docs/cloud-agent/self-hosted-guides/my-machines)
 - Personal API key from [Cursor Dashboard](https://cursor.com/settings)
 
-## Quick install (Docker + wizard, idempotent)
+## Quick install (host systemd — recommended)
 
-Interactive wizard — asks **direct vs xray proxy** (default proxy port `30229`), **scan root** (default `/root`), optional API key/password:
+**Default:** panel runs on the host via systemd so Cursor workers inherit `/var/run/docker.sock` (required for Docker Compose repos like nictry).
 
 ```bash
 sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && /opt/agentcontrol/bootstrap.sh'
 ```
 
-Non-interactive (proxy mode, import existing xray client config):
+Non-interactive with API key:
 
 ```bash
-sudo XRAY_IMPORT_ONLY=1 AGENTCONTROL_NETWORK_MODE=2 AGENTCONTROL_PROXY_PORT=30229 SCAN_ROOT=/root /opt/agentcontrol/bootstrap.sh
+sudo CURSOR_API_KEY=YOUR_KEY /opt/agentcontrol/install.sh
 ```
 
-Proxy mode configures xray client outbound + local HTTP inbound on `127.0.0.1:30229` for **runtime** Cursor agent traffic. Edit later in the panel under **xray client (proxy)**.
-
-Update later (rebuild + restart container):
+Update later:
 
 ```bash
 sudo /opt/agentcontrol/bootstrap.sh
+# or: cd /opt/agentcontrol && git pull && sudo bash install.sh
 ```
 
-Legacy **systemd** install (no Docker):
+Guard file after host install: `/etc/agentcontrol/HOST_ONLY` — blocks `install-wizard.sh` / Docker panel.
+
+### Docker wizard (not recommended for Compose repos)
+
+Workers started from a Docker panel **cannot** use host `docker.sock`. Only use if every repo is host-native:
 
 ```bash
-sudo LEGACY_INSTALL=1 /opt/agentcontrol/bootstrap.sh
+sudo DOCKER_INSTALL=1 /opt/agentcontrol/bootstrap.sh
+```
+
+Interactive proxy wizard (direct vs xray, default proxy port `30229`):
+
+```bash
+sudo DOCKER_INSTALL=1 FORCE_DOCKER_INSTALL=1 /opt/agentcontrol/install-wizard.sh
 ```
 
 Fresh reinstall (removes legacy `agentstart`):
@@ -104,21 +113,21 @@ File: `/etc/agentcontrol/config.yaml`
 
 ## Service
 
-Docker (default):
+Host systemd (default):
+
+```bash
+systemctl status agentcontrol
+systemctl restart agentcontrol
+journalctl -u agentcontrol -f
+```
+
+Docker (only if you explicitly used `DOCKER_INSTALL=1`):
 
 ```bash
 cd /opt/agentcontrol
 docker compose ps
 docker compose logs -f
 docker compose restart
-```
-
-Legacy systemd:
-
-```bash
-systemctl status agentcontrol
-systemctl restart agentcontrol
-journalctl -u agentcontrol -f
 ```
 
 Worker logs: `/var/lib/agentcontrol/<folder>.log`  

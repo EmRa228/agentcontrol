@@ -63,6 +63,64 @@ GITHUB_RAW_BASE = os.environ.get(
     "https://raw.githubusercontent.com/EmRa228/agentcontrol/main",
 )
 INSTALL_DIR = Path(os.environ.get("INSTALL_DIR", "/opt/agentcontrol"))
+HOST_ONLY_FILE = Path("/etc/agentcontrol/HOST_ONLY")
+DOCKER_SOCK = Path("/var/run/docker.sock")
+
+
+def running_inside_docker() -> bool:
+    if Path("/.dockerenv").is_file():
+        return True
+    try:
+        cgroup = Path("/proc/1/cgroup").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return "docker" in cgroup or "containerd" in cgroup
+
+
+def docker_sock_available() -> bool:
+    return DOCKER_SOCK.is_socket()
+
+
+def project_needs_docker(path: Path) -> bool:
+    return any((path / name).is_file() for name in ("docker-compose.yml", "compose.yml", "compose.yaml"))
+
+
+def worker_runtime_error(name: str | None = None) -> str | None:
+    if running_inside_docker():
+        return (
+            "AgentControl panel is running inside Docker — Cursor agents would not have "
+            "host /var/run/docker.sock. Run install.sh on the host (systemd), not Docker."
+        )
+    if not docker_sock_available():
+        return (
+            "Host /var/run/docker.sock is missing — agents cannot run docker compose. "
+            "Install the panel on the host with install.sh (see /etc/agentcontrol/HOST_ONLY)."
+        )
+    if name:
+        path = folder_path(name)
+        if path and project_needs_docker(path) and not docker_sock_available():
+            return (
+                f"{name} uses Docker Compose but /var/run/docker.sock is missing. "
+                "Install the panel on the host with install.sh."
+            )
+    return None
+
+
+def ensure_host_panel() -> None:
+    if running_inside_docker():
+        raise SystemExit(
+            "AgentControl must run on the host (systemd), not inside Docker. "
+            "Run: bash /opt/agentcontrol/install.sh"
+        )
+
+
+def host_runtime_status() -> dict:
+    return {
+        "inside_docker": running_inside_docker(),
+        "docker_sock": docker_sock_available(),
+        "host_only_guard": HOST_ONLY_FILE.is_file(),
+        "worker_start_allowed": worker_runtime_error() is None,
+    }
 
 
 def load_version() -> dict:
@@ -998,6 +1056,7 @@ def collect_system_info() -> dict:
             "running_workers": len(running_workers),
             "running_worker_names": running_workers,
             "version": load_version().get("version"),
+            "host_runtime": host_runtime_status(),
         },
         "docker": docker_stats(),
         "network": net,
@@ -1241,6 +1300,10 @@ def start_worker(name: str) -> tuple[dict, int]:
             f"{xray_settings.get('proxy_listen', '127.0.0.1')}:{xray_settings.get('proxy_port', 30229)}. "
             "Fix xray in Settings before starting workers.",
         }, 503
+
+    runtime_error = worker_runtime_error(name)
+    if runtime_error:
+        return {"error": runtime_error}, 503
 
     state = reconcile_state()
     existing = state.get(name)
@@ -1844,5 +1907,6 @@ def health():
 
 
 if __name__ == "__main__":
+    ensure_host_panel()
     ensure_state_dir()
     app.run(host="0.0.0.0", port=int(CFG["port"]), debug=False)

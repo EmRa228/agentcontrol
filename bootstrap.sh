@@ -29,8 +29,14 @@ fi
 cd "${INSTALL_DIR}"
 chmod +x bootstrap.sh install.sh install-wizard.sh scripts/setup-xray-proxy.sh scripts/apply-xray-client.py 2>/dev/null || true
 
-if [[ "${LEGACY_INSTALL:-}" == "1" ]]; then
+if [[ "${LEGACY_INSTALL:-}" == "1" ]] || [[ "${DOCKER_INSTALL:-}" != "1" ]]; then
   exec ./install.sh
+fi
+
+if [[ -f /etc/agentcontrol/HOST_ONLY ]]; then
+  echo "ERROR: /etc/agentcontrol/HOST_ONLY — Docker install is disabled on this host." >&2
+  echo "Use: bash ${INSTALL_DIR}/install.sh" >&2
+  exit 1
 fi
 
 exec ./install-wizard.sh
