@@ -26,6 +26,7 @@ interface RecentProject {
   project: string;
   touchedAt: number;
   running?: boolean;
+  agent_url?: string;
 }
 
 const KV_KEY = "servers";
@@ -299,6 +300,7 @@ function aggregateRecentProjects(
       touched_at?: number;
       touched_relative?: string;
       mtime?: number;
+      agent_url?: string;
     }>;
     for (const f of folders) {
       fromSnapshots.push({
@@ -308,6 +310,7 @@ function aggregateRecentProjects(
         project: f.name,
         touchedAt: f.touched_at || f.mtime || 0,
         running: f.running,
+        agent_url: f.agent_url,
       });
     }
   }
@@ -316,7 +319,9 @@ function aggregateRecentProjects(
     const key = `${item.serverId}:${item.project}`;
     const existing = merged.get(key);
     if (!existing || item.touchedAt > existing.touchedAt) {
-      merged.set(key, item);
+      merged.set(key, { ...existing, ...item });
+    } else if (item.agent_url || item.running !== undefined) {
+      merged.set(key, { ...item, ...existing, agent_url: item.agent_url || existing.agent_url, running: item.running ?? existing.running });
     }
   }
   return [...merged.values()].sort((a, b) => b.touchedAt - a.touchedAt).slice(0, limit);

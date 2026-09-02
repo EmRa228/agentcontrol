@@ -23,6 +23,8 @@
     .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
     .btn-sm { padding: 6px 10px; font-size: .75rem; }
     .btn-danger { background: rgba(240,113,120,.15); color: var(--red); border: 1px solid rgba(240,113,120,.3); }
+    .btn.loading, .btn:disabled { opacity: 0.65; cursor: wait; }
+    .btn-group { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
     .err { color: var(--red); font-size: .78rem; min-height: 1.2em; margin-top: 8px; }
     header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
     h1 { font-size: 1.35rem; }
@@ -79,7 +81,7 @@
       <p class="sub">Enter the fleet password. Saved in this browser until you sign out.</p>
       <label>Fleet password</label>
       <input id="login-pw" type="password" autocomplete="current-password">
-      <button class="btn btn-primary" type="button" style="width:100%;margin-top:12px" onclick="doLogin()">Sign in</button>
+      <button class="btn btn-primary" type="button" id="login-btn" style="width:100%;margin-top:12px" onclick="doLogin()">Sign in</button>
       <p id="login-err" class="err"></p>
     </div>
   </div>
@@ -96,7 +98,7 @@
     <div class="toolbar">
       <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy settings</button>
-      <button class="btn btn-ghost btn-sm" type="button" onclick="refreshNow()">Refresh</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="refresh-btn" onclick="refreshNow()">Refresh</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="logout()">Sign out</button>
     </div>
 
@@ -138,7 +140,7 @@
       <label>Panel password</label><input id="add-password" type="password">
       <div class="modal-actions">
         <button class="btn btn-ghost btn-sm" type="button" onclick="closeAddModal()">Cancel</button>
-        <button class="btn btn-primary btn-sm" type="button" onclick="addServer()">Add</button>
+        <button class="btn btn-primary btn-sm" type="button" id="add-submit-btn" onclick="addServer()">Add</button>
       </div>
       <p id="add-err" class="err"></p>
     </div>
@@ -169,7 +171,7 @@
       <textarea id="proxy-subs" placeholder="https://sub.example.com/..."></textarea>
       <div class="modal-actions">
         <button class="btn btn-ghost btn-sm" type="button" onclick="closeProxyModal()">Cancel</button>
-        <button class="btn btn-primary btn-sm" type="button" onclick="pushProxy()">Apply to all servers</button>
+        <button class="btn btn-primary btn-sm" type="button" id="proxy-submit-btn" onclick="pushProxy()">Apply to all servers</button>
       </div>
       <div class="proxy-log hidden" id="proxy-push-log"></div>
       <p id="proxy-err" class="err"></p>
@@ -196,11 +198,73 @@
     let pollTimer = null;
     let modalServer = null;
     let pendingAgentUrl = null;
+    const loadingActions = new Set();
 
     function pw() { return localStorage.getItem(AUTH_KEY) || ''; }
     function setPw(v) { localStorage.setItem(AUTH_KEY, v); }
     function clearPw() { localStorage.removeItem(AUTH_KEY); }
     function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+    function actionKey(kind, serverId, project) {
+      return `${kind}:${serverId}:${decodeURIComponent(project)}`;
+    }
+    function isLoading(key) { return loadingActions.has(key); }
+    function setLoading(key, on) {
+      if (on) loadingActions.add(key);
+      else loadingActions.delete(key);
+      refreshActionButtons();
+    }
+    function loadingBtn(label, cls = 'btn-ghost') {
+      return `<button class="btn ${cls} btn-sm loading" type="button" disabled>${esc(label)}…</button>`;
+    }
+    async function withButtonLoading(btn, fn) {
+      if (!btn || btn.disabled) return;
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.textContent = orig + '…';
+      try { return await fn(); }
+      finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        btn.textContent = orig;
+      }
+    }
+    function folderFor(serverId, project) {
+      const s = (lastSnapshot?.servers || []).find(x => x.id === serverId);
+      return (s?.folders || []).find(f => f.name === project) || null;
+    }
+    function projectAgentUrl(serverId, project) {
+      return folderFor(serverId, project)?.agent_url || null;
+    }
+    function cursorBtn(agentUrl) {
+      if (!agentUrl) return '';
+      const enc = encodeURIComponent(agentUrl);
+      return `<button class="btn btn-primary btn-sm" type="button" onclick="openCursor(decodeURIComponent('${enc}'))">Cursor</button>`;
+    }
+    function renderProjectActions(serverId, folder) {
+      const enc = encodeURIComponent(folder.name);
+      const stopKey = actionKey('stop', serverId, folder.name);
+      const startKey = actionKey('start', serverId, folder.name);
+      if (folder.running) {
+        const parts = [cursorBtn(folder.agent_url || projectAgentUrl(serverId, folder.name))];
+        parts.push(isLoading(stopKey)
+          ? loadingBtn('Stop', 'btn-danger')
+          : `<button class="btn btn-danger btn-sm" type="button" onclick="stopWorker('${esc(serverId)}','${enc}')">Stop</button>`);
+        return `<span class="btn-group">${parts.filter(Boolean).join('')}</span>`;
+      }
+      return isLoading(startKey)
+        ? loadingBtn('Start', 'btn-primary')
+        : `<button class="btn btn-primary btn-sm" type="button" onclick="startWorker('${esc(serverId)}','${enc}')">Start</button>`;
+    }
+    function refreshActionButtons() {
+      if (!lastSnapshot) return;
+      renderRecentProjects(lastSnapshot);
+      renderServersTable(lastSnapshot.servers || []);
+      if (modalServer) {
+        const s = (lastSnapshot.servers || []).find(x => x.id === modalServer.id);
+        if (s) renderServerModalProjects(s);
+      }
+    }
     function relTime(ts) {
       if (!ts) return '—';
       const sec = Math.floor((Date.now() - ts * (ts < 1e12 ? 1000 : 1)) / 1000);
@@ -224,13 +288,17 @@
     function startPoll() { stopPoll(); pollTimer = setTimeout(pollFleet, POLL_MS); }
 
     async function doLogin() {
+      const btn = document.getElementById('login-btn');
       const p = document.getElementById('login-pw').value;
       setPw(p);
-      try {
-        const res = await api('/api/servers');
-        if (res.ok) showApp();
-        else document.getElementById('login-err').textContent = 'Wrong password';
-      } catch (e) { document.getElementById('login-err').textContent = e.message; }
+      document.getElementById('login-err').textContent = '';
+      await withButtonLoading(btn, async () => {
+        try {
+          const res = await api('/api/servers');
+          if (res.ok) showApp();
+          else document.getElementById('login-err').textContent = 'Wrong password';
+        } catch (e) { document.getElementById('login-err').textContent = e.message; }
+      });
     }
 
     function logout() { clearPw(); showLogin(); }
@@ -273,9 +341,12 @@
       }
       tbody.innerHTML = items.map(p => {
         const status = p.running ? '<span class="badge run">running</span>' : '<span class="badge">idle</span>';
-        const btn = p.running
-          ? `<button class="btn btn-danger btn-sm" onclick="stopWorker('${esc(p.serverId)}','${encodeURIComponent(p.project)}')">Stop</button>`
-          : `<button class="btn btn-primary btn-sm" onclick="startWorker('${esc(p.serverId)}','${encodeURIComponent(p.project)}')">Start</button>`;
+        const folder = folderFor(p.serverId, p.project) || {
+          name: p.project,
+          running: p.running,
+          agent_url: p.agent_url,
+        };
+        const btn = renderProjectActions(p.serverId, folder);
         return `<tr>
           <td class="proj-name">${esc(p.project)}</td>
           <td>${esc(p.serverName)}</td>
@@ -326,6 +397,14 @@
       });
     }
 
+    function renderServerModalProjects(s) {
+      const projs = (s.folders || []).map(f => {
+        const actions = renderProjectActions(s.id, f);
+        return `<div class="proj-item"><div class="btn-group">${actions}</div><div><div class="proj-name">${esc(f.name)}</div><div class="sub">${esc(f.touched_relative || f.mtime_relative || '')}</div></div><span class="badge ${f.running?'run':''}">${f.running?'on':'off'}</span></div>`;
+      }).join('');
+      document.getElementById('server-modal-projects').innerHTML = projs || '<p class="sub">No projects</p>';
+    }
+
     function openServerModal(id) {
       const s = (lastSnapshot?.servers || []).find(x => x.id === id);
       if (!s) return;
@@ -339,14 +418,7 @@
         <div class="chart-box"><h3>RAM</h3><div>${sm.ram ?? '—'}%</div></div>
         <div class="chart-box"><h3>Disk</h3><div>${sm.disk ?? '—'}%</div></div>
         <div class="chart-box"><h3>Workers</h3><div>${sm.workers ?? 0} / ${sm.projects ?? 0} projects</div></div>`;
-      const projs = (s.folders || []).map(f => {
-        const enc = encodeURIComponent(f.name);
-        const btn = f.running
-          ? `<button class="btn btn-danger btn-sm" onclick="stopWorker('${esc(s.id)}','${enc}')">Stop</button>`
-          : `<button class="btn btn-primary btn-sm" onclick="startWorker('${esc(s.id)}','${enc}')">Start</button>`;
-        return `<div class="proj-item">${btn}<div><div class="proj-name">${esc(f.name)}</div><div class="sub">${esc(f.touched_relative || f.mtime_relative || '')}</div></div><span class="badge ${f.running?'run':''}">${f.running?'on':'off'}</span></div>`;
-      }).join('');
-      document.getElementById('server-modal-projects').innerHTML = projs || '<p class="sub">No projects</p>';
+      renderServerModalProjects(s);
       document.getElementById('server-modal').classList.remove('hidden');
       pollFleet();
     }
@@ -377,7 +449,11 @@
       startPoll();
     }
 
-    async function refreshNow() { stopPoll(); await pollFleet(); }
+    async function refreshNow() {
+      const btn = document.getElementById('refresh-btn');
+      stopPoll();
+      await withButtonLoading(btn, () => pollFleet());
+    }
 
     async function updateAllServers() {
       try {
@@ -393,22 +469,27 @@
     function closeAddModal() { document.getElementById('add-modal').classList.add('hidden'); }
 
     async function addServer() {
+      const btn = document.getElementById('add-submit-btn');
       const name = document.getElementById('add-name').value.trim();
       const url = document.getElementById('add-url').value.trim();
       const password = document.getElementById('add-password').value.trim();
-      try {
-        const res = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name, url, password }) });
-        const data = await res.json();
-        if (!res.ok) { document.getElementById('add-err').textContent = data.error || 'Failed'; return; }
-        closeAddModal();
-        refreshNow();
-      } catch (e) { document.getElementById('add-err').textContent = e.message; }
+      document.getElementById('add-err').textContent = '';
+      await withButtonLoading(btn, async () => {
+        try {
+          const res = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name, url, password }) });
+          const data = await res.json();
+          if (!res.ok) { document.getElementById('add-err').textContent = data.error || 'Failed'; return; }
+          closeAddModal();
+          await refreshNow();
+        } catch (e) { document.getElementById('add-err').textContent = e.message; }
+      });
     }
 
     function openProxyModal() { document.getElementById('proxy-modal').classList.remove('hidden'); }
     function closeProxyModal() { document.getElementById('proxy-modal').classList.add('hidden'); }
 
     async function pushProxy() {
+      const btn = document.getElementById('proxy-submit-btn');
       const enabled = document.getElementById('proxy-enabled').checked;
       const links = document.getElementById('proxy-links').value.split('\n').map(s => s.trim()).filter(Boolean);
       const subs = document.getElementById('proxy-subs').value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -421,23 +502,33 @@
       const logEl = document.getElementById('proxy-push-log');
       logEl.classList.remove('hidden');
       logEl.textContent = 'Pushing to all servers…';
-      try {
-        const res = await api('/api/fleet/proxy/push', { method: 'POST', body: JSON.stringify(payload) });
-        const data = await res.json();
-        logEl.textContent = JSON.stringify(data.results || data, null, 2);
-        document.getElementById('proxy-err').textContent = data.ok ? 'Applied' : 'Some servers failed';
-        refreshNow();
-      } catch (e) { document.getElementById('proxy-err').textContent = e.message; }
+      document.getElementById('proxy-err').textContent = '';
+      await withButtonLoading(btn, async () => {
+        try {
+          const res = await api('/api/fleet/proxy/push', { method: 'POST', body: JSON.stringify(payload) });
+          const data = await res.json();
+          logEl.textContent = JSON.stringify(data.results || data, null, 2);
+          document.getElementById('proxy-err').textContent = data.ok ? 'Applied' : 'Some servers failed';
+          await refreshNow();
+        } catch (e) { document.getElementById('proxy-err').textContent = e.message; }
+      });
     }
 
     function openStartModal(title) {
       document.getElementById('start-title').textContent = title;
       document.getElementById('start-msg').textContent = 'Starting…';
-      document.getElementById('start-open').classList.add('hidden');
+      const openBtn = document.getElementById('start-open');
+      openBtn.classList.add('hidden');
+      openBtn.disabled = false;
+      openBtn.classList.remove('loading');
+      openBtn.textContent = 'Open Cursor';
       document.getElementById('start-modal').classList.remove('hidden');
     }
     function closeStartModal() { document.getElementById('start-modal').classList.add('hidden'); pendingAgentUrl = null; }
-    function openCursor() { if (pendingAgentUrl) window.open(pendingAgentUrl, '_blank'); closeStartModal(); }
+    function openCursor(url) {
+      const target = url || pendingAgentUrl;
+      if (target) window.location.assign(target);
+    }
 
     async function waitReady(serverId, project) {
       const start = Date.now();
@@ -453,8 +544,14 @@
 
     async function startWorker(serverId, project) {
       if (busy) return;
+      const startKey = actionKey('start', serverId, project);
       busy = true;
+      setLoading(startKey, true);
       openStartModal('Starting ' + decodeURIComponent(project));
+      const openBtn = document.getElementById('start-open');
+      openBtn.disabled = true;
+      openBtn.classList.add('loading');
+      openBtn.textContent = 'Open Cursor…';
       try {
         await api(`/api/fleet/${serverId}/touch/${project}`, { method: 'POST' });
         const res = await api(`/api/fleet/${serverId}/start/${project}`, { method: 'POST' });
@@ -464,19 +561,29 @@
         const ready = await waitReady(serverId, project);
         pendingAgentUrl = ready.agent_url || data.agent_url;
         document.getElementById('start-msg').textContent = 'Connected — open Cursor when ready.';
-        document.getElementById('start-open').classList.remove('hidden');
-        refreshNow();
+        openBtn.classList.remove('hidden', 'loading');
+        openBtn.disabled = false;
+        openBtn.textContent = 'Open Cursor';
+        await refreshNow();
       } catch (e) {
         document.getElementById('start-msg').textContent = e.message;
-      } finally { busy = false; }
+        openBtn.classList.add('hidden');
+        openBtn.disabled = false;
+        openBtn.classList.remove('loading');
+        openBtn.textContent = 'Open Cursor';
+      } finally {
+        busy = false;
+        setLoading(startKey, false);
+      }
     }
 
     async function stopWorker(serverId, project) {
-      busy = true;
+      const stopKey = actionKey('stop', serverId, project);
+      setLoading(stopKey, true);
       try {
         await api(`/api/fleet/${serverId}/stop/${project}`, { method: 'POST' });
-        refreshNow();
-      } catch (_) {} finally { busy = false; }
+        await refreshNow();
+      } catch (_) {} finally { setLoading(stopKey, false); }
     }
 
     async function checkFleetUpdate() {
@@ -492,8 +599,12 @@
     }
 
     async function applyFleetUpdate() {
-      await api('/api/update/apply', { method: 'POST' });
-      location.reload();
+      const banner = document.getElementById('update-banner');
+      const btn = banner.querySelector('button');
+      await withButtonLoading(btn, async () => {
+        await api('/api/update/apply', { method: 'POST' });
+        location.reload();
+      });
     }
 
     async function boot() {
