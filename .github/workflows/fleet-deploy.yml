@@ -79,7 +79,7 @@ jobs:
             grep -m1 '"id"' wrangler.jsonc | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
           }
           if grep -q 'REPLACE_WITH_KV_NAMESPACE_ID' wrangler.jsonc; then
-            KV_ID="$(npx wrangler kv namespace list --json | jq -r '.[] | select(.title=="KV") | .id' | head -1)"
+            KV_ID="$(npx wrangler kv namespace list | jq -r 'first(.[] | select(.title=="KV") | .id)')"
             if [ -z "$KV_ID" ] || [ "$KV_ID" = "null" ]; then
               echo "Could not find KV namespace titled 'KV'. Run: npx wrangler kv namespace list"
               exit 1
