@@ -7,7 +7,7 @@ Each server stays as-is (public IP + port + panel password). You add them from t
 ## What you need
 
 - A [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is enough to start)
-- [Node.js](https://nodejs.org/) 18+ on your laptop
+- [Node.js](https://nodejs.org/) 22+ on your laptop (Wrangler 4.x requirement)
 - Each AgentControl server reachable at a **hostname** from the internet (not a raw IP — see below)
 
 ## Important: use hostname, not IP
