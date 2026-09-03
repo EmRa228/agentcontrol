@@ -132,6 +132,54 @@ npm run deploy
 - Each AgentControl server should use its own panel password.
 - Fleet Worker calls your servers over **HTTP** — use only on trusted networks or add HTTPS to AgentControl later.
 
+## Auto-deploy with GitHub Actions (no local `wrangler deploy`)
+
+After a one-time setup, every push to `main` that changes `fleet/src/` (or related files) deploys the Worker automatically.
+
+### Step 1 — Cloudflare API token
+
+1. Open [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens)
+2. **Create Token** → **Edit Cloudflare Workers** template (or custom with **Account → Workers Scripts → Edit**)
+3. Copy the token (shown once)
+
+### Step 2 — Cloudflare Account ID
+
+1. Open [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your account → **Workers & Pages** (or any zone)
+3. Right sidebar → **Account ID** — copy it
+
+### Step 3 — KV namespace ID
+
+If `fleet/wrangler.jsonc` still contains `REPLACE_WITH_KV_NAMESPACE_ID`:
+
+```bash
+cd fleet
+npx wrangler kv namespace list
+```
+
+Copy the `id` for the namespace bound as `KV` (or create one with `npx wrangler kv namespace create KV`).
+
+Alternatively: Cloudflare Dashboard → **Workers & Pages** → **KV** → your namespace → copy **Namespace ID**.
+
+### Step 4 — GitHub repository secrets
+
+Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+
+| Secret name | Value |
+|-------------|-------|
+| `CLOUDFLARE_API_TOKEN` | Token from step 1 |
+| `CLOUDFLARE_ACCOUNT_ID` | Account ID from step 2 |
+| `CLOUDFLARE_KV_NAMESPACE_ID` | KV id from step 3 (only if placeholder in wrangler.jsonc) |
+
+### Step 5 — Verify
+
+Push to `main` or run **Actions** → **Deploy Fleet Worker** → **Run workflow**.
+
+- **Frontend only** (`fleet/public/index.html`): still use **Update fleet UI** in the dashboard (pulls from GitHub into KV).
+- **Backend** (`fleet/src/index.ts`): deploys via this workflow on push.
+
+`FLEET_PASSWORD` stays on Cloudflare (`wrangler secret put FLEET_PASSWORD`) — GitHub Actions does not need it; existing secrets are preserved on deploy.
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -140,7 +188,8 @@ npm run deploy
 | `cannot reach server` / `error 1003` | Use a **hostname** (A record, grey cloud), not raw IP — see above |
 | `cannot reach server` (other) | Check firewall allows port 30228 from the internet |
 | `wrong server password` | Use the same password as the single-server AgentControl login |
-| `REPLACE_WITH_KV_NAMESPACE_ID` | Create KV namespace and update `wrangler.jsonc` |
+| `REPLACE_WITH_KV_NAMESPACE_ID` | Set `CLOUDFLARE_KV_NAMESPACE_ID` in GitHub Actions secrets, or paste KV id into `wrangler.jsonc` |
+| GitHub Actions deploy failed | Check **Actions** tab logs; verify all three Cloudflare secrets |
 
 ## Architecture
 

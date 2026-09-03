@@ -1,0 +1,57 @@
+name: Deploy Fleet Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "fleet/src/**"
+      - "fleet/public/version.json"
+      - "fleet/version.json"
+      - "fleet/wrangler.jsonc"
+      - "fleet/package.json"
+      - "fleet/package-lock.json"
+      - ".github/workflows/fleet-deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: fleet-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: fleet/package-lock.json
+
+      - name: Install dependencies
+        working-directory: fleet
+        run: npm ci
+
+      - name: Inject KV namespace ID
+        working-directory: fleet
+        env:
+          KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
+        run: |
+          if grep -q 'REPLACE_WITH_KV_NAMESPACE_ID' wrangler.jsonc; then
+            if [ -z "$KV_NAMESPACE_ID" ]; then
+              echo "wrangler.jsonc still has placeholder and CLOUDFLARE_KV_NAMESPACE_ID secret is missing."
+              exit 1
+            fi
+            sed -i "s/REPLACE_WITH_KV_NAMESPACE_ID/${KV_NAMESPACE_ID}/g" wrangler.jsonc
+          fi
+
+      - name: Deploy to Cloudflare Workers
+        working-directory: fleet
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
