@@ -175,6 +175,10 @@ Repo → **Settings** → **Secrets and variables** → **Actions** → **New re
 
 Push to `main` or run **Actions** → **Deploy Fleet Worker** → **Run workflow**.
 
+A run marked **cancelled** is normal if you pushed twice quickly — `cancel-in-progress` keeps only the latest deploy.
+
+Look for a green **success** run (not cancelled). Open it → **Deploy to Cloudflare Workers** step should show `Published agentcontrol-fleet`.
+
 - **Frontend only** (`fleet/public/index.html`): still use **Update fleet UI** in the dashboard (pulls from GitHub into KV).
 - **Backend** (`fleet/src/index.ts`): deploys via this workflow on push.
 
