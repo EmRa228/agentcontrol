@@ -71,6 +71,18 @@
     canvas { width: 100%; display: block; }
     .proj-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
     .proj-item { display: grid; grid-template-columns: 60px 1fr auto; gap: 8px; align-items: center; padding: 8px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; }
+    .modal-steps { list-style: none; margin: 12px 0; padding: 0; }
+    .modal-steps li { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: .82rem; color: var(--muted); }
+    .modal-steps li.active { color: var(--accent); }
+    .modal-steps li.done { color: var(--green); }
+    .modal-steps li.error { color: var(--red); }
+    .step-dot { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: .68rem; flex-shrink: 0; }
+    .modal-steps li.active .step-dot { border-color: var(--accent); background: rgba(91,140,255,.15); }
+    .modal-steps li.done .step-dot { border-color: var(--green); background: rgba(61,214,140,.15); }
+    .modal-steps li.error .step-dot { border-color: var(--red); background: rgba(240,113,120,.15); }
+    .server-loading td { opacity: 0.55; }
+    .server-loading .badge.run { animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
     #msg { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 12px; }
   </style>
 </head>
@@ -182,9 +194,14 @@
   <div id="start-modal" class="modal-overlay hidden">
     <div class="modal" style="max-width:420px">
       <h2 id="start-title">Starting…</h2>
+      <ul class="modal-steps" id="start-steps">
+        <li data-step="request"><span class="step-dot">1</span>Send start request</li>
+        <li data-step="launch"><span class="step-dot">2</span>Launch worker process</li>
+        <li data-step="connect"><span class="step-dot">3</span>Connect to Cursor cloud</li>
+        <li data-step="redirect"><span class="step-dot">4</span>Open Cursor</li>
+      </ul>
       <p id="start-msg" class="err"></p>
       <div class="modal-actions">
-        <button class="btn btn-ghost btn-sm hidden" id="start-open" type="button" onclick="openCursor()">Open Cursor</button>
         <button class="btn btn-ghost btn-sm" id="start-close" type="button" onclick="closeStartModal()">Close</button>
       </div>
     </div>
@@ -192,6 +209,7 @@
 
   <script>
     const AUTH_KEY = 'agentcontrol_fleet_pw';
+    const CACHE_KEY = 'agentcontrol_fleet_snapshot';
     const POLL_MS = 25000;
     let lastSnapshot = null;
     let showAllProjects = false;
@@ -200,6 +218,7 @@
     let modalServer = null;
     let pendingAgentUrl = null;
     const loadingActions = new Set();
+    const loadingServers = new Set();
 
     function pw() { return localStorage.getItem(AUTH_KEY) || ''; }
     function setPw(v) { localStorage.setItem(AUTH_KEY, v); }
@@ -379,8 +398,11 @@
         const host = s.hostname ? `${esc(s.hostname)}` : '—';
         const ip = s.ip ? `<span class="sub"> · ${esc(s.ip)}</span>` : '';
         const ver = s.version ? `v${esc(s.version)}` : '—';
-        const badge = s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">offline</span>`;
-        return `<tr class="server-row" data-server="${esc(s.id)}">
+        const isLoading = loadingServers.has(s.id);
+        const badge = isLoading
+          ? '<span class="badge run">refreshing</span>'
+          : (s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">offline</span>`);
+        return `<tr class="server-row${isLoading ? ' server-loading' : ''}" data-server="${esc(s.id)}">
           <td><strong>${esc(s.name)}</strong> ${badge}</td>
           <td>${host}${ip}<br><a class="link sub" href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(s.url)}</a></td>
           <td>${ver}</td>
@@ -430,20 +452,67 @@
 
     function toggleAllProjects() { showAllProjects = !showAllProjects; if (lastSnapshot) renderRecentProjects(lastSnapshot); }
 
-    function renderSnapshot(data) {
+    function renderSnapshot(data, fromCache = false) {
       lastSnapshot = data;
       renderOverview(data);
       renderRecentProjects(data);
       renderServersTable(data.servers || []);
-      document.getElementById('live').textContent = '● live · ' + new Date().toLocaleTimeString();
+      const stamp = data.at ? new Date(data.at).toLocaleTimeString() : new Date().toLocaleTimeString();
+      document.getElementById('live').textContent = fromCache
+        ? `● cached · ${stamp} · refreshing…`
+        : `● live · ${stamp}`;
+    }
+
+    function loadLocalCache() {
+      try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function saveLocalCache(data) {
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch (_) {}
+    }
+
+    async function refreshServer(serverId) {
+      loadingServers.add(serverId);
+      if (lastSnapshot) renderServersTable(lastSnapshot.servers || []);
+      try {
+        const res = await api(`/api/fleet/server/${encodeURIComponent(serverId)}`);
+        const data = await res.json();
+        if (data.snapshot) {
+          renderSnapshot(data.snapshot);
+          saveLocalCache(data.snapshot);
+        }
+      } catch (_) {}
+      loadingServers.delete(serverId);
+      if (lastSnapshot) renderServersTable(lastSnapshot.servers || []);
     }
 
     async function pollFleet() {
       if (document.getElementById('app').classList.contains('hidden')) return;
+      document.getElementById('live').textContent = '● refreshing…';
       try {
-        const res = await api('/api/fleet/snapshot');
-        const data = await res.json();
-        renderSnapshot(data);
+        const local = loadLocalCache();
+        if (local && !lastSnapshot) renderSnapshot(local, true);
+
+        const cacheRes = await api('/api/fleet/cache');
+        const cached = await cacheRes.json();
+        renderSnapshot(cached, true);
+        saveLocalCache(cached);
+
+        const servers = cached.servers || [];
+        if (servers.length) {
+          await Promise.all(servers.map(s => refreshServer(s.id)));
+        } else {
+          const res = await api('/api/fleet/snapshot');
+          const data = await res.json();
+          renderSnapshot(data);
+          saveLocalCache(data);
+        }
         document.getElementById('msg').textContent = '';
       } catch (e) {
         if (e.message !== 'unauthorized') document.getElementById('live').textContent = '● error';
@@ -506,15 +575,26 @@
       });
     }
 
+    function setStartStep(step, state) {
+      document.querySelectorAll('#start-steps li').forEach(li => {
+        li.classList.remove('active', 'done', 'error');
+        const key = li.dataset.step;
+        const order = ['request', 'launch', 'connect', 'redirect'];
+        const si = order.indexOf(step);
+        const ki = order.indexOf(key);
+        if (state === 'error' && key === step) li.classList.add('error');
+        else if (ki < si) li.classList.add('done');
+        else if (ki === si) li.classList.add(state === 'done' ? 'done' : 'active');
+      });
+    }
+
     function openStartModal(title) {
       document.getElementById('start-title').textContent = title;
-      document.getElementById('start-msg').textContent = 'Starting…';
-      const openBtn = document.getElementById('start-open');
-      openBtn.classList.add('hidden');
-      openBtn.disabled = false;
-      openBtn.classList.remove('loading');
-      openBtn.textContent = 'Open Cursor';
+      document.getElementById('start-msg').textContent = '';
+      document.getElementById('start-close').classList.add('hidden');
+      document.querySelectorAll('#start-steps li').forEach(li => li.classList.remove('active', 'done', 'error'));
       document.getElementById('start-modal').classList.remove('hidden');
+      setStartStep('request', 'active');
     }
     function closeStartModal() { document.getElementById('start-modal').classList.add('hidden'); pendingAgentUrl = null; }
     async function touchProjectActivity(serverId, project) {
@@ -547,31 +627,49 @@
     async function startWorker(serverId, project) {
       if (busy) return;
       const startKey = actionKey('start', serverId, project);
+      const projectName = decodeURIComponent(project);
       busy = true;
       setLoading(startKey, true);
-      openStartModal('Starting ' + decodeURIComponent(project));
-      const openBtn = document.getElementById('start-open');
-      openBtn.disabled = true;
-      openBtn.classList.add('loading');
-      openBtn.textContent = 'Open Cursor…';
+      openStartModal('Starting ' + projectName);
+      const msgEl = document.getElementById('start-msg');
       try {
+        setStartStep('request', 'active');
         const res = await api(`/api/fleet/${serverId}/start/${project}`, { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Start failed');
-        document.getElementById('start-msg').textContent = 'Connecting…';
+        if (!res.ok) {
+          setStartStep('request', 'error');
+          throw new Error(data.error || 'Start failed');
+        }
+        setStartStep('request', 'done');
+        setStartStep('launch', 'done');
+        setStartStep('connect', 'active');
+        msgEl.textContent = 'Waiting for Cursor connection…';
         const ready = await waitReady(serverId, project);
+        setStartStep('connect', 'done');
+        setStartStep('redirect', 'active');
         pendingAgentUrl = ready.agent_url || data.agent_url;
-        document.getElementById('start-msg').textContent = 'Connected — open Cursor when ready.';
-        openBtn.classList.remove('hidden', 'loading');
-        openBtn.disabled = false;
-        openBtn.textContent = 'Open Cursor';
-        await refreshNow();
+        msgEl.textContent = 'Worker connected — opening Cursor…';
+        setStartStep('redirect', 'done');
+        document.getElementById('start-close').classList.remove('hidden');
+        await refreshServer(serverId);
+        if (pendingAgentUrl) {
+          setTimeout(() => { window.location.href = pendingAgentUrl; }, 600);
+        }
       } catch (e) {
-        document.getElementById('start-msg').textContent = e.message;
-        openBtn.classList.add('hidden');
-        openBtn.disabled = false;
-        openBtn.classList.remove('loading');
-        openBtn.textContent = 'Open Cursor';
+        if (e.message === 'stopped') {
+          setStartStep('connect', 'error');
+          msgEl.textContent = 'Worker stopped unexpectedly.';
+        } else if (e.message === 'timeout') {
+          setStartStep('connect', 'error');
+          msgEl.textContent = 'Timed out — check server logs before retrying.';
+        } else {
+          const lines = (e.message || '').split('\n').filter(Boolean);
+          setStartStep(lines.length > 1 ? 'launch' : 'connect', 'error');
+          msgEl.textContent = lines.length > 1
+            ? 'Worker error — fix before opening Cursor:\n' + lines.join('\n')
+            : (e.message || 'Start failed');
+        }
+        document.getElementById('start-close').classList.remove('hidden');
       } finally {
         busy = false;
         setLoading(startKey, false);
@@ -658,6 +756,8 @@
         const res = await api('/api/servers');
         if (!res.ok) { showLogin(); return; }
         showApp();
+        const local = loadLocalCache();
+        if (local) renderSnapshot(local, true);
         await checkFleetUpdate(false);
         await pollFleet();
         setInterval(() => checkFleetUpdate(false), 300000);

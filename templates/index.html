@@ -337,68 +337,6 @@
           <div class="chart-box"><h3>Network throughput</h3><canvas id="chart-net" width="560" height="64"></canvas></div>
         </div>
         <div id="server-detail-grid" class="detail-grid"></div>
-        <div class="api-key-block">
-          <div class="section-title">Cursor API key</div>
-          <div class="api-key-row">
-            <input id="settings-api-key" type="password" placeholder="crsr_..." autocomplete="off">
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveApiKey()">Save API key</button>
-          </div>
-          <div class="api-key-hint" id="settings-api-status">—</div>
-          <p class="settings-note">Saved immediately to <code>/etc/agentcontrol/api-key</code>. New worker starts use it right away; stop any running worker first if you changed the key.</p>
-          <p id="settings-msg" class="err"></p>
-        </div>
-        <div class="settings-block">
-          <div class="section-title">Default agent model</div>
-          <div class="settings-note">Used in the Cursor redirect after Start. Pick non-fast Composer if you prefer (e.g. composer-2.5).</div>
-          <div class="settings-row">
-            <select id="settings-model"><option value="">Loading models…</option></select>
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveDefaultModel()">Save model</button>
-          </div>
-          <div class="api-key-hint" id="settings-model-status">—</div>
-        </div>
-        <div class="settings-block">
-          <div class="section-title">xray client (proxy)</div>
-          <div class="settings-note">Route all Cursor agent traffic through a local HTTP proxy (xray). Disable for direct connection.</div>
-          <div class="xray-mode">
-            <div>
-              <label for="xray-enabled">Use HTTP proxy for Cursor</label>
-              <div class="hint" id="xray-mode-hint">Workers and API calls use xray on port 30229</div>
-            </div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:.75rem;color:var(--muted)">
-              <span>Direct</span>
-              <input id="xray-enabled" type="checkbox" onchange="onXrayEnabledChange()">
-              <span>Proxy</span>
-            </label>
-          </div>
-          <div id="xray-config-fields">
-          <div class="settings-note">Paste an xray share link (<code>vless://</code>, <code>trojan://</code>, <code>vmess://</code>, <code>ss://</code>) or edit fields below.</div>
-          <div class="xray-grid">
-            <div class="full"><label>Share URL</label><textarea id="xray-share-url" placeholder="vless://... or trojan://... or vmess://..."></textarea></div>
-            <div><label>Protocol</label><input id="xray-protocol" type="text" placeholder="vless"></div>
-            <div><label>Local proxy port</label><input id="xray-proxy-port" type="number" min="1" max="65535" placeholder="30229"></div>
-            <div><label>Server address</label><input id="xray-address" type="text" placeholder="1.2.3.4"></div>
-            <div><label>Server port</label><input id="xray-port" type="number" min="1" max="65535" placeholder="2096"></div>
-            <div><label>UUID</label><input id="xray-uuid" type="text" placeholder="uuid"></div>
-            <div><label>Password</label><input id="xray-password" type="text" placeholder="trojan/ss password"></div>
-            <div><label>Security</label><input id="xray-security" type="text" placeholder="none / tls / reality"></div>
-            <div><label>Reality SNI</label><input id="xray-server-name" type="text" placeholder="example.com"></div>
-            <div><label>Public key</label><input id="xray-public-key" type="text" placeholder="reality pbk"></div>
-            <div><label>Short ID</label><input id="xray-short-id" type="text" placeholder="shortId"></div>
-            <div><label>Fingerprint</label><input id="xray-fingerprint" type="text" placeholder="chrome"></div>
-            <div><label>Flow (optional)</label><input id="xray-flow" type="text" placeholder="xtls-rprx-vision"></div>
-          </div>
-          <div class="xray-actions">
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveXrayClient()">Save &amp; apply</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="parseXrayShareUrl()">Parse share URL</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="testXrayClient()">Test proxy</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="importXrayClient()">Import from xray</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="refreshXrayStatus(true)">Refresh status</button>
-          </div>
-          <div class="xray-status-row" id="xray-pills"></div>
-          <div class="api-key-hint" id="xray-status">—</div>
-          <pre class="xray-log hidden" id="xray-log"></pre>
-          </div>
-        </div>
       </div>
     </div>
         <div class="modal-actions" style="margin-top:12px">
@@ -413,19 +351,21 @@
         <div class="api-key-block">
           <div class="section-title">Cursor API key</div>
           <div class="api-key-row">
-            <input id="settings-api-key-modal" type="password" placeholder="crsr_..." autocomplete="off">
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveApiKeyFromModal()">Save API key</button>
+            <input id="settings-api-key" type="password" placeholder="crsr_..." autocomplete="off">
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveApiKey()">Save API key</button>
           </div>
-          <div class="api-key-hint" id="settings-api-status-modal">Verified via proxy when proxy mode is on</div>
-          <p id="settings-msg-modal" class="err"></p>
+          <div class="api-key-hint" id="settings-api-status">—</div>
+          <p class="settings-note">Saved to <code>/etc/agentcontrol/api-key</code>. Stop running workers before changing the key.</p>
+          <p id="settings-msg" class="err"></p>
         </div>
         <div class="settings-block">
           <div class="section-title">Default agent model</div>
+          <div class="settings-note">Used in the Cursor redirect after Start.</div>
           <div class="settings-row">
-            <select id="settings-model-modal"><option value="">Loading…</option></select>
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveDefaultModelFromModal()">Save model</button>
+            <select id="settings-model"><option value="">Loading models…</option></select>
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveDefaultModel()">Save model</button>
           </div>
-          <div class="api-key-hint" id="settings-model-status-modal">—</div>
+          <div class="api-key-hint" id="settings-model-status">—</div>
         </div>
         <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" onclick="closeSettingsModal()">Close</button></div>
       </div>
@@ -452,6 +392,7 @@
         <div class="section-title">Subscriptions</div>
         <input id="pool-sub-url" placeholder="https://subscription-url…">
         <button class="btn btn-ghost btn-sm" type="button" style="margin-top:8px" onclick="addPoolSubscription()">Add subscription</button>
+        <div class="pool-list" id="pool-sub-list" style="margin-top:8px"></div>
         <div class="xray-actions">
           <button class="btn btn-primary btn-sm" type="button" onclick="testPoolProxies()">Test all</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="ensurePoolProxy()">Ensure / failover now</button>
@@ -913,13 +854,8 @@
       drawChart('chart-swap', swapHist, { max: 100, percent: true, colors: ['#c678dd'] });
       drawChart('chart-net', netHist, { max: netPeak, percent: false, colors: ['#9b8cff'] });
 
-      const statusEl = document.getElementById('settings-api-status');
-      statusEl.textContent = s.agent.api_key_set
-        ? 'API key is configured on this server.'
-        : 'No API key saved yet — workers cannot start.';
       const cpuPill = document.getElementById('toolbar-cpu-pill');
       if (cpuPill) cpuPill.textContent = `CPU ${s.cpu.percent}% · RAM ${s.memory.percent}%`;
-      statusEl.className = 'api-key-hint' + (s.agent.api_key_set ? ' ok' : '');
 
       const dockerSummary = s.docker.available
         ? `${s.docker.running} running / ${s.docker.total} total · v${s.docker.version || '?'}`
@@ -944,13 +880,11 @@
     function openMetricsModal() {
       document.getElementById('metrics-modal').classList.remove('hidden');
       document.getElementById('server-details').classList.add('open');
-      loadSettingsPanel();
     }
     function closeMetricsModal() { document.getElementById('metrics-modal').classList.add('hidden'); }
     function openSettingsModal() {
       document.getElementById('settings-modal').classList.remove('hidden');
       loadSettingsPanel();
-      syncModelSelects();
     }
     function closeSettingsModal() { document.getElementById('settings-modal').classList.add('hidden'); }
     function openProxyModal() {
@@ -958,25 +892,6 @@
       refreshPoolStatus();
     }
     function closeProxyModal() { document.getElementById('proxy-modal').classList.add('hidden'); }
-
-    function syncModelSelects() {
-      const main = document.getElementById('settings-model');
-      const modal = document.getElementById('settings-model-modal');
-      if (main && modal) { modal.innerHTML = main.innerHTML; modal.value = main.value; }
-    }
-
-    async function saveApiKeyFromModal() {
-      document.getElementById('settings-api-key').value = document.getElementById('settings-api-key-modal').value;
-      await saveApiKey();
-      document.getElementById('settings-msg-modal').textContent = document.getElementById('settings-msg').textContent;
-    }
-
-    async function saveDefaultModelFromModal() {
-      document.getElementById('settings-model').value = document.getElementById('settings-model-modal').value;
-      await saveDefaultModel();
-      document.getElementById('settings-model-status-modal').textContent =
-        document.getElementById('settings-model-status').textContent;
-    }
 
     function renderPoolStatus(data) {
       const enabled = data.enabled;
@@ -987,6 +902,16 @@
         else pill.textContent = 'Proxy: down';
       }
       document.getElementById('pool-enabled').checked = !!enabled;
+      const subs = data.subscriptions || [];
+      const subList = document.getElementById('pool-sub-list');
+      if (subList) {
+        subList.innerHTML = subs.length ? subs.map(s => {
+          const err = s.last_error ? `<span style="color:var(--red)">${esc(s.last_error)}</span>` : '';
+          const count = s.last_link_count != null ? `${s.last_link_count} links` : '—';
+          const fetched = s.last_fetch_at ? new Date(s.last_fetch_at).toLocaleString() : 'never';
+          return `<div class="pool-item"><span><strong>${esc(s.name || s.id)}</strong><br><span style="color:var(--muted)">${esc(s.url_preview || '')}</span></span><span>${count}<br>${fetched}${err ? '<br>' + err : ''}</span></div>`;
+        }).join('') : '<p class="settings-note">No subscriptions — add a URL above</p>';
+      }
       const list = document.getElementById('pool-proxy-list');
       const proxies = data.proxies || [];
       list.innerHTML = proxies.length ? proxies.map(p => {
@@ -1024,7 +949,29 @@
       const data = await res.json();
       if (!res.ok) document.getElementById('pool-status-text').textContent = data.error || 'Failed';
       await refreshPoolStatus(true);
-      await refreshXrayStatus(true);
+    }
+
+    async function addPoolSubscription() {
+      const url = document.getElementById('pool-sub-url').value.trim();
+      if (!url) return;
+      document.getElementById('pool-status-text').textContent = 'Fetching subscription…';
+      try {
+        const res = await apiFetch('/api/proxy/pool/subscription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          document.getElementById('pool-status-text').textContent = data.error || 'Subscription failed';
+          return;
+        }
+        document.getElementById('pool-sub-url').value = '';
+        document.getElementById('pool-status-text').textContent = `Added — ${data.subscription?.last_link_count ?? 0} links`;
+        await refreshPoolStatus(true);
+      } catch (e) {
+        document.getElementById('pool-status-text').textContent = e.message || 'Subscription failed';
+      }
     }
 
     async function addPoolLinks() {
@@ -1037,18 +984,6 @@
         });
       }
       document.getElementById('pool-links-input').value = '';
-      await refreshPoolStatus(true);
-    }
-
-    async function addPoolSubscription() {
-      const url = document.getElementById('pool-sub-url').value.trim();
-      if (!url) return;
-      await apiFetch('/api/proxy/pool/subscription', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      });
-      document.getElementById('pool-sub-url').value = '';
       await refreshPoolStatus(true);
     }
 
@@ -1077,7 +1012,6 @@
     function toggleServerDetails() {
       const el = document.getElementById('server-details');
       el.classList.toggle('open');
-      if (el.classList.contains('open')) loadSettingsPanel();
     }
 
     function esc(s) {
@@ -1190,59 +1124,6 @@
       return `<span class="xray-pill ${cls}">${dot} ${esc(label)}</span>`;
     }
 
-    function renderXrayStatus(data) {
-      const settings = data.settings || {};
-      const pills = [];
-      if (!settings.enabled) {
-        pills.push(pill('Direct mode (no proxy)', true, false));
-      } else {
-        pills.push(pill(settings.listening ? `Proxy listening :${settings.proxy_port}` : `Proxy down :${settings.proxy_port}`, settings.listening, false));
-        pills.push(pill(data.xray_active ? 'xray running' : 'xray not running', data.xray_active, false));
-        const api = data.cursor_api_test || data.cursor_test;
-        if (api) {
-          pills.push(pill(api.ok ? `Cursor API OK (${api.elapsed_ms || '?'}ms)` : 'Cursor API failed', api.ok, false));
-        } else if (data.at) {
-          pills.push(pill('No recent proxy test', false, true));
-        }
-      }
-      document.getElementById('xray-pills').innerHTML = pills.join('');
-
-      const parts = [];
-      if (settings.proxy_url) parts.push('Proxy: ' + settings.proxy_url);
-      if (data.at) parts.push('Checked: ' + new Date(data.at).toLocaleString());
-      const api = data.cursor_api_test || data.cursor_test;
-      if (api && !api.ok) parts.push('Error: ' + (api.error || 'test failed'));
-      document.getElementById('xray-status').textContent = parts.join(' · ') || '—';
-      document.getElementById('xray-status').className = 'api-key-hint' + (api && api.ok ? ' ok' : '');
-
-      const logEl = document.getElementById('xray-log');
-      const chunks = [];
-      if (data.worker_errors && data.worker_errors.length) {
-        chunks.push('Recent worker errors:');
-        data.worker_errors.forEach(item => {
-          chunks.push(`\n[${item.project}]\n${item.tail}`);
-        });
-      }
-      if (data.journal_tail) {
-        chunks.push('\nxray journal (tail):\n' + data.journal_tail);
-      }
-      if (chunks.length) {
-        logEl.textContent = chunks.join('\n').trim();
-        logEl.classList.remove('hidden');
-      } else {
-        logEl.classList.add('hidden');
-      }
-    }
-
-    async function refreshXrayStatus(live) {
-      try {
-        const res = await apiFetch('/api/xray/status' + (live ? '?live=1' : ''));
-        const data = await res.json();
-        if (data.settings) fillXrayForm(data.settings);
-        renderXrayStatus(data);
-      } catch (e) {}
-    }
-
     async function loadSettingsPanel() {
       try {
         const [settingsRes, modelsRes] = await Promise.all([
@@ -1260,175 +1141,14 @@
         document.getElementById('settings-model-status').textContent = settings.default_model
           ? 'Default model: ' + settings.default_model
           : 'No default model — Cursor will use its own default.';
-        await refreshXrayStatus(false);
-      } catch (e) {}
-    }
-
-    function fillXrayForm(s) {
-      const enabled = s.enabled !== false;
-      document.getElementById('xray-enabled').checked = enabled;
-      updateXrayModeUi(enabled);
-      document.getElementById('xray-share-url').value = s.share_url || s.vless_url || '';
-      document.getElementById('xray-protocol').value = s.protocol || 'vless';
-      document.getElementById('xray-proxy-port').value = s.proxy_port || 30229;
-      document.getElementById('xray-address').value = s.address || '';
-      document.getElementById('xray-port').value = s.port || 443;
-      document.getElementById('xray-uuid').value = s.uuid || '';
-      document.getElementById('xray-password').value = s.password || '';
-      document.getElementById('xray-security').value = s.security || 'none';
-      document.getElementById('xray-server-name').value = s.server_name || '';
-      document.getElementById('xray-public-key').value = s.public_key || '';
-      document.getElementById('xray-short-id').value = s.short_id || '';
-      document.getElementById('xray-fingerprint').value = s.fingerprint || 'chrome';
-      document.getElementById('xray-flow').value = s.flow || '';
-    }
-
-    function updateXrayModeUi(enabled) {
-      const fields = document.getElementById('xray-config-fields');
-      const hint = document.getElementById('xray-mode-hint');
-      if (enabled) {
-        fields.classList.remove('disabled-fields');
-        hint.textContent = 'Workers and API calls use xray on port 30229';
-      } else {
-        fields.classList.add('disabled-fields');
-        hint.textContent = 'Direct mode — Cursor traffic goes without proxy';
-      }
-    }
-
-    async function onXrayEnabledChange() {
-      const enabled = document.getElementById('xray-enabled').checked;
-      updateXrayModeUi(enabled);
-      const status = document.getElementById('xray-status');
-      status.textContent = enabled ? 'Enabling proxy…' : 'Switching to direct mode…';
-      try {
-        const res = await apiFetch('/api/xray/client/toggle', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled, restart: enabled }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          document.getElementById('xray-enabled').checked = !enabled;
-          updateXrayModeUi(!enabled);
-          status.textContent = data.error || 'Toggle failed';
-          status.className = 'api-key-hint';
-          return;
+        const statusEl = document.getElementById('settings-api-status');
+        if (statusEl) {
+          statusEl.textContent = settings.api_key_set
+            ? 'API key is configured on this server.'
+            : 'No API key saved yet — workers cannot start.';
+          statusEl.className = 'api-key-hint' + (settings.api_key_set ? ' ok' : '');
         }
-        if (data.settings) fillXrayForm(data.settings);
-        renderXrayStatus(data.status || data);
-        status.textContent = enabled ? 'Proxy enabled' : 'Direct mode enabled';
-        status.className = 'api-key-hint ok';
-      } catch (e) {
-        document.getElementById('xray-enabled').checked = !enabled;
-        updateXrayModeUi(!enabled);
-        status.textContent = 'Toggle failed';
-        status.className = 'api-key-hint';
-      }
-    }
-
-    function xrayPayload() {
-      const enabled = document.getElementById('xray-enabled').checked;
-      const payload = {
-        enabled,
-        protocol: document.getElementById('xray-protocol').value.trim() || 'vless',
-        proxy_port: Number(document.getElementById('xray-proxy-port').value || 30229),
-        address: document.getElementById('xray-address').value.trim(),
-        port: Number(document.getElementById('xray-port').value || 443),
-        uuid: document.getElementById('xray-uuid').value.trim(),
-        password: document.getElementById('xray-password').value.trim(),
-        security: document.getElementById('xray-security').value.trim() || 'none',
-        server_name: document.getElementById('xray-server-name').value.trim(),
-        public_key: document.getElementById('xray-public-key').value.trim(),
-        short_id: document.getElementById('xray-short-id').value.trim(),
-        fingerprint: document.getElementById('xray-fingerprint').value.trim() || 'chrome',
-        flow: document.getElementById('xray-flow').value.trim(),
-        restart: true,
-        write_env: true,
-      };
-      const shareUrl = document.getElementById('xray-share-url').value.trim();
-      if (shareUrl) payload.share_url = shareUrl;
-      return payload;
-    }
-
-    async function parseXrayShareUrl() {
-      const status = document.getElementById('xray-status');
-      const shareUrl = document.getElementById('xray-share-url').value.trim();
-      if (!shareUrl) {
-        status.textContent = 'Paste a share URL first';
-        status.className = 'api-key-hint';
-        return;
-      }
-      status.textContent = 'Parsing share URL…';
-      try {
-        const res = await apiFetch('/api/xray/client/parse', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ share_url: shareUrl }),
-        });
-        const data = await res.json();
-        if (!res.ok) { status.textContent = data.error || 'Parse failed'; status.className = 'api-key-hint'; return; }
-        fillXrayForm(data.settings || {});
-        status.textContent = 'Parsed — review fields and Save & apply';
-        status.className = 'api-key-hint ok';
-      } catch (e) {
-        status.textContent = 'Parse failed';
-        status.className = 'api-key-hint';
-      }
-    }
-
-    function updateXrayStatus(settings, test) {
-      renderXrayStatus({ settings, cursor_test: test, listening: settings.listening, xray_active: settings.xray_active });
-    }
-
-    async function saveXrayClient() {
-      const status = document.getElementById('xray-status');
-      try {
-        const res = await apiFetch('/api/xray/client', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(xrayPayload()),
-        });
-        const data = await res.json();
-        if (!res.ok) { status.textContent = data.error || 'Save failed'; status.className = 'api-key-hint'; return; }
-        if (data.settings) fillXrayForm(data.settings);
-        renderXrayStatus(data.status || data);
-        status.textContent = 'Saved and applied' + (data.restarted ? ' (xray restarted)' : '');
-        status.className = 'api-key-hint ok';
-      } catch (e) {
-        status.textContent = 'Save failed';
-        status.className = 'api-key-hint';
-      }
-    }
-
-    async function testXrayClient() {
-      const status = document.getElementById('xray-status');
-      status.textContent = 'Testing proxy (cursor.com + api2.cursor.sh)…';
-      try {
-        const res = await apiFetch('/api/xray/client/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(xrayPayload()),
-        });
-        const data = await res.json();
-        renderXrayStatus(data.status || data);
-      } catch (e) {
-        status.textContent = 'Test failed';
-        status.className = 'api-key-hint';
-      }
-    }
-
-    async function importXrayClient() {
-      const status = document.getElementById('xray-status');
-      try {
-        const res = await apiFetch('/api/xray/client/import', { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) { status.textContent = data.error || 'Import failed'; return; }
-        fillXrayForm(data.settings || {});
-        status.textContent = 'Imported from xray config — review and Save & apply';
-        status.className = 'api-key-hint';
-      } catch (e) {
-        status.textContent = 'Import failed';
-      }
+      } catch (e) {}
     }
 
     async function saveDefaultModel() {
@@ -1626,10 +1346,12 @@
         setStartStep('connect', 'done');
         setStartStep('redirect', 'active');
         pendingAgentUrl = ready.agent_url || data.agent_url;
-        msgEl.textContent = 'Worker connected. Review logs, then open Cursor.';
-        document.getElementById('start-modal-open').classList.remove('hidden');
-        document.getElementById('start-modal-close').classList.remove('hidden');
+        msgEl.textContent = 'Worker connected — opening Cursor…';
         setStartStep('redirect', 'done');
+        document.getElementById('start-modal-close').classList.remove('hidden');
+        if (pendingAgentUrl) {
+          setTimeout(() => { window.location.href = pendingAgentUrl; }, 600);
+        }
       } catch (e) {
         if (e.message === 'stopped') {
           setStartStep('connect', 'error');

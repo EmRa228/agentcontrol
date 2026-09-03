@@ -181,15 +181,23 @@ def fetch_subscription(url: str, timeout: int = 25) -> tuple[list[str], str | No
     settings = load_client_settings()
     env_proxy = apply_proxy_env(os.environ.copy()) if settings.get("enabled") else os.environ.copy()
     proxy = env_proxy.get("HTTPS_PROXY") or env_proxy.get("HTTP_PROXY")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; AgentControl/1.0)",
+        "Accept": "*/*",
+    }
     try:
+        req = Request(url, headers=headers)
         if proxy:
             opener = build_opener(ProxyHandler({"http": proxy, "https": proxy}))
-            with opener.open(url, timeout=timeout) as resp:
+            with opener.open(req, timeout=timeout) as resp:
                 body = resp.read().decode("utf-8", errors="ignore")
         else:
-            with urlopen(url, timeout=timeout) as resp:
+            with urlopen(req, timeout=timeout) as resp:
                 body = resp.read().decode("utf-8", errors="ignore")
-        return _parse_subscription_body(body), None
+        links = _parse_subscription_body(body)
+        if not links:
+            return [], "subscription returned no proxy links"
+        return links, None
     except (URLError, OSError, TimeoutError) as exc:
         return [], str(exc)
 

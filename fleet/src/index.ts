@@ -33,6 +33,7 @@ const KV_KEY = "servers";
 const KV_UI_HTML = "fleet_ui_html";
 const KV_UI_VERSION = "fleet_ui_version";
 const KV_RECENT = "recent_projects";
+const KV_SNAPSHOT = "fleet_snapshot_cache";
 const GITHUB_RAW = "https://raw.githubusercontent.com/EmRa228/agentcontrol/main/fleet";
 const FLEET_VERSION = fleetVersion as { component: string; version: string; updated: string };
 
@@ -426,13 +427,62 @@ async function buildFleetSnapshot(kv: KVNamespace) {
   const recentKv = await readRecentProjects(kv);
   const recentProjects = aggregateRecentProjects(sorted, recentKv, 10);
   const overview = buildOverview(sorted);
-  return {
+  const payload = {
     servers: sorted,
     recentProjects,
     recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
     overview,
     at: Date.now(),
   };
+  await kv.put(KV_SNAPSHOT, JSON.stringify(payload));
+  return payload;
+}
+
+async function readCachedSnapshot(kv: KVNamespace): Promise<Record<string, unknown> | null> {
+  const raw = await kv.get(KV_SNAPSHOT);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function buildFleetSnapshotFromCache(kv: KVNamespace) {
+  const cached = await readCachedSnapshot(kv);
+  if (cached) return cached;
+  return buildFleetSnapshot(kv);
+}
+
+async function refreshFleetServer(kv: KVNamespace, serverId: string) {
+  const servers = await readServers(kv);
+  const server = servers.find((s) => s.id === serverId);
+  if (!server) return { error: "server not found" };
+
+  const snapshot = await snapshotOneServer(server);
+  const cached = (await readCachedSnapshot(kv)) || {
+    servers: [],
+    recentProjects: [],
+    recentProjectsAll: [],
+    overview: { ok: true, online: 0, offline: 0, workers: 0, proxyIssues: 0, alerts: [] },
+    at: 0,
+  };
+  const serverList = (cached.servers as Array<Record<string, unknown>>) || [];
+  const idx = serverList.findIndex((s) => s.id === serverId);
+  if (idx >= 0) serverList[idx] = snapshot;
+  else serverList.push(snapshot);
+
+  const sorted = sortSnapshotsByRecent(serverList);
+  const recentKv = await readRecentProjects(kv);
+  const payload = {
+    servers: sorted,
+    recentProjects: aggregateRecentProjects(sorted, recentKv, 10),
+    recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
+    overview: buildOverview(sorted),
+    at: Date.now(),
+  };
+  await kv.put(KV_SNAPSHOT, JSON.stringify(payload));
+  return { server: snapshot, snapshot: payload };
 }
 
 async function pushProxyToServers(kv: KVNamespace, config: Record<string, unknown>) {
@@ -582,6 +632,19 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (path === "/api/fleet/snapshot" && request.method === "GET") {
     return json(await buildFleetSnapshot(env.KV));
+  }
+
+  if (path === "/api/fleet/cache" && request.method === "GET") {
+    const cached = await buildFleetSnapshotFromCache(env.KV);
+    return json({ ...cached, cached: true });
+  }
+
+  const serverRefreshMatch = path.match(/^\/api\/fleet\/server\/([^/]+)$/);
+  if (serverRefreshMatch && request.method === "GET") {
+    const serverId = serverRefreshMatch[1];
+    const result = await refreshFleetServer(env.KV, serverId);
+    if ("error" in result) return json(result, 404);
+    return json(result);
   }
 
   if (path === "/api/fleet/update-all" && request.method === "POST") {

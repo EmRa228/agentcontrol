@@ -283,6 +283,7 @@ def save_config_patch(updates: dict) -> None:
 CFG = load_config()
 STATE_DIR = Path(CFG["state_dir"])
 STATE_FILE = STATE_DIR / "workers.json"
+WORKER_DATA_ROOT = STATE_DIR / "worker-data"
 RECENT_TOUCHES_FILE = STATE_DIR / "recent-touches.json"
 UPDATE_LOG = STATE_DIR / "update.log"
 UPDATE_LOCK = STATE_DIR / "update.lock"
@@ -497,6 +498,8 @@ def verify_cursor_api_key(api_key: str) -> dict[str, object]:
             "worker",
             "--worker-dir",
             str(check_dir),
+            "--data-dir",
+            str(check_dir / ".cursor-data"),
             "--name",
             "agentcontrol-key-check",
             "start",
@@ -1084,6 +1087,13 @@ def ensure_state_dir() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def worker_data_dir(name: str) -> Path:
+    """Per-project Cursor data dir so multiple workers can run concurrently."""
+    path = WORKER_DATA_ROOT / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def load_state() -> dict:
     ensure_state_dir()
     if not STATE_FILE.is_file():
@@ -1216,6 +1226,8 @@ LOG_ERROR_MARKERS = (
     "denied",
     "worker not found",
     "do not have access",
+    "another worker daemon",
+    "exec-daemon",
     "✗",
     "fatal",
     "refused",
@@ -1352,6 +1364,8 @@ def start_worker(name: str) -> tuple[dict, int]:
         "worker",
         "--worker-dir",
         str(path),
+        "--data-dir",
+        str(worker_data_dir(name)),
         "--name",
         worker_name(name),
         "--idle-release-timeout",
