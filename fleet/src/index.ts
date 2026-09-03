@@ -34,6 +34,7 @@ const KV_UI_HTML = "fleet_ui_html";
 const KV_UI_VERSION = "fleet_ui_version";
 const KV_RECENT = "recent_projects";
 const KV_SNAPSHOT = "fleet_snapshot_cache";
+const KV_PASSWORD = "fleet_password";
 const GITHUB_RAW = "https://raw.githubusercontent.com/EmRa228/agentcontrol/main/fleet";
 const FLEET_VERSION = fleetVersion as { component: string; version: string; updated: string };
 
@@ -142,11 +143,31 @@ function normalizeUrl(raw: string): string {
   return `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
 }
 
-function fleetAuth(request: Request, env: Env): boolean {
+function fleetAuth(request: Request, expected: string): boolean {
   const header = request.headers.get("X-Fleet-Password") || "";
-  const expected = env.FLEET_PASSWORD || "";
   if (!expected) return false;
   return header === expected;
+}
+
+async function readFleetPassword(kv: KVNamespace, env: Env): Promise<string> {
+  const fromKv = await kv.get(KV_PASSWORD);
+  if (fromKv) return fromKv;
+  return (env.FLEET_PASSWORD || "").trim();
+}
+
+async function fleetPasswordConfigured(kv: KVNamespace, env: Env): Promise<boolean> {
+  return Boolean(await readFleetPassword(kv, env));
+}
+
+async function requireFleetAuth(request: Request, env: Env): Promise<Response | null> {
+  const expected = await readFleetPassword(env.KV, env);
+  if (!expected) {
+    return json({ error: "setup required", needs_password: true }, 403);
+  }
+  if (!fleetAuth(request, expected)) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  return null;
 }
 
 async function readServers(kv: KVNamespace): Promise<StoredServer[]> {
@@ -554,18 +575,36 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (path === "/api/login" && request.method === "POST") {
     const data = (await request.json().catch(() => ({}))) as { password?: string };
-    if (!env.FLEET_PASSWORD) {
-      return json({ error: "FLEET_PASSWORD secret is not set on the Worker" }, 503);
+    const expected = await readFleetPassword(env.KV, env);
+    if (!expected) {
+      return json({ error: "setup required", needs_password: true }, 403);
     }
-    if ((data.password || "") === env.FLEET_PASSWORD) {
+    if ((data.password || "") === expected) {
       return json({ ok: true });
     }
     return json({ error: "wrong password" }, 401);
   }
 
-  if (!fleetAuth(request, env)) {
-    return json({ error: "unauthorized" }, 401);
+  if (path === "/api/setup/status" && request.method === "GET") {
+    const configured = await fleetPasswordConfigured(env.KV, env);
+    return json({ needs_password: !configured });
   }
+
+  if (path === "/api/setup" && request.method === "POST") {
+    if (await fleetPasswordConfigured(env.KV, env)) {
+      return json({ error: "already configured" }, 403);
+    }
+    const data = (await request.json().catch(() => ({}))) as { password?: string };
+    const password = (data.password || "").trim();
+    if (password.length < 4) {
+      return json({ error: "password must be at least 4 characters" }, 400);
+    }
+    await env.KV.put(KV_PASSWORD, password);
+    return json({ ok: true });
+  }
+
+  const authErr = await requireFleetAuth(request, env);
+  if (authErr) return authErr;
 
   if (path === "/api/update/apply" && request.method === "POST") {
     try {

@@ -87,7 +87,20 @@
   </style>
 </head>
 <body>
-  <div id="login" class="gate">
+  <div id="setup" class="gate hidden">
+    <div class="panel">
+      <h1>Fleet setup</h1>
+      <p class="sub">First visit — choose a password for this Fleet dashboard.</p>
+      <label>Password</label>
+      <input id="setup-pw" type="password" autocomplete="new-password">
+      <label>Confirm password</label>
+      <input id="setup-pw2" type="password" autocomplete="new-password">
+      <button class="btn btn-primary" type="button" id="setup-btn" style="width:100%;margin-top:12px" onclick="submitSetup()">Continue</button>
+      <p id="setup-err" class="err"></p>
+    </div>
+  </div>
+
+  <div id="login" class="gate hidden">
     <div class="panel">
       <h1>AgentControl Fleet</h1>
       <p class="sub">Enter the fleet password. Saved in this browser until you sign out.</p>
@@ -303,8 +316,14 @@
       return res;
     }
 
-    function showLogin() { document.getElementById('login').classList.remove('hidden'); document.getElementById('app').classList.add('hidden'); stopPoll(); }
-    function showApp() { document.getElementById('login').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); startPoll(); }
+    function showSetup() {
+      document.getElementById('setup').classList.remove('hidden');
+      document.getElementById('login').classList.add('hidden');
+      document.getElementById('app').classList.add('hidden');
+      stopPoll();
+    }
+    function showLogin() { document.getElementById('login').classList.remove('hidden'); document.getElementById('setup').classList.add('hidden'); document.getElementById('app').classList.add('hidden'); stopPoll(); }
+    function showApp() { document.getElementById('login').classList.add('hidden'); document.getElementById('setup').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); startPoll(); }
     function stopPoll() { if (pollTimer) clearTimeout(pollTimer); pollTimer = null; }
     function startPoll() { stopPoll(); pollTimer = setTimeout(pollFleet, POLL_MS); }
 
@@ -323,6 +342,32 @@
     }
 
     function logout() { clearPw(); showLogin(); }
+
+    async function submitSetup() {
+      const btn = document.getElementById('setup-btn');
+      const p1 = document.getElementById('setup-pw').value;
+      const p2 = document.getElementById('setup-pw2').value;
+      const errEl = document.getElementById('setup-err');
+      errEl.textContent = '';
+      if (!p1 || p1.length < 4) { errEl.textContent = 'Password must be at least 4 characters'; return; }
+      if (p1 !== p2) { errEl.textContent = 'Passwords do not match'; return; }
+      await withButtonLoading(btn, async () => {
+        try {
+          const res = await fetch('/api/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: p1 }),
+          });
+          const data = await res.json();
+          if (!res.ok) { errEl.textContent = data.error || 'Setup failed'; return; }
+          setPw(p1);
+          showApp();
+          await checkFleetUpdate(false);
+          await pollFleet();
+          setInterval(() => checkFleetUpdate(false), 300000);
+        } catch (e) { errEl.textContent = e.message; }
+      });
+    }
 
     async function loadVersionLabel() {
       try {
@@ -751,6 +796,11 @@
     async function boot() {
       updateFleetTitle();
       loadVersionLabel();
+      try {
+        const statusRes = await fetch('/api/setup/status');
+        const status = await statusRes.json();
+        if (status.needs_password) { showSetup(); return; }
+      } catch (_) {}
       if (!pw()) { showLogin(); return; }
       try {
         const res = await api('/api/servers');
@@ -764,6 +814,7 @@
       } catch (e) { if (e.message !== 'unauthorized') showLogin(); }
     }
 
+    document.getElementById('setup-pw2').addEventListener('keydown', e => { if (e.key === 'Enter') submitSetup(); });
     document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
     boot();
   </script>

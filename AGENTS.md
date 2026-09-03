@@ -122,8 +122,8 @@ cd fleet
 npm install
 npx wrangler login
 npx wrangler kv namespace create KV   # paste id into wrangler.jsonc
-npx wrangler secret put FLEET_PASSWORD
 npm run deploy
+# First browser visit: choose fleet password in setup UI
 ```
 
 ---
@@ -206,7 +206,7 @@ Env overrides: `XRAY_CONFIG`, `XRAY_CLIENT_FILE`.
 | Layer | Header / storage | Notes |
 |-------|------------------|-------|
 | Panel | `X-AgentControl-Auth: <password>` | or `Authorization: Bearer`; `localStorage` key `agentcontrol_auth_<host>` |
-| Fleet | `X-Fleet-Password: <secret>` | Wrangler secret `FLEET_PASSWORD`; `localStorage` key `agentcontrol_fleet_pw` |
+| Fleet | `X-Fleet-Password: <password>` | KV (`fleet_password`) or optional Wrangler `FLEET_PASSWORD`; `localStorage` key `agentcontrol_fleet_pw` |
 | Fleet → server | `X-AgentControl-Auth` | Per-server password in KV (never returned to browser) |
 
 First visit: `/api/setup/password` and `/api/setup/api-key` when files missing.
@@ -413,4 +413,4 @@ Project owner often communicates in **Persian (Farsi)**. Summaries and install i
 ## Related docs
 
 - [README.md](README.md) — install, config, service commands
-- [fleet/README.md](fleet/README.md) — Wrangler, KV, FLEET_PASSWORD, custom domain
+- [fleet/README.md](fleet/README.md) — Wrangler, KV, first-visit setup, custom domain, optional CI rollout

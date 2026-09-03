@@ -57,19 +57,7 @@ Copy the `id` from the output and paste it into `wrangler.jsonc`:
 
 Docs: [https://developers.cloudflare.com/kv/get-started/](https://developers.cloudflare.com/kv/get-started/)
 
-### 3. Set the fleet login password
-
-This protects the fleet dashboard (separate from each server’s password):
-
-```bash
-npx wrangler secret put FLEET_PASSWORD
-```
-
-Enter a strong password when prompted.
-
-Docs: [https://developers.cloudflare.com/workers/configuration/secrets/](https://developers.cloudflare.com/workers/configuration/secrets/)
-
-### 4. Deploy
+### 3. Deploy
 
 ```bash
 npm run deploy
@@ -80,6 +68,14 @@ Wrangler prints a `*.workers.dev` URL, for example:
 `https://agentcontrol-fleet.your-subdomain.workers.dev`
 
 Docs: [https://developers.cloudflare.com/workers/get-started/guide/#7-deploy-your-project](https://developers.cloudflare.com/workers/get-started/guide/#7-deploy-your-project)
+
+### 4. First visit — choose a password
+
+Open your fleet URL. On first visit you see a **setup** screen to choose the dashboard password (stored in KV).
+
+No `wrangler secret put FLEET_PASSWORD` is required for a fresh install.
+
+**Optional:** `wrangler secret put FLEET_PASSWORD` sets a fallback password in the Worker environment. KV (from the setup UI) takes precedence once set. Useful for local `wrangler dev` or if you prefer managing the password only via Cloudflare secrets.
 
 ### 5. Custom subdomain (optional)
 
@@ -92,7 +88,7 @@ Docs: [https://developers.cloudflare.com/workers/configuration/routing/custom-do
 ### 6. Use the fleet
 
 1. Open your fleet URL
-2. Sign in with **FLEET_PASSWORD**
+2. Sign in with the password you chose at setup
 3. **Add server**:
    - **Name**: anything (e.g. `uk-prod`)
    - **URL**: `http://193.163.201.14:30228`
@@ -106,10 +102,9 @@ Version is shown in the header (`fleet/version.json`, also at `/version.json` an
 ## Local development
 
 ```bash
-# Set secrets for local dev (once)
+# Optional: set a dev password (or use the setup screen on first local visit)
 npx wrangler secret put FLEET_PASSWORD
 
-# Run locally
 npm run dev
 ```
 
@@ -128,7 +123,7 @@ npm run deploy
 ## Security notes
 
 - Server panel passwords are stored in **KV** (only your Worker can read them).
-- Use a strong **FLEET_PASSWORD** and HTTPS (workers.dev or custom domain).
+- Choose a strong fleet password at first visit and use HTTPS (workers.dev or custom domain).
 - Each AgentControl server should use its own panel password.
 - Fleet Worker calls your servers over **HTTP** — use only on trusted networks or add HTTPS to AgentControl later.
 
@@ -153,37 +148,45 @@ After a one-time setup, pushes to `main` automatically:
 
 Dashboard → **Workers & Pages** → sidebar **Account ID**
 
-### Step 3 — GitHub repository secrets
+### Step 3 — GitHub secrets (required for deploy)
 
-Repo → **Settings** → **Secrets and variables** → **Actions**:
+Repo → **Settings** → **Secrets and variables** → **Actions** → **Secrets**:
 
 | Secret | Required | Purpose |
 |--------|----------|---------|
 | `CLOUDFLARE_API_TOKEN` | yes | Deploy Worker + KV sync |
 | `CLOUDFLARE_ACCOUNT_ID` | yes | Deploy Worker |
-| `FLEET_PASSWORD` | yes for panel rollout | Same password as hub login — triggers `/api/fleet/update-all` |
-
-Optional **variable** (Settings → Variables → Actions): `FLEET_URL` = `https://hub.aksbaz.com` (default if unset).
 
 KV namespace ID is resolved automatically from Cloudflare and committed to `wrangler.jsonc` on first deploy — **no `CLOUDFLARE_KV_NAMESPACE_ID` secret needed**.
 
-### Step 4 — Verify
+### Step 4 — Optional: automatic panel rollout
+
+Only needed if you want CI to call your Fleet hub and run `panel-update.sh` on **every registered server** when panel code changes (`app.py`, `templates/`, etc.).
+
+| Setting | Where | When set | When not set |
+|---------|-------|----------|--------------|
+| `FLEET_URL` | **Variables** → Actions | CI knows your hub URL (e.g. `https://fleet.example.com`) | Panel rollout step is **skipped** — deploy Fleet + sync UI still works |
+| `FLEET_PASSWORD` | **Secrets** → Actions | CI can authenticate to `/api/fleet/update-all` | Panel rollout step is **skipped** |
+
+Use the **same password** you chose in the Fleet setup UI. This is independent of Cloudflare `wrangler secret put FLEET_PASSWORD` (KV password from setup is what matters for login).
+
+Without both `FLEET_URL` and `FLEET_PASSWORD`, you update each server manually (Fleet UI **Update all panels**, or SSH + `panel-update.sh` per host).
+
+### Step 5 — Verify
 
 Push to `main` or **Actions** → **Deploy Fleet Worker** → **Run workflow**.
-
-`FLEET_PASSWORD` on Cloudflare (`wrangler secret put`) is separate from GitHub — both use the same value for hub login.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |--------|-----|
-| `FLEET_PASSWORD secret is not set` | Run `npx wrangler secret put FLEET_PASSWORD` and redeploy |
+| Setup screen on every visit | Password not saved — check KV binding in `wrangler.jsonc` |
 | `cannot reach server` / `error 1003` | Use a **hostname** (A record, grey cloud), not raw IP — see above |
 | `cannot reach server` (other) | Check firewall allows port 30228 from the internet |
 | `wrong server password` | Use the same password as the single-server AgentControl login |
 | `REPLACE_WITH_KV_NAMESPACE_ID` | CI resolves KV id automatically on first deploy |
-| Panel servers not updating | Add `FLEET_PASSWORD` to GitHub Actions secrets |
-| GitHub Actions deploy failed | Check **Actions** tab logs; verify all three Cloudflare secrets |
+| Panel servers not updating after git push | Set GitHub **variable** `FLEET_URL` and **secret** `FLEET_PASSWORD` (setup password) |
+| GitHub Actions deploy failed | Check **Actions** tab logs; verify `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` |
 
 ## Architecture
 

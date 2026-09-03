@@ -133,12 +133,17 @@ jobs:
           FLEET_PASSWORD: ${{ secrets.FLEET_PASSWORD }}
           FLEET_URL: ${{ vars.FLEET_URL }}
         run: |
-          if [ -z "$FLEET_PASSWORD" ]; then
-            echo "FLEET_PASSWORD secret is not set — add it in GitHub repo secrets."
-            exit 1
+          if [ -z "${FLEET_URL:-}" ]; then
+            echo "FLEET_URL repository variable not set — skipping panel rollout."
+            echo "Set Settings → Variables → Actions → FLEET_URL to enable automatic panel updates."
+            exit 0
           fi
-          URL="${FLEET_URL:-https://hub.aksbaz.com}"
-          curl -sfS -X POST "${URL%/}/api/fleet/update-all" \
+          if [ -z "${FLEET_PASSWORD:-}" ]; then
+            echo "FLEET_PASSWORD secret not set — skipping panel rollout."
+            echo "Set the same password you chose in Fleet setup as a GitHub secret."
+            exit 0
+          fi
+          curl -sfS -X POST "${FLEET_URL%/}/api/fleet/update-all" \
             -H "X-Fleet-Password: ${FLEET_PASSWORD}" \
             -H "Content-Type: application/json"
           echo "Panel update triggered on all Fleet servers."
