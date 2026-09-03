@@ -29,6 +29,28 @@ trap 'rm -f "${LOCK_FILE}"' EXIT
 
 log() { echo "$*" | tee -a "${LOG_FILE}"; }
 
+GIT_FETCH_TIMEOUT="${GIT_FETCH_TIMEOUT:-180}"
+
+ensure_https_origin() {
+  local origin_url
+  origin_url="$(git remote get-url origin 2>/dev/null || true)"
+  case "${origin_url}" in
+    git@github.com:*|ssh://git@github.com/*)
+      log "origin uses GitHub SSH — switching to HTTPS (SSH is often blocked or slow)"
+      git remote set-url origin "${REPO_URL}"
+      ;;
+  esac
+}
+
+sync_main_branch() {
+  ensure_https_origin
+  if ! timeout "${GIT_FETCH_TIMEOUT}" git fetch origin main; then
+    log "git fetch failed or timed out after ${GIT_FETCH_TIMEOUT}s"
+    exit 1
+  fi
+  git reset --hard origin/main
+}
+
 {
   log "=== panel update started $(date -Iseconds) ==="
   log "INSTALL_DIR=${INSTALL_DIR}"
@@ -40,8 +62,7 @@ log() { echo "$*" | tee -a "${LOG_FILE}"; }
   fi
 
   cd "${INSTALL_DIR}"
-  git fetch origin main
-  git reset --hard origin/main
+  sync_main_branch
   chmod +x bootstrap.sh install.sh install-wizard.sh scripts/*.sh scripts/*.py 2>/dev/null || true
 
   if [[ -d "${INSTALL_DIR}/venv" ]]; then
