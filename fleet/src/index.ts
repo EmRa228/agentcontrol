@@ -719,6 +719,13 @@ export default {
     }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
+      if (!(await kvHtmlIsCurrent(env.KV))) {
+        try {
+          await applyFleetUiUpdate(env.KV);
+        } catch {
+          /* serve bundled assets below */
+        }
+      }
       if (await kvHtmlIsCurrent(env.KV)) {
         const cached = await env.KV.get(KV_UI_HTML);
         if (cached) {

@@ -4,30 +4,60 @@ on:
   push:
     branches: [main]
     paths:
-      - "fleet/src/**"
-      - "fleet/public/version.json"
-      - "fleet/version.json"
-      - "fleet/wrangler.jsonc"
-      - "fleet/package.json"
-      - "fleet/package-lock.json"
+      - "fleet/**"
+      - "templates/**"
+      - "app.py"
+      - "version.json"
+      - "scripts/panel-update.sh"
+      - "proxy_pool.py"
+      - "xray_client.py"
+      - "requirements.txt"
       - ".github/workflows/fleet-deploy.yml"
   workflow_dispatch:
 
-# Only one deploy at a time; newer push cancels an in-flight run (expected).
 concurrency:
   group: fleet-deploy
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
-  deploy:
+  changes:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    outputs:
+      fleet: ${{ steps.filter.outputs.fleet }}
+      panel: ${{ steps.filter.outputs.panel }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            fleet:
+              - 'fleet/**'
+              - '.github/workflows/fleet-deploy.yml'
+            panel:
+              - 'templates/**'
+              - 'app.py'
+              - 'version.json'
+              - 'scripts/panel-update.sh'
+              - 'proxy_pool.py'
+              - 'xray_client.py'
+              - 'requirements.txt'
+
+  fleet:
+    needs: changes
+    if: needs.changes.outputs.fleet == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -37,18 +67,37 @@ jobs:
         working-directory: fleet
         run: npm ci
 
-      - name: Inject KV namespace ID
+      - name: Resolve KV namespace ID
+        id: kv
         working-directory: fleet
         env:
-          KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          set -euo pipefail
+          kv_id_from_file() {
+            grep -m1 '"id"' wrangler.jsonc | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+          }
           if grep -q 'REPLACE_WITH_KV_NAMESPACE_ID' wrangler.jsonc; then
-            if [ -z "$KV_NAMESPACE_ID" ]; then
-              echo "wrangler.jsonc still has placeholder and CLOUDFLARE_KV_NAMESPACE_ID secret is missing."
+            KV_ID="$(npx wrangler kv namespace list --json | jq -r '.[] | select(.title=="KV") | .id' | head -1)"
+            if [ -z "$KV_ID" ] || [ "$KV_ID" = "null" ]; then
+              echo "Could not find KV namespace titled 'KV'. Run: npx wrangler kv namespace list"
               exit 1
             fi
-            sed -i "s/REPLACE_WITH_KV_NAMESPACE_ID/${KV_NAMESPACE_ID}/g" wrangler.jsonc
+            sed -i "s/REPLACE_WITH_KV_NAMESPACE_ID/${KV_ID}/g" wrangler.jsonc
+            cd ..
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add fleet/wrangler.jsonc
+            if ! git diff --staged --quiet; then
+              git commit -m "chore: set KV namespace ID in wrangler.jsonc [skip ci]"
+              git push
+            fi
+            cd fleet
+          else
+            KV_ID="$(kv_id_from_file)"
           fi
+          echo "id=${KV_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Cloudflare Workers
         working-directory: fleet
@@ -57,9 +106,39 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy
 
-      - name: Deployment summary
-        if: success()
+      - name: Sync Fleet UI to KV
+        working-directory: fleet
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          echo "### Fleet Worker deployed" >> "$GITHUB_STEP_SUMMARY"
+          KV_ID="${{ steps.kv.outputs.id }}"
+          npx wrangler kv key put fleet_ui_version --value="$(jq -c . version.json)" --namespace-id="$KV_ID" --remote
+          npx wrangler kv key put fleet_ui_html --path=public/index.html --namespace-id="$KV_ID" --remote
+
+      - name: Deployment summary
+        run: |
+          echo "### Fleet deployed + UI synced to KV" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${GITHUB_SHA::7}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- After backend deploy, use **Update fleet UI** in hub for HTML-only changes." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Fleet UI updates automatically — no manual **Update fleet UI** needed." >> "$GITHUB_STEP_SUMMARY"
+
+  panels:
+    needs: changes
+    if: needs.changes.outputs.panel == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Update all AgentControl panels via Fleet
+        env:
+          FLEET_PASSWORD: ${{ secrets.FLEET_PASSWORD }}
+          FLEET_URL: ${{ vars.FLEET_URL }}
+        run: |
+          if [ -z "$FLEET_PASSWORD" ]; then
+            echo "FLEET_PASSWORD secret is not set — add it in GitHub repo secrets."
+            exit 1
+          fi
+          URL="${FLEET_URL:-https://hub.aksbaz.com}"
+          curl -sfS -X POST "${URL%/}/api/fleet/update-all" \
+            -H "X-Fleet-Password: ${FLEET_PASSWORD}" \
+            -H "Content-Type: application/json"
+          echo "Panel update triggered on all Fleet servers."
