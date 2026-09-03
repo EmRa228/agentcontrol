@@ -17,7 +17,14 @@ need_root() {
 }
 
 need_systemd() {
-  systemctl is-system-running &>/dev/null || die "systemd required — run on the host SSH session."
+  if [[ -f /.dockerenv ]]; then
+    die "You are inside a container — run this from host SSH (not docker exec)."
+  fi
+  command -v systemctl >/dev/null || die "systemctl not found — is this a systemd host?"
+  if [[ -d /run/systemd/system ]] || [[ "$(readlink -f /proc/1/exe 2>/dev/null)" == */systemd ]]; then
+    return 0
+  fi
+  die "systemd does not appear to be PID 1 on this host."
 }
 
 need_docker() {
