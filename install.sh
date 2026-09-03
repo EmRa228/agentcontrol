@@ -54,17 +54,31 @@ install_cursor_agent() {
   export PATH="/root/.local/bin:${PATH}"
 }
 
+git_fetch_timeout() {
+  local dir="$1"
+  local timeout_sec="${GIT_FETCH_TIMEOUT:-180}"
+  local origin_url
+  origin_url="$(git -C "${dir}" remote get-url origin 2>/dev/null || true)"
+  case "${origin_url}" in
+    git@github.com:*|ssh://git@github.com/*)
+      log "Switching origin to HTTPS for ${dir}"
+      git -C "${dir}" remote set-url origin "${REPO_URL}"
+      ;;
+  esac
+  timeout "${timeout_sec}" git -C "${dir}" fetch origin main
+}
+
 ensure_repo() {
   SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 
   if [[ "${SCRIPT_DIR}" == "${INSTALL_DIR}" ]] && [[ -d "${INSTALL_DIR}/.git" ]]; then
     log "Pulling latest code"
-    git -C "${INSTALL_DIR}" fetch origin main
+    git_fetch_timeout "${INSTALL_DIR}"
     git -C "${INSTALL_DIR}" reset --hard origin/main
   elif [[ ! -f "${INSTALL_DIR}/app.py" ]]; then
     if [[ -d "${INSTALL_DIR}/.git" ]]; then
       log "Updating ${INSTALL_DIR}"
-      git -C "${INSTALL_DIR}" fetch origin main
+      git_fetch_timeout "${INSTALL_DIR}"
       git -C "${INSTALL_DIR}" reset --hard origin/main
     else
       log "Cloning ${REPO_URL} → ${INSTALL_DIR}"
