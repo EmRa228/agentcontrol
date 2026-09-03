@@ -69,7 +69,7 @@ stop_agentcontrol_container() {
   fi
 }
 
-install_host_panel() {
+  install_host_panel() {
   log "Installing AgentControl to ${INSTALL_DIR} (host systemd)"
   mkdir -p "$(dirname "${INSTALL_DIR}")"
   if [[ ! -d "${INSTALL_DIR}/.git" ]]; then
@@ -78,7 +78,10 @@ install_host_panel() {
     git -C "${INSTALL_DIR}" fetch origin main
     git -C "${INSTALL_DIR}" reset --hard origin/main
   fi
-  bash "${INSTALL_DIR}/install.sh"
+  chmod +x "${INSTALL_DIR}/install.sh" "${INSTALL_DIR}/install-wizard.sh" \
+    "${INSTALL_DIR}/scripts/"*.sh 2>/dev/null || true
+  CONFIG_DIR="${CONFIG_DIR}" STATE_DIR="${STATE_DIR}" INSTALL_DIR="${INSTALL_DIR}" \
+    bash "${INSTALL_DIR}/install.sh"
 }
 
 verify() {

@@ -456,16 +456,6 @@
       await withButtonLoading(btn, () => pollFleet());
     }
 
-    async function updateAllServers() {
-      try {
-        const res = await api('/api/fleet/update-all', { method: 'POST' });
-        const data = await res.json();
-        const ok = (data.results || []).filter(r => r.ok).length;
-        const total = (data.results || []).length;
-        document.getElementById('msg').textContent = `Panel update started on ${ok}/${total} servers`;
-      } catch (_) {}
-    }
-
     function openAddModal() { document.getElementById('add-modal').classList.remove('hidden'); }
     function closeAddModal() { document.getElementById('add-modal').classList.add('hidden'); }
 

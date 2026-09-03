@@ -54,6 +54,12 @@ log() { echo "$*" | tee -a "${LOG_FILE}"; }
   elif [[ -f /.dockerenv ]]; then
     log "ERROR: panel runs in Docker — migrate to host: bash scripts/migrate-from-docker.sh"
     exit 1
+  elif [[ -x "${INSTALL_DIR}/install.sh" ]]; then
+    log "No agentcontrol systemd service — running install.sh"
+    CONFIG_DIR="${CONFIG_DIR:-/etc/agentcontrol}" \
+    STATE_DIR="${STATE_DIR}" \
+    INSTALL_DIR="${INSTALL_DIR}" \
+      bash "${INSTALL_DIR}/install.sh" >> "${LOG_FILE}" 2>&1
   else
     log "No agentcontrol systemd service — run: bash ${INSTALL_DIR}/install.sh"
     exit 1
