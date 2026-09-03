@@ -237,17 +237,18 @@
     function projectAgentUrl(serverId, project) {
       return folderFor(serverId, project)?.agent_url || null;
     }
-    function cursorBtn(agentUrl) {
+    function cursorBtn(serverId, project, agentUrl) {
       if (!agentUrl) return '';
-      const enc = encodeURIComponent(agentUrl);
-      return `<button class="btn btn-primary btn-sm" type="button" onclick="openCursor(decodeURIComponent('${enc}'))">Cursor</button>`;
+      const encUrl = encodeURIComponent(agentUrl);
+      const encProj = encodeURIComponent(project);
+      return `<button class="btn btn-primary btn-sm" type="button" onclick="openCursorWithActivity('${esc(serverId)}','${encProj}',decodeURIComponent('${encUrl}'))">Cursor</button>`;
     }
     function renderProjectActions(serverId, folder) {
       const enc = encodeURIComponent(folder.name);
       const stopKey = actionKey('stop', serverId, folder.name);
       const startKey = actionKey('start', serverId, folder.name);
       if (folder.running) {
-        const parts = [cursorBtn(folder.agent_url || projectAgentUrl(serverId, folder.name))];
+        const parts = [cursorBtn(serverId, folder.name, folder.agent_url || projectAgentUrl(serverId, folder.name))];
         parts.push(isLoading(stopKey)
           ? loadingBtn('Stop', 'btn-danger')
           : `<button class="btn btn-danger btn-sm" type="button" onclick="stopWorker('${esc(serverId)}','${enc}')">Stop</button>`);
@@ -516,9 +517,19 @@
       document.getElementById('start-modal').classList.remove('hidden');
     }
     function closeStartModal() { document.getElementById('start-modal').classList.add('hidden'); pendingAgentUrl = null; }
+    async function touchProjectActivity(serverId, project) {
+      try {
+        await api(`/api/fleet/${serverId}/touch/${project}`, { method: 'POST' });
+        if (lastSnapshot) renderRecentProjects(lastSnapshot);
+      } catch (_) {}
+    }
     function openCursor(url) {
       const target = url || pendingAgentUrl;
       if (target) window.location.assign(target);
+    }
+    async function openCursorWithActivity(serverId, project, url) {
+      await touchProjectActivity(serverId, project);
+      openCursor(url);
     }
 
     async function waitReady(serverId, project) {
@@ -544,7 +555,6 @@
       openBtn.classList.add('loading');
       openBtn.textContent = 'Open Cursor…';
       try {
-        await api(`/api/fleet/${serverId}/touch/${project}`, { method: 'POST' });
         const res = await api(`/api/fleet/${serverId}/start/${project}`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Start failed');

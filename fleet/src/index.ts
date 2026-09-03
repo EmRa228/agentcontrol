@@ -184,16 +184,27 @@ async function touchRecentProject(
   project: string,
   running?: boolean,
 ): Promise<void> {
+  await updateRecentProject(kv, server, project, { bumpActivity: true, running });
+}
+
+async function updateRecentProject(
+  kv: KVNamespace,
+  server: StoredServer,
+  project: string,
+  opts: { bumpActivity?: boolean; running?: boolean } = {},
+): Promise<void> {
   const items = await readRecentProjects(kv);
   const now = Date.now();
+  const existing = items.find((i) => i.serverId === server.id && i.project === project);
   const filtered = items.filter((i) => !(i.serverId === server.id && i.project === project));
   filtered.unshift({
     serverId: server.id,
     serverName: server.name,
     serverUrl: server.url,
     project,
-    touchedAt: now,
-    running,
+    touchedAt: opts.bumpActivity ? now : (existing?.touchedAt ?? 0),
+    running: opts.running ?? existing?.running,
+    agent_url: existing?.agent_url,
   });
   await writeRecentProjects(kv, filtered);
 }
@@ -325,7 +336,7 @@ function aggregateRecentProjects(
         serverName: String(s.name),
         serverUrl: String(s.url),
         project: f.name,
-        touchedAt: f.touched_at || f.mtime || 0,
+        touchedAt: f.touched_at || 0,
         running: f.running,
         agent_url: f.agent_url,
       });
@@ -601,7 +612,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const server = (await readServers(env.KV)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
     await touchServerAccess(env.KV, serverId);
-    await touchRecentProject(env.KV, server, decodeURIComponent(project), false);
+    await updateRecentProject(env.KV, server, decodeURIComponent(project), { running: false });
     const res = await proxyAgent(server, `/api/stop/${encodeURIComponent(project)}`, "POST");
     return json(await readJsonSafe(res), res.status);
   }
