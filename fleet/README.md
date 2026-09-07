@@ -95,7 +95,16 @@ Docs: [https://developers.cloudflare.com/workers/configuration/routing/custom-do
    - **Panel password**: same password you use on that server’s AgentControl UI
 4. Expand a server card → **Start** / **Stop** projects
 
-The fleet UI polls `/api/fleet/snapshot` every **25 seconds** while the browser tab is **visible**. When the tab is in the background, polling stops to save Cloudflare Worker requests. The **Refresh** button fetches an immediate snapshot.
+The fleet UI keeps data fresh with **low KV usage** (important on Cloudflare free tier):
+
+1. On first load: `GET /api/fleet/cache` (read-only)
+2. Every **60 seconds** while the tab is **visible**: refresh **one** server (`GET /api/fleet/server/:id`, no KV write)
+3. When the tab is in the background: polling **stops** (live indicator shows `○ paused`)
+4. **Refresh** button: full snapshot of all servers (`GET /api/fleet/snapshot`, one KV write)
+
+**Do not** open many Fleet tabs at once — each tab polls independently.
+
+For limits, architecture, and contributor rules, see **[CLOUDFLARE.md](CLOUDFLARE.md)**.
 
 Version is shown in the header (`fleet/version.json`, also at `/version.json` and `GET /api/version`).
 
@@ -187,6 +196,7 @@ Push to `main` or **Actions** → **Deploy Fleet Worker** → **Run workflow**.
 | `REPLACE_WITH_KV_NAMESPACE_ID` | CI resolves KV id automatically on first deploy |
 | Panel servers not updating after git push | Set GitHub **variable** `FLEET_URL` and **secret** `FLEET_PASSWORD` (setup password) |
 | GitHub Actions deploy failed | Check **Actions** tab logs; verify `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` |
+| Email: KV nearing daily cap / HTTP 429 | Too many KV writes — deploy latest fleet; close extra tabs; read [CLOUDFLARE.md](CLOUDFLARE.md) |
 
 ## Architecture
 
@@ -198,3 +208,5 @@ Browser → fleet.yourdomain.com (Worker)
 ```
 
 No Cloudflare Tunnel. No config changes on individual servers.
+
+**Platform constraints:** Workers cannot fetch raw IPs; KV has daily read/write caps on the free tier. See **[CLOUDFLARE.md](CLOUDFLARE.md)** for how Fleet is designed around these limits.

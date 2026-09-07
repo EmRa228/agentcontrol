@@ -67,12 +67,16 @@ Docker **build** is direct (Debian/PyPI). **Proxy applies at runtime** via `/etc
 
 ```
 Browser → Worker (*.workers.dev or custom domain)
-            ├─ KV: server list { id, name, url, password }
-            ├─ GET /api/fleet/snapshot  → one-shot poll (used by UI)
+            ├─ KV: servers, snapshot cache, recent projects, password, UI HTML
+            ├─ GET /api/fleet/cache       → read-only reconciled snapshot (no KV write)
+            ├─ GET /api/fleet/server/:id  → rotate refresh one server (persist=0 in polls)
+            ├─ GET /api/fleet/snapshot    → full refresh all servers (writes cache)
             └─ proxy → each server /api/* with X-AgentControl-Auth
 ```
 
 **Live updates:** client loads `/api/fleet/cache` once, then rotates **one server refresh per poll** (`GET /api/fleet/server/:id`, no KV write) every **60s** while the tab is **visible**; polling **stops** when the tab is hidden (`document.visibilitychange`). Manual **Refresh** runs a full `/api/fleet/snapshot` (single KV write). Routine polls avoid KV writes to stay within free-tier limits.
+
+**Cloudflare limits:** Fleet must stay within Workers KV free-tier caps (~100k reads / **1k writes per day**). See **[fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md)** before changing polling, caching, or KV usage. Never write KV on routine cache reads; never refresh all servers on a short interval.
 
 **Version:** `fleet/version.json` → UI header, `/version.json`, `GET /api/version`.
 
@@ -249,9 +253,12 @@ First visit: `/api/setup/password` and `/api/setup/api-key` when files missing.
 | GET | `/api/version` | no |
 | POST | `/api/login` | body `{ password }` |
 | GET | `/api/servers` | Fleet password |
-| POST | `/api/servers` | Add server (probes `/api/system`) |
+| POST | `/api/servers` | Add server (duplicate name/URL → 409) |
 | DELETE | `/api/servers/<id>` | Remove server |
-| GET | `/api/fleet/snapshot` | One-shot snapshot (UI poll target) |
+| POST | `/api/servers/<id>/pause` | Pause / resume server |
+| GET | `/api/fleet/cache` | Read-only snapshot (no KV write) |
+| GET | `/api/fleet/server/<id>` | Refresh one server (`?persist=1` writes cache) |
+| GET | `/api/fleet/snapshot` | Full snapshot all servers (writes cache) |
 | POST | `/api/fleet/<serverId>/start\|stop/<project>` | Proxy |
 | GET | `/api/fleet/<serverId>/ready/<project>` | Proxy |
 
@@ -280,6 +287,7 @@ agentcontrol/
 │   └── setup-xray-proxy.sh
 └── fleet/
     ├── version.json       # fleet version (sync to public/version.json)
+    ├── CLOUDFLARE.md      # KV/Workers limits and fleet design rules (read before fleet changes)
     ├── src/index.ts       # Worker: proxy API, KV, /api/version
     ├── public/index.html  # Fleet UI (poll + visibility pause)
     ├── public/version.json
@@ -307,6 +315,7 @@ agentcontrol/
 - Live updates via **rotating server refresh** every **60s** while tab is visible (one server per poll; no KV write).
 - **Tab hidden:** polling stops; live indicator shows `○ paused` (saves Worker/KV requests).
 - Manual **Refresh** runs full `/api/fleet/snapshot` (all servers, one KV write).
+- **Cloudflare:** follow [fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md) — no KV writes on routine polls.
 - Start modal: 4-step progress, live worker logs, no auto-redirect to Cursor on errors.
 - Auth: `localStorage` key `agentcontrol_fleet_pw` (persistent login).
 - **Main panel** toolbar button + per-server **Open panel** / **Set main**.
@@ -371,7 +380,7 @@ Fleet: `cd fleet && npm run dev` (usually `http://localhost:8787`).
 | Start fails | No API key | `/etc/agentcontrol/api-key` or Settings |
 | Empty project list | Wrong `scan_root` / ignored | config + `.agentcontrol-ignore` |
 | Port 30228 in use | Docker + legacy systemd | `docker compose ps`; `systemctl stop agentcontrol` |
-| Fleet stream disconnects / stale data | Old SSE reconnect loop | Use snapshot polling (v1.2+); tab pause reduces load |
+| Fleet KV daily cap / 429 errors | Too many KV writes (old polling refreshed all servers) | Deploy v1.5.3+; close extra tabs; see [fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md) |
 | Buttons dead after refresh | No event delegation | Bind on `#list` / `#servers` parent |
 | Worker ID changed | `WORKER_NAMESPACE` modified | Never change UUID constant |
 
@@ -403,6 +412,7 @@ On **every** code change that ships to users:
 - Cloudflare Tunnel as requirement (design is direct HTTP per server).
 - Storing fleet passwords in client code or logs.
 - Shipping UI/API changes without bumping `version.json`.
+- **Fleet:** KV writes on routine polls, all-servers refresh on a short interval, or features that ignore [CLOUDFLARE.md](fleet/CLOUDFLARE.md).
 
 ---
 
@@ -413,4 +423,5 @@ Project owner often communicates in **Persian (Farsi)**. Summaries and install i
 ## Related docs
 
 - [README.md](README.md) — install, config, service commands
-- [fleet/README.md](fleet/README.md) — Wrangler, KV, first-visit setup, custom domain, optional CI rollout
+- [fleet/README.md](fleet/README.md) — install, user guide, custom domain
+- [fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md) — Workers/KV limits and fleet design rules for contributors
