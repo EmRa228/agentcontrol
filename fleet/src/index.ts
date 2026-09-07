@@ -364,6 +364,11 @@ function buildOverview(snapshots: Array<Record<string, unknown>>) {
   };
 }
 
+function activityTs(ts: number | undefined | null): number {
+  if (!ts) return 0;
+  return ts < 1e12 ? ts * 1000 : ts;
+}
+
 function aggregateRecentProjects(
   snapshots: Array<Record<string, unknown>>,
   kvRecent: RecentProject[],
@@ -386,7 +391,7 @@ function aggregateRecentProjects(
         serverName: String(s.name),
         serverUrl: String(s.url),
         project: f.name,
-        touchedAt: f.touched_at || 0,
+        touchedAt: activityTs(f.touched_at || f.mtime),
         running: f.running,
         agent_url: f.agent_url,
       });
@@ -396,13 +401,21 @@ function aggregateRecentProjects(
   for (const item of [...kvRecent, ...fromSnapshots]) {
     const key = `${item.serverId}:${item.project}`;
     const existing = merged.get(key);
-    if (!existing || item.touchedAt > existing.touchedAt) {
-      merged.set(key, { ...existing, ...item });
+    const itemTs = activityTs(item.touchedAt);
+    const existingTs = existing ? activityTs(existing.touchedAt) : 0;
+    if (!existing || itemTs > existingTs) {
+      merged.set(key, { ...existing, ...item, touchedAt: Math.max(itemTs, existingTs) });
     } else if (item.agent_url || item.running !== undefined) {
-      merged.set(key, { ...item, ...existing, agent_url: item.agent_url || existing.agent_url, running: item.running ?? existing.running });
+      merged.set(key, {
+        ...item,
+        ...existing,
+        touchedAt: existingTs,
+        agent_url: item.agent_url || existing.agent_url,
+        running: item.running ?? existing.running,
+      });
     }
   }
-  return [...merged.values()].sort((a, b) => b.touchedAt - a.touchedAt).slice(0, limit);
+  return [...merged.values()].sort((a, b) => activityTs(b.touchedAt) - activityTs(a.touchedAt)).slice(0, limit);
 }
 
 async function snapshotOneServer(server: StoredServer) {

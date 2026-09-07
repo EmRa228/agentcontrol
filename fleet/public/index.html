@@ -310,6 +310,11 @@
     }
     loadTheme();
 
+    function activityTs(ts) {
+      if (!ts) return 0;
+      return ts < 1e12 ? ts * 1000 : ts;
+    }
+
     function collectAllProjects(data) {
       const out = [];
       for (const s of data.servers || []) {
@@ -321,7 +326,7 @@
             project: f.name,
             running: f.running,
             agent_url: f.agent_url,
-            touchedAt: f.touched_at || f.mtime || 0,
+            touchedAt: activityTs(f.touched_at || f.mtime),
           });
         }
       }
@@ -532,8 +537,10 @@
       let items;
       if (searching) {
         items = collectAllProjects(data).filter(p => matchesProjectSearch(p.project, p.serverName, projectSearch));
+      } else if (showAllProjects) {
+        items = collectAllProjects(data);
       } else {
-        items = (showAllProjects ? (data.recentProjectsAll || data.recentProjects || []) : (data.recentProjects || []));
+        items = [...(data.recentProjects || [])].sort((a, b) => activityTs(b.touchedAt) - activityTs(a.touchedAt));
       }
       const tbody = document.getElementById('recent-projects');
       const titleEl = document.getElementById('projects-section-title');
