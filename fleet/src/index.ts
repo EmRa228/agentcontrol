@@ -26,12 +26,15 @@ interface RecentProject {
   project: string;
   touchedAt: number;
   running?: boolean;
+  agent_url?: string;
 }
 
 const KV_KEY = "servers";
 const KV_UI_HTML = "fleet_ui_html";
 const KV_UI_VERSION = "fleet_ui_version";
 const KV_RECENT = "recent_projects";
+const KV_SNAPSHOT = "fleet_snapshot_cache";
+const KV_PASSWORD = "fleet_password";
 const GITHUB_RAW = "https://raw.githubusercontent.com/EmRa228/agentcontrol/main/fleet";
 const FLEET_VERSION = fleetVersion as { component: string; version: string; updated: string };
 
@@ -61,12 +64,29 @@ async function getActiveFleetVersion(kv: KVNamespace): Promise<VersionInfo> {
   const cached = await kv.get(KV_UI_VERSION);
   if (cached) {
     try {
-      return JSON.parse(cached) as VersionInfo;
+      const kvVersion = JSON.parse(cached) as VersionInfo;
+      if (versionIsNewer(FLEET_VERSION.version, kvVersion.version)) {
+        return FLEET_VERSION;
+      }
+      return kvVersion;
     } catch {
       /* fall through */
     }
   }
   return FLEET_VERSION;
+}
+
+async function kvHtmlIsCurrent(kv: KVNamespace): Promise<boolean> {
+  const html = await kv.get(KV_UI_HTML);
+  if (!html) return false;
+  const cached = await kv.get(KV_UI_VERSION);
+  if (!cached) return false;
+  try {
+    const kvVersion = JSON.parse(cached) as VersionInfo;
+    return !versionIsNewer(FLEET_VERSION.version, kvVersion.version);
+  } catch {
+    return false;
+  }
 }
 
 async function fetchRemoteFleetVersion(): Promise<VersionInfo> {
@@ -123,11 +143,31 @@ function normalizeUrl(raw: string): string {
   return `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
 }
 
-function fleetAuth(request: Request, env: Env): boolean {
+function fleetAuth(request: Request, expected: string): boolean {
   const header = request.headers.get("X-Fleet-Password") || "";
-  const expected = env.FLEET_PASSWORD || "";
   if (!expected) return false;
   return header === expected;
+}
+
+async function readFleetPassword(kv: KVNamespace, env: Env): Promise<string> {
+  const fromKv = await kv.get(KV_PASSWORD);
+  if (fromKv) return fromKv;
+  return (env.FLEET_PASSWORD || "").trim();
+}
+
+async function fleetPasswordConfigured(kv: KVNamespace, env: Env): Promise<boolean> {
+  return Boolean(await readFleetPassword(kv, env));
+}
+
+async function requireFleetAuth(request: Request, env: Env): Promise<Response | null> {
+  const expected = await readFleetPassword(env.KV, env);
+  if (!expected) {
+    return json({ error: "setup required", needs_password: true }, 403);
+  }
+  if (!fleetAuth(request, expected)) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  return null;
 }
 
 async function readServers(kv: KVNamespace): Promise<StoredServer[]> {
@@ -166,16 +206,27 @@ async function touchRecentProject(
   project: string,
   running?: boolean,
 ): Promise<void> {
+  await updateRecentProject(kv, server, project, { bumpActivity: true, running });
+}
+
+async function updateRecentProject(
+  kv: KVNamespace,
+  server: StoredServer,
+  project: string,
+  opts: { bumpActivity?: boolean; running?: boolean } = {},
+): Promise<void> {
   const items = await readRecentProjects(kv);
   const now = Date.now();
+  const existing = items.find((i) => i.serverId === server.id && i.project === project);
   const filtered = items.filter((i) => !(i.serverId === server.id && i.project === project));
   filtered.unshift({
     serverId: server.id,
     serverName: server.name,
     serverUrl: server.url,
     project,
-    touchedAt: now,
-    running,
+    touchedAt: opts.bumpActivity ? now : (existing?.touchedAt ?? 0),
+    running: opts.running ?? existing?.running,
+    agent_url: existing?.agent_url,
   });
   await writeRecentProjects(kv, filtered);
 }
@@ -299,6 +350,7 @@ function aggregateRecentProjects(
       touched_at?: number;
       touched_relative?: string;
       mtime?: number;
+      agent_url?: string;
     }>;
     for (const f of folders) {
       fromSnapshots.push({
@@ -306,8 +358,9 @@ function aggregateRecentProjects(
         serverName: String(s.name),
         serverUrl: String(s.url),
         project: f.name,
-        touchedAt: f.touched_at || f.mtime || 0,
+        touchedAt: f.touched_at || 0,
         running: f.running,
+        agent_url: f.agent_url,
       });
     }
   }
@@ -316,7 +369,9 @@ function aggregateRecentProjects(
     const key = `${item.serverId}:${item.project}`;
     const existing = merged.get(key);
     if (!existing || item.touchedAt > existing.touchedAt) {
-      merged.set(key, item);
+      merged.set(key, { ...existing, ...item });
+    } else if (item.agent_url || item.running !== undefined) {
+      merged.set(key, { ...item, ...existing, agent_url: item.agent_url || existing.agent_url, running: item.running ?? existing.running });
     }
   }
   return [...merged.values()].sort((a, b) => b.touchedAt - a.touchedAt).slice(0, limit);
@@ -393,13 +448,115 @@ async function buildFleetSnapshot(kv: KVNamespace) {
   const recentKv = await readRecentProjects(kv);
   const recentProjects = aggregateRecentProjects(sorted, recentKv, 10);
   const overview = buildOverview(sorted);
-  return {
+  const payload = {
     servers: sorted,
     recentProjects,
     recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
     overview,
     at: Date.now(),
   };
+  await kv.put(KV_SNAPSHOT, JSON.stringify(payload));
+  return payload;
+}
+
+async function readCachedSnapshot(kv: KVNamespace): Promise<Record<string, unknown> | null> {
+  const raw = await kv.get(KV_SNAPSHOT);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function reconcileSnapshotWithRegistry(kv: KVNamespace, cached: Record<string, unknown> | null) {
+  const registered = await readServers(kv);
+  if (!cached) return buildFleetSnapshot(kv);
+
+  const registeredIds = new Set(registered.map((s) => s.id));
+  const serverList = ((cached.servers as Array<Record<string, unknown>>) || []).filter((s) =>
+    registeredIds.has(String(s.id)),
+  );
+  const cachedIds = new Set(serverList.map((s) => String(s.id)));
+
+  for (const s of registered) {
+    if (!cachedIds.has(s.id)) {
+      serverList.push({
+        id: s.id,
+        name: s.name,
+        url: s.url,
+        lastAccessedAt: s.lastAccessedAt || s.addedAt,
+        online: false,
+        error: "pending refresh",
+      });
+    }
+  }
+
+  const sorted = sortSnapshotsByRecent(serverList as Array<{ id: string; lastAccessedAt?: number }>);
+  const recentKv = await readRecentProjects(kv);
+  return {
+    servers: sorted,
+    recentProjects: aggregateRecentProjects(sorted, recentKv, 10),
+    recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
+    overview: buildOverview(sorted),
+    at: (cached.at as number) || Date.now(),
+  };
+}
+
+async function buildFleetSnapshotFromCache(kv: KVNamespace) {
+  const cached = await readCachedSnapshot(kv);
+  const reconciled = await reconcileSnapshotWithRegistry(kv, cached);
+  await kv.put(KV_SNAPSHOT, JSON.stringify(reconciled));
+  return reconciled;
+}
+
+async function removeServerFromSnapshot(kv: KVNamespace, serverId: string) {
+  const cached = await readCachedSnapshot(kv);
+  if (!cached) return;
+  const serverList = ((cached.servers as Array<Record<string, unknown>>) || []).filter(
+    (s) => String(s.id) !== serverId,
+  );
+  const recentKv = await readRecentProjects(kv);
+  const sorted = sortSnapshotsByRecent(serverList as Array<{ id: string; lastAccessedAt?: number }>);
+  const payload = {
+    servers: sorted,
+    recentProjects: aggregateRecentProjects(sorted, recentKv, 10),
+    recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
+    overview: buildOverview(sorted),
+    at: Date.now(),
+  };
+  await kv.put(KV_SNAPSHOT, JSON.stringify(payload));
+}
+
+async function refreshFleetServer(kv: KVNamespace, serverId: string) {
+  const servers = await readServers(kv);
+  const server = servers.find((s) => s.id === serverId);
+  if (!server) return { error: "server not found" };
+
+  const snapshot = await snapshotOneServer(server);
+  const cached = (await readCachedSnapshot(kv)) || {
+    servers: [],
+    recentProjects: [],
+    recentProjectsAll: [],
+    overview: { ok: true, online: 0, offline: 0, workers: 0, proxyIssues: 0, alerts: [] },
+    at: 0,
+  };
+  const serverList = (cached.servers as Array<Record<string, unknown>>) || [];
+  const idx = serverList.findIndex((s) => s.id === serverId);
+  if (idx >= 0) serverList[idx] = snapshot;
+  else serverList.push(snapshot);
+
+  const sorted = sortSnapshotsByRecent(serverList as Array<{ id: string; lastAccessedAt?: number }>);
+  const recentKv = await readRecentProjects(kv);
+  const payload = {
+    servers: sorted,
+    recentProjects: aggregateRecentProjects(sorted, recentKv, 10),
+    recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
+    overview: buildOverview(sorted),
+    at: Date.now(),
+  };
+  await kv.put(KV_SNAPSHOT, JSON.stringify(payload));
+  return { server: snapshot, snapshot: payload };
 }
 
 async function pushProxyToServers(kv: KVNamespace, config: Record<string, unknown>) {
@@ -471,18 +628,36 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (path === "/api/login" && request.method === "POST") {
     const data = (await request.json().catch(() => ({}))) as { password?: string };
-    if (!env.FLEET_PASSWORD) {
-      return json({ error: "FLEET_PASSWORD secret is not set on the Worker" }, 503);
+    const expected = await readFleetPassword(env.KV, env);
+    if (!expected) {
+      return json({ error: "setup required", needs_password: true }, 403);
     }
-    if ((data.password || "") === env.FLEET_PASSWORD) {
+    if ((data.password || "") === expected) {
       return json({ ok: true });
     }
     return json({ error: "wrong password" }, 401);
   }
 
-  if (!fleetAuth(request, env)) {
-    return json({ error: "unauthorized" }, 401);
+  if (path === "/api/setup/status" && request.method === "GET") {
+    const configured = await fleetPasswordConfigured(env.KV, env);
+    return json({ needs_password: !configured });
   }
+
+  if (path === "/api/setup" && request.method === "POST") {
+    if (await fleetPasswordConfigured(env.KV, env)) {
+      return json({ error: "already configured" }, 403);
+    }
+    const data = (await request.json().catch(() => ({}))) as { password?: string };
+    const password = (data.password || "").trim();
+    if (password.length < 4) {
+      return json({ error: "password must be at least 4 characters" }, 400);
+    }
+    await env.KV.put(KV_PASSWORD, password);
+    return json({ ok: true });
+  }
+
+  const authErr = await requireFleetAuth(request, env);
+  if (authErr) return authErr;
 
   if (path === "/api/update/apply" && request.method === "POST") {
     try {
@@ -528,7 +703,11 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     };
     servers.push(entry);
     await writeServers(env.KV, servers);
-    return json({ server: publicServer(entry) });
+    const refreshed = await refreshFleetServer(env.KV, entry.id);
+    if ("error" in refreshed) {
+      return json({ server: publicServer(entry), warning: "saved but snapshot refresh failed" });
+    }
+    return json({ server: publicServer(entry), snapshot: refreshed.snapshot });
   }
 
   const deleteMatch = path.match(/^\/api\/servers\/([^/]+)$/);
@@ -536,6 +715,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const id = deleteMatch[1];
     const servers = (await readServers(env.KV)).filter((s) => s.id !== id);
     await writeServers(env.KV, servers);
+    await removeServerFromSnapshot(env.KV, id);
     return json({ ok: true });
   }
 
@@ -549,6 +729,19 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (path === "/api/fleet/snapshot" && request.method === "GET") {
     return json(await buildFleetSnapshot(env.KV));
+  }
+
+  if (path === "/api/fleet/cache" && request.method === "GET") {
+    const cached = await buildFleetSnapshotFromCache(env.KV);
+    return json({ ...cached, cached: true });
+  }
+
+  const serverRefreshMatch = path.match(/^\/api\/fleet\/server\/([^/]+)$/);
+  if (serverRefreshMatch && request.method === "GET") {
+    const serverId = serverRefreshMatch[1];
+    const result = await refreshFleetServer(env.KV, serverId);
+    if ("error" in result) return json(result, 404);
+    return json(result);
   }
 
   if (path === "/api/fleet/update-all" && request.method === "POST") {
@@ -579,7 +772,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const server = (await readServers(env.KV)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
     await touchServerAccess(env.KV, serverId);
-    await touchRecentProject(env.KV, server, decodeURIComponent(project), false);
+    await updateRecentProject(env.KV, server, decodeURIComponent(project), { running: false });
     const res = await proxyAgent(server, `/api/stop/${encodeURIComponent(project)}`, "POST");
     return json(await readJsonSafe(res), res.status);
   }
@@ -616,20 +809,27 @@ export default {
     }
 
     if (url.pathname === "/version.json") {
-      const cached = await env.KV.get(KV_UI_VERSION);
-      if (cached) {
-        return new Response(cached, {
-          headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" },
-        });
-      }
+      const version = await getActiveFleetVersion(env.KV);
+      return new Response(JSON.stringify(version), {
+        headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" },
+      });
     }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      const cached = await env.KV.get(KV_UI_HTML);
-      if (cached) {
-        return new Response(cached, {
-          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
-        });
+      if (!(await kvHtmlIsCurrent(env.KV))) {
+        try {
+          await applyFleetUiUpdate(env.KV);
+        } catch {
+          /* serve bundled assets below */
+        }
+      }
+      if (await kvHtmlIsCurrent(env.KV)) {
+        const cached = await env.KV.get(KV_UI_HTML);
+        if (cached) {
+          return new Response(cached, {
+            headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+          });
+        }
       }
     }
 
