@@ -72,7 +72,7 @@ Browser → Worker (*.workers.dev or custom domain)
             └─ proxy → each server /api/* with X-AgentControl-Auth
 ```
 
-**Live updates:** client polls `/api/fleet/snapshot` every **25s** while the tab is **visible**; polling **stops** when the tab is hidden (`document.visibilitychange`) to reduce Worker requests. Exponential backoff on errors (max 120s). Manual **Refresh** triggers an immediate snapshot.
+**Live updates:** client loads `/api/fleet/cache` once, then rotates **one server refresh per poll** (`GET /api/fleet/server/:id`, no KV write) every **60s** while the tab is **visible**; polling **stops** when the tab is hidden (`document.visibilitychange`). Manual **Refresh** runs a full `/api/fleet/snapshot` (single KV write). Routine polls avoid KV writes to stay within free-tier limits.
 
 **Version:** `fleet/version.json` → UI header, `/version.json`, `GET /api/version`.
 
@@ -304,9 +304,9 @@ agentcontrol/
 
 ### Fleet (`fleet/public/index.html`)
 
-- Live updates via **polling** `GET /api/fleet/snapshot` every **25s** while tab is visible.
-- **Tab hidden:** polling stops; live indicator shows `○ paused` (saves Worker requests).
-- **Backoff:** failed polls retry with exponential delay up to 120s.
+- Live updates via **rotating server refresh** every **60s** while tab is visible (one server per poll; no KV write).
+- **Tab hidden:** polling stops; live indicator shows `○ paused` (saves Worker/KV requests).
+- Manual **Refresh** runs full `/api/fleet/snapshot` (all servers, one KV write).
 - Start modal: 4-step progress, live worker logs, no auto-redirect to Cursor on errors.
 - Auth: `localStorage` key `agentcontrol_fleet_pw` (persistent login).
 - **Main panel** toolbar button + per-server **Open panel** / **Set main**.
