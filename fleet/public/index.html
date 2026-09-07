@@ -5,9 +5,47 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fleet AgentControl</title>
   <style>
-    :root {
-      --bg: #0b0d12; --card: #141820; --border: #252b38; --text: #eef1f6;
-      --muted: #8b93a7; --accent: #5b8cff; --green: #3dd68c; --yellow: #e8c468; --red: #f07178;
+    :root, [data-theme="midnight"] {
+      --bg: #0b0d12; --card: #141820; --surface: #0d1016; --border: #252b38;
+      --text: #eef1f6; --muted: #8b93a7; --accent: #5b8cff;
+      --green: #3dd68c; --yellow: #e8c468; --red: #f07178;
+      --overlay: rgba(11,13,18,.92);
+    }
+    [data-theme="light"] {
+      --bg: #f4f6fa; --card: #ffffff; --surface: #eef1f6; --border: #d5dbe6;
+      --text: #1a1f2e; --muted: #5c6578; --accent: #2563eb;
+      --green: #059669; --yellow: #d97706; --red: #dc2626;
+      --overlay: rgba(244,246,250,.95);
+    }
+    [data-theme="nord"] {
+      --bg: #2e3440; --card: #3b4252; --surface: #434c5e; --border: #4c566a;
+      --text: #eceff4; --muted: #d8dee9; --accent: #88c0d0;
+      --green: #a3be8c; --yellow: #ebcb8b; --red: #bf616a;
+      --overlay: rgba(46,52,64,.94);
+    }
+    [data-theme="dracula"] {
+      --bg: #282a36; --card: #343746; --surface: #3a3d4f; --border: #44475a;
+      --text: #f8f8f2; --muted: #bd93f9; --accent: #ff79c6;
+      --green: #50fa7b; --yellow: #f1fa8c; --red: #ff5555;
+      --overlay: rgba(40,42,54,.94);
+    }
+    [data-theme="solarized"] {
+      --bg: #002b36; --card: #073642; --surface: #0a3d4a; --border: #586e75;
+      --text: #fdf6e3; --muted: #93a1a1; --accent: #268bd2;
+      --green: #859900; --yellow: #b58900; --red: #dc322f;
+      --overlay: rgba(0,43,54,.94);
+    }
+    [data-theme="github"] {
+      --bg: #0d1117; --card: #161b22; --surface: #21262d; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #2f81f7;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+      --overlay: rgba(13,17,23,.94);
+    }
+    [data-theme="rose"] {
+      --bg: #191724; --card: #1f1d2e; --surface: #26233a; --border: #403d52;
+      --text: #e0def4; --muted: #908caa; --accent: #ebbcba;
+      --green: #9ccfd8; --yellow: #f6c177; --red: #eb6f92;
+      --overlay: rgba(25,23,36,.94);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -15,13 +53,14 @@
     .hidden { display: none !important; }
     .gate { min-height: 70vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
     .panel { width: 100%; max-width: 400px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
-    input, select, textarea { width: 100%; border: 1px solid var(--border); background: #0d1016; color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: .88rem; }
+    input, select, textarea { width: 100%; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: .88rem; }
     textarea { min-height: 80px; resize: vertical; font-family: ui-monospace, monospace; font-size: .78rem; }
     label { display: block; font-size: .72rem; color: var(--muted); margin: 10px 0 4px; }
     .btn { border: none; border-radius: 8px; padding: 9px 14px; font-weight: 600; cursor: pointer; font-size: .82rem; }
     .btn-primary { background: var(--accent); color: #fff; }
     .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
     .btn-sm { padding: 6px 10px; font-size: .75rem; }
+    .btn-warn { background: rgba(232,196,104,.15); color: var(--yellow); border: 1px solid rgba(232,196,104,.35); }
     .btn-danger { background: rgba(240,113,120,.15); color: var(--red); border: 1px solid rgba(240,113,120,.3); }
     .btn.loading, .btn:disabled { opacity: 0.65; cursor: wait; }
     .btn-group { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -36,11 +75,11 @@
     .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
     .section-title { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
     .overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
-    .stat { background: #0d1016; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+    .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
     .stat .label { font-size: .62rem; color: var(--muted); text-transform: uppercase; }
     .stat .value { font-size: 1.1rem; font-weight: 700; margin-top: 4px; }
     .alerts { display: flex; flex-direction: column; gap: 6px; }
-    .alert { padding: 8px 10px; border-radius: 8px; font-size: .78rem; border: 1px solid var(--border); background: #0d1016; }
+    .alert { padding: 8px 10px; border-radius: 8px; font-size: .78rem; border: 1px solid var(--border); background: var(--surface); }
     .alert.ok { border-color: rgba(61,214,140,.3); color: var(--green); }
     .alert.warn { border-color: rgba(232,196,104,.35); color: var(--yellow); }
     .alert.error { border-color: rgba(240,113,120,.35); color: var(--red); }
@@ -48,14 +87,19 @@
     .projects-table th, .servers-table th { text-align: left; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
     .projects-table td, .servers-table td { padding: 10px; border-bottom: 1px solid rgba(37,43,56,.6); vertical-align: middle; }
     .projects-table tr:hover, .servers-table tr:hover { background: rgba(255,255,255,.02); }
-    .project-identity { width: 100%; }
-    .project-identity-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .project-identity-text { min-width: 0; flex: 1 1 180px; }
-    .project-identity-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+    .project-list { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+    .project-row {
+      display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; max-width: 100%;
+    }
+    .project-row-text { min-width: 0; }
+    .project-row-actions { flex-shrink: 0; }
     .project-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
-    .search-input { max-width: 280px; margin-bottom: 0; }
-    .search-input-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .search-input { max-width: 280px; margin-bottom: 0; width: auto; min-width: 180px; flex: 1 1 180px; }
+    .search-input-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; }
     .search-hint { font-size: .68rem; color: var(--muted); }
+    .theme-select { width: auto; min-width: 130px; padding: 6px 10px; font-size: .75rem; }
     .proj-name { font-weight: 600; }
     .badge { font-size: .62rem; padding: 2px 7px; border-radius: 999px; font-weight: 700; }
     .badge.ok { background: rgba(61,214,140,.15); color: var(--green); }
@@ -66,21 +110,27 @@
     .server-row { cursor: pointer; }
     .metric-mini { display: flex; gap: 8px; flex-wrap: wrap; font-size: .7rem; color: var(--muted); }
     .metric-mini span b { color: var(--text); }
-    .modal-overlay { position: fixed; inset: 0; background: rgba(11,13,18,.92); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; overflow: auto; }
+    .badge.pause { background: rgba(232,196,104,.15); color: var(--yellow); }
+    .server-row.paused td { opacity: 0.72; }
+    .modal-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; overflow: auto; }
     .modal { width: 100%; max-width: 720px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; max-height: 90vh; overflow: auto; }
     .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } .wrap { padding: 12px; } }
     .update-banner { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; text-align: center; font-size: .78rem; border: 1px solid rgba(91,140,255,.35); background: rgba(91,140,255,.12); color: var(--accent); }
-    .proxy-log { margin-top: 10px; padding: 10px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; font-size: .68rem; max-height: 160px; overflow: auto; font-family: ui-monospace, monospace; }
+    .proxy-log { margin-top: 10px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: .68rem; max-height: 160px; overflow: auto; font-family: ui-monospace, monospace; }
     .server-detail-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 12px 0; }
-    .chart-box { background: #0d1016; border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+    .chart-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
     .chart-box h3 { font-size: .65rem; color: var(--muted); margin-bottom: 4px; }
     canvas { width: 100%; display: block; }
-    .proj-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-    .proj-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
-    .proj-item-main { min-width: 0; flex: 1 1 200px; }
-    .proj-item-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+    .proj-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; align-items: flex-start; }
+    .proj-item {
+      display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; max-width: 100%;
+    }
+    .proj-item-main { min-width: 0; }
+    .proj-item-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .modal-steps { list-style: none; margin: 12px 0; padding: 0; }
     .modal-steps li { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: .82rem; color: var(--muted); }
     .modal-steps li.active { color: var(--accent); }
@@ -131,6 +181,16 @@
     </header>
     <p id="update-banner" class="update-banner hidden"></p>
     <div class="toolbar">
+      <input id="project-search" class="search-input" type="search" placeholder="Search all projects…" autocomplete="off" oninput="onProjectSearchInput()">
+      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme">
+        <option value="midnight">Midnight</option>
+        <option value="light">Light</option>
+        <option value="nord">Nord</option>
+        <option value="dracula">Dracula</option>
+        <option value="solarized">Solarized</option>
+        <option value="github">GitHub</option>
+        <option value="rose">Rosé Pine</option>
+      </select>
       <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy settings</button>
       <button class="btn btn-ghost btn-sm" type="button" id="fleet-update-btn" onclick="checkFleetUpdate(true)">Update fleet UI</button>
@@ -140,16 +200,13 @@
 
     <section class="section" id="recent-section">
       <div class="section-head">
-        <div class="section-title">Recent projects (all servers)</div>
-        <div class="search-input-wrap">
-          <input id="project-search" class="search-input" type="search" placeholder="Filter projects…" autocomplete="off" oninput="onProjectSearchInput()">
-          <button class="btn btn-ghost btn-sm" type="button" id="toggle-all-projects" onclick="toggleAllProjects()">All projects</button>
+        <div>
+          <div class="section-title" id="projects-section-title">Recent projects</div>
+          <span class="search-hint" id="project-search-hint"></span>
         </div>
+        <button class="btn btn-ghost btn-sm" type="button" id="toggle-all-projects" onclick="toggleAllProjects()">All projects</button>
       </div>
-      <table class="projects-table">
-        <thead><tr><th>Project</th></tr></thead>
-        <tbody id="recent-projects"></tbody>
-      </table>
+      <div class="project-list" id="recent-projects"></div>
     </section>
 
     <section class="section" id="overview-section">
@@ -163,7 +220,7 @@
         <div class="section-title">Servers</div>
       </div>
       <table class="servers-table">
-        <thead><tr><th>Name</th><th>Host / IP</th><th>Version</th><th>CPU</th><th>RAM</th><th>Workers</th><th>Proxy</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Host / IP</th><th>Version</th><th>CPU</th><th>RAM</th><th>Workers</th><th>Proxy</th><th>Actions</th></tr></thead>
         <tbody id="servers-table"></tbody>
       </table>
     </section>
@@ -191,10 +248,6 @@
       <p class="sub" id="server-modal-url"></p>
       <div class="server-detail-metrics" id="server-modal-metrics"></div>
       <div class="section-title">Projects</div>
-      <div class="search-input-wrap" style="margin-bottom:10px">
-        <input id="server-project-search" class="search-input" type="search" placeholder="Filter projects on this server…" autocomplete="off" oninput="onServerProjectSearchInput()">
-        <span class="search-hint" id="server-project-search-hint"></span>
-      </div>
       <div class="proj-list" id="server-modal-projects"></div>
       <div class="modal-actions">
         <button class="btn btn-ghost btn-sm" type="button" onclick="openServerPanel()">Open panel</button>
@@ -240,11 +293,11 @@
   <script>
     const AUTH_KEY = 'agentcontrol_fleet_pw';
     const CACHE_KEY = 'agentcontrol_fleet_snapshot';
+    const THEME_KEY = 'agentcontrol_fleet_theme';
     const POLL_MS = 25000;
     let lastSnapshot = null;
     let showAllProjects = false;
     let projectSearch = '';
-    let serverProjectSearch = '';
     let busy = false;
     let pollTimer = null;
     let modalServer = null;
@@ -252,7 +305,59 @@
     const loadingActions = new Set();
     const loadingServers = new Set();
 
-    function pw() { return localStorage.getItem(AUTH_KEY) || ''; }
+    function loadTheme() {
+      const saved = localStorage.getItem(THEME_KEY) || 'midnight';
+      document.documentElement.setAttribute('data-theme', saved);
+      const sel = document.getElementById('theme-select');
+      if (sel) sel.value = saved;
+    }
+    function setTheme(name) {
+      document.documentElement.setAttribute('data-theme', name);
+      localStorage.setItem(THEME_KEY, name);
+    }
+    loadTheme();
+
+    function collectAllProjects(data) {
+      const out = [];
+      for (const s of data.servers || []) {
+        if (s.paused) continue;
+        for (const f of s.folders || []) {
+          out.push({
+            serverId: s.id,
+            serverName: s.name,
+            project: f.name,
+            running: f.running,
+            agent_url: f.agent_url,
+            touchedAt: f.touched_at || f.mtime || 0,
+          });
+        }
+      }
+      return out.sort((a, b) => b.touchedAt - a.touchedAt);
+    }
+
+    function renderProjectRow(p) {
+      const status = p.running
+        ? '<span class="badge run">running</span>'
+        : '<span class="badge">idle</span>';
+      const folder = folderFor(p.serverId, p.project) || {
+        name: p.project,
+        running: p.running,
+        agent_url: p.agent_url,
+      };
+      const btn = renderProjectActions(p.serverId, folder);
+      return `<div class="project-row">
+        <div class="project-row-text">
+          <div class="proj-name">${esc(p.project)}</div>
+          <div class="project-meta sub">
+            <span>${esc(p.serverName)}</span>
+            <span>·</span>
+            <span>${relTime(p.touchedAt)}</span>
+            ${status}
+          </div>
+        </div>
+        <div class="project-row-actions">${btn}</div>
+      </div>`;
+    }
     function setPw(v) { localStorage.setItem(AUTH_KEY, v); }
     function clearPw() { localStorage.removeItem(AUTH_KEY); }
     function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
@@ -338,13 +443,8 @@
       projectSearch = document.getElementById('project-search').value;
       if (lastSnapshot) renderRecentProjects(lastSnapshot);
     }
-    function onServerProjectSearchInput() {
-      serverProjectSearch = document.getElementById('server-project-search').value;
-      if (modalServer) {
-        const s = (lastSnapshot?.servers || []).find(x => x.id === modalServer.id);
-        if (s) renderServerModalProjects(s);
-      }
-    }
+
+    function pw() { return localStorage.getItem(AUTH_KEY) || ''; }
 
     async function api(path, opts = {}) {
       opts.headers = { 'Content-Type': 'application/json', 'X-Fleet-Password': pw(), ...(opts.headers || {}) };
@@ -436,44 +536,33 @@
     }
 
     function renderRecentProjects(data) {
-      const items = (showAllProjects ? (data.recentProjectsAll || data.recentProjects || []) : (data.recentProjects || []))
-        .filter(p => matchesProjectSearch(p.project, p.serverName, projectSearch));
-      const tbody = document.getElementById('recent-projects');
+      const searching = Boolean(normalizeSearch(projectSearch));
+      let items;
+      if (searching) {
+        items = collectAllProjects(data).filter(p => matchesProjectSearch(p.project, p.serverName, projectSearch));
+      } else {
+        items = (showAllProjects ? (data.recentProjectsAll || data.recentProjects || []) : (data.recentProjects || []));
+      }
+      const list = document.getElementById('recent-projects');
+      const titleEl = document.getElementById('projects-section-title');
+      const hintEl = document.getElementById('project-search-hint');
+      if (titleEl) titleEl.textContent = searching ? 'Search results' : (showAllProjects ? 'All projects' : 'Recent projects');
+      if (hintEl) {
+        hintEl.textContent = searching
+          ? `${items.length} match${items.length === 1 ? '' : 'es'} across all servers`
+          : '';
+      }
+      const toggleBtn = document.getElementById('toggle-all-projects');
+      if (toggleBtn) toggleBtn.classList.toggle('hidden', searching);
       if (!items.length) {
-        const msg = normalizeSearch(projectSearch)
+        const msg = searching
           ? `No projects match “${esc(projectSearch)}”`
           : 'No recent projects yet';
-        tbody.innerHTML = `<tr><td class="sub">${msg}</td></tr>`;
+        list.innerHTML = `<p class="sub">${msg}</p>`;
         return;
       }
-      tbody.innerHTML = items.map(p => {
-        const status = p.running
-          ? '<span class="badge run">running</span>'
-          : '<span class="badge">idle</span>';
-        const folder = folderFor(p.serverId, p.project) || {
-          name: p.project,
-          running: p.running,
-          agent_url: p.agent_url,
-        };
-        const btn = renderProjectActions(p.serverId, folder);
-        return `<tr>
-          <td class="project-identity">
-            <div class="project-identity-inner">
-              <div class="project-identity-text">
-                <div class="proj-name">${esc(p.project)}</div>
-                <div class="project-meta sub">
-                  <span>${esc(p.serverName)}</span>
-                  <span>·</span>
-                  <span>${relTime(p.touchedAt)}</span>
-                  ${status}
-                </div>
-              </div>
-              <div class="project-identity-actions">${btn}</div>
-            </div>
-          </td>
-        </tr>`;
-      }).join('');
-      document.getElementById('toggle-all-projects').textContent = showAllProjects ? 'Show recent 10' : 'All projects';
+      list.innerHTML = items.map(renderProjectRow).join('');
+      if (toggleBtn && !searching) toggleBtn.textContent = showAllProjects ? 'Show recent 10' : 'All projects';
     }
 
     function proxyBadge(s) {
@@ -482,6 +571,12 @@
       if (!p.enabled) return '<span class="badge">direct</span>';
       if (p.listening) return '<span class="badge ok">OK</span>';
       return '<span class="badge bad">down</span>';
+    }
+
+    function serverStatusBadge(s) {
+      if (s.paused) return '<span class="badge pause">paused</span>';
+      if (loadingServers.has(s.id)) return '<span class="badge run">refreshing</span>';
+      return s.online ? '<span class="badge ok">online</span>' : '<span class="badge bad">offline</span>';
     }
 
     function renderServersTable(servers) {
@@ -495,37 +590,46 @@
         const host = s.hostname ? `${esc(s.hostname)}` : '—';
         const ip = s.ip ? `<span class="sub"> · ${esc(s.ip)}</span>` : '';
         const ver = s.version ? `v${esc(s.version)}` : '—';
-        const isLoading = loadingServers.has(s.id);
-        const badge = isLoading
-          ? '<span class="badge run">refreshing</span>'
-          : (s.online ? '<span class="badge ok">online</span>' : `<span class="badge bad">offline</span>`);
-        return `<tr class="server-row${isLoading ? ' server-loading' : ''}" data-server="${esc(s.id)}">
+        const badge = serverStatusBadge(s);
+        const pauseLabel = s.paused ? 'Resume' : 'Pause';
+        const pauseClass = s.paused ? 'btn-primary' : 'btn-warn';
+        return `<tr class="server-row${s.paused ? ' paused' : ''}${loadingServers.has(s.id) ? ' server-loading' : ''}" data-server="${esc(s.id)}">
           <td><strong>${esc(s.name)}</strong> ${badge}</td>
           <td>${host}${ip}<br><a class="link sub" href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(s.url)}</a></td>
           <td>${ver}</td>
-          <td>${sm.cpu != null ? sm.cpu + '%' : '—'}</td>
-          <td>${sm.ram != null ? sm.ram + '%' : '—'}</td>
-          <td>${sm.workers ?? 0}</td>
-          <td>${proxyBadge(s)}</td>
-          <td><button class="btn btn-ghost btn-sm" type="button" data-open="${esc(s.id)}">Details</button></td>
+          <td>${s.paused ? '—' : (sm.cpu != null ? sm.cpu + '%' : '—')}</td>
+          <td>${s.paused ? '—' : (sm.ram != null ? sm.ram + '%' : '—')}</td>
+          <td>${s.paused ? '—' : (sm.workers ?? 0)}</td>
+          <td>${s.paused ? '—' : proxyBadge(s)}</td>
+          <td>
+            <span class="btn-group">
+              <button class="btn btn-ghost btn-sm" type="button" data-open="${esc(s.id)}">Details</button>
+              <button class="btn ${pauseClass} btn-sm" type="button" data-pause="${esc(s.id)}">${pauseLabel}</button>
+              <button class="btn btn-danger btn-sm" type="button" data-delete="${esc(s.id)}">Delete</button>
+            </span>
+          </td>
         </tr>`;
       }).join('');
       tbody.querySelectorAll('.server-row').forEach(row => {
-        row.addEventListener('click', () => openServerModal(row.dataset.server));
+        row.addEventListener('click', (e) => {
+          if (e.target.closest('button,a')) return;
+          openServerModal(row.dataset.server);
+        });
       });
       tbody.querySelectorAll('[data-open]').forEach(btn => {
         btn.addEventListener('click', e => { e.stopPropagation(); openServerModal(btn.dataset.open); });
       });
+      tbody.querySelectorAll('[data-pause]').forEach(btn => {
+        btn.addEventListener('click', e => { e.stopPropagation(); togglePauseServer(btn.dataset.pause); });
+      });
+      tbody.querySelectorAll('[data-delete]').forEach(btn => {
+        btn.addEventListener('click', e => { e.stopPropagation(); deleteServer(btn.dataset.delete); });
+      });
     }
 
     function renderServerModalProjects(s) {
-      const q = normalizeSearch(serverProjectSearch);
-      const folders = (s.folders || []).filter(f => matchesProjectSearch(f.name, s.name, serverProjectSearch));
-      const hint = document.getElementById('server-project-search-hint');
-      if (hint) {
-        const total = (s.folders || []).length;
-        hint.textContent = q && total ? `${folders.length} / ${total}` : (total ? `${total} projects` : '');
-      }
+      const q = normalizeSearch(projectSearch);
+      const folders = (s.folders || []).filter(f => matchesProjectSearch(f.name, s.name, projectSearch));
       const projs = folders.map(f => {
         const actions = renderProjectActions(s.id, f);
         const badge = `<span class="badge ${f.running ? 'run' : ''}">${f.running ? 'on' : 'off'}</span>`;
@@ -538,16 +642,13 @@
         </div>`;
       }).join('');
       document.getElementById('server-modal-projects').innerHTML = projs
-        || (q ? `<p class="sub">No projects match “${esc(serverProjectSearch)}”</p>` : '<p class="sub">No projects</p>');
+        || (q ? `<p class="sub">No projects match “${esc(projectSearch)}”</p>` : '<p class="sub">No projects</p>');
     }
 
     function openServerModal(id) {
       const s = (lastSnapshot?.servers || []).find(x => x.id === id);
       if (!s) return;
       modalServer = s;
-      serverProjectSearch = '';
-      const searchEl = document.getElementById('server-project-search');
-      if (searchEl) searchEl.value = '';
       touchServer(id);
       document.getElementById('server-modal-title').textContent = s.name;
       document.getElementById('server-modal-url').textContent = s.url + (s.ip ? ' · ' + s.ip : '');
@@ -593,6 +694,8 @@
     }
 
     async function refreshServer(serverId) {
+      const reg = (lastSnapshot?.servers || []).find(s => s.id === serverId);
+      if (reg?.paused) return;
       loadingServers.add(serverId);
       if (lastSnapshot) renderServersTable(lastSnapshot.servers || []);
       try {
@@ -621,11 +724,12 @@
 
         const registryRes = await api('/api/servers');
         const registry = (await registryRes.json()).servers || [];
+        const activeRegistry = registry.filter(s => !s.paused);
         const cachedIds = new Set((cached.servers || []).map(s => s.id));
         const refreshIds = [
           ...new Set([
-            ...(cached.servers || []).map(s => s.id),
-            ...registry.filter(s => !cachedIds.has(s.id)).map(s => s.id),
+            ...(cached.servers || []).filter(s => !s.paused).map(s => s.id),
+            ...activeRegistry.filter(s => !cachedIds.has(s.id)).map(s => s.id),
           ]),
         ];
         if (refreshIds.length) {
@@ -662,7 +766,13 @@
         try {
           const res = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name, url, password }) });
           const data = await res.json();
-          if (!res.ok) { document.getElementById('add-err').textContent = data.error || 'Failed'; return; }
+          if (!res.ok) {
+            const msg = res.status === 409
+              ? (data.error || 'Server already exists')
+              : (data.error || 'Failed');
+            document.getElementById('add-err').textContent = msg;
+            return;
+          }
           if (data.snapshot) {
             renderSnapshot(data.snapshot);
             saveLocalCache(data.snapshot);
@@ -674,6 +784,49 @@
           await refreshNow();
         } catch (e) { document.getElementById('add-err').textContent = e.message; }
       });
+    }
+
+    async function deleteServer(serverId) {
+      const s = (lastSnapshot?.servers || []).find(x => x.id === serverId);
+      const name = s?.name || 'this server';
+      if (!confirm(`Remove “${name}” from Fleet?`)) return;
+      try {
+        const res = await api(`/api/servers/${encodeURIComponent(serverId)}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json();
+          document.getElementById('msg').textContent = data.error || 'Delete failed';
+          return;
+        }
+        if (modalServer?.id === serverId) closeServerModal();
+        document.getElementById('msg').textContent = `Removed ${name}`;
+        await refreshNow();
+      } catch (e) {
+        document.getElementById('msg').textContent = e.message;
+      }
+    }
+
+    async function togglePauseServer(serverId) {
+      const s = (lastSnapshot?.servers || []).find(x => x.id === serverId);
+      const next = !s?.paused;
+      try {
+        const res = await api(`/api/servers/${encodeURIComponent(serverId)}/pause`, {
+          method: 'POST',
+          body: JSON.stringify({ paused: next }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          document.getElementById('msg').textContent = data.error || 'Pause failed';
+          return;
+        }
+        if (data.snapshot) {
+          renderSnapshot(data.snapshot);
+          saveLocalCache(data.snapshot);
+        }
+        document.getElementById('msg').textContent = next ? `Paused ${s?.name || 'server'}` : `Resumed ${s?.name || 'server'}`;
+        await refreshNow();
+      } catch (e) {
+        document.getElementById('msg').textContent = e.message;
+      }
     }
 
     function openProxyModal() { document.getElementById('proxy-modal').classList.remove('hidden'); }

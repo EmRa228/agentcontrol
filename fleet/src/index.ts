@@ -13,6 +13,7 @@ interface StoredServer {
   password: string;
   addedAt: number;
   lastAccessedAt?: number;
+  paused?: boolean;
 }
 
 interface ServerRecord {
@@ -284,6 +285,33 @@ function publicServer(s: StoredServer) {
     url: s.url,
     addedAt: s.addedAt,
     lastAccessedAt: s.lastAccessedAt || s.addedAt,
+    paused: Boolean(s.paused),
+  };
+}
+
+function findDuplicateServer(servers: StoredServer[], name: string, baseUrl: string): StoredServer | null {
+  const urlKey = baseUrl.toLowerCase();
+  const nameKey = name.toLowerCase();
+  for (const s of servers) {
+    try {
+      if (normalizeUrl(s.url).toLowerCase() === urlKey) return s;
+    } catch {
+      /* skip invalid stored url */
+    }
+    if (s.name.toLowerCase() === nameKey) return s;
+  }
+  return null;
+}
+
+function pausedServerSnapshot(server: StoredServer) {
+  return {
+    id: server.id,
+    name: server.name,
+    url: server.url,
+    lastAccessedAt: server.lastAccessedAt || server.addedAt,
+    online: false,
+    paused: true,
+    error: "paused by user",
   };
 }
 
@@ -383,7 +411,11 @@ async function snapshotOneServer(server: StoredServer) {
     name: server.name,
     url: server.url,
     lastAccessedAt: server.lastAccessedAt || server.addedAt,
+    paused: Boolean(server.paused),
   };
+  if (server.paused) {
+    return pausedServerSnapshot(server);
+  }
   try {
     const bundleRes = await proxyAgent(server, "/api/fleet/bundle");
     if (bundleRes.status === 401) {
@@ -481,15 +513,25 @@ async function reconcileSnapshotWithRegistry(kv: KVNamespace, cached: Record<str
 
   for (const s of registered) {
     if (!cachedIds.has(s.id)) {
-      serverList.push({
-        id: s.id,
-        name: s.name,
-        url: s.url,
-        lastAccessedAt: s.lastAccessedAt || s.addedAt,
-        online: false,
-        error: "pending refresh",
-      });
+      serverList.push(
+        s.paused
+          ? pausedServerSnapshot(s)
+          : {
+              id: s.id,
+              name: s.name,
+              url: s.url,
+              lastAccessedAt: s.lastAccessedAt || s.addedAt,
+              online: false,
+              paused: false,
+              error: "pending refresh",
+            },
+      );
     }
+  }
+
+  for (const entry of serverList) {
+    const reg = registered.find((s) => s.id === String(entry.id));
+    if (reg) entry.paused = Boolean(reg.paused);
   }
 
   const sorted = sortSnapshotsByRecent(serverList as Array<{ id: string; lastAccessedAt?: number }>);
@@ -534,7 +576,7 @@ async function refreshFleetServer(kv: KVNamespace, serverId: string) {
   const server = servers.find((s) => s.id === serverId);
   if (!server) return { error: "server not found" };
 
-  const snapshot = await snapshotOneServer(server);
+  const snapshot = server.paused ? pausedServerSnapshot(server) : await snapshotOneServer(server);
   const cached = (await readCachedSnapshot(kv)) || {
     servers: [],
     recentProjects: [],
@@ -563,7 +605,7 @@ async function refreshFleetServer(kv: KVNamespace, serverId: string) {
 async function pushProxyToServers(kv: KVNamespace, config: Record<string, unknown>) {
   const servers = await readServers(kv);
   const results = [];
-  for (const server of servers) {
+  for (const server of servers.filter((s) => !s.paused)) {
     try {
       const res = await proxyAgent(server, "/api/proxy/pool", "POST", config);
       results.push({
@@ -583,7 +625,7 @@ async function pushProxyToServers(kv: KVNamespace, config: Record<string, unknow
 async function updateAllPanels(kv: KVNamespace) {
   const servers = await readServers(kv);
   const results = [];
-  for (const server of servers) {
+  for (const server of servers.filter((s) => !s.paused)) {
     try {
       const res = await proxyAgent(server, "/api/update/apply", "POST");
       results.push({
@@ -694,6 +736,17 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
 
     const servers = await readServers(env.KV);
+    const duplicate = findDuplicateServer(servers, name, baseUrl);
+    if (duplicate) {
+      return json(
+        {
+          error: "A server with this name or URL is already registered",
+          server: publicServer(duplicate),
+        },
+        409,
+      );
+    }
+
     const entry: StoredServer = {
       id: crypto.randomUUID(),
       name,
@@ -718,6 +771,23 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     await writeServers(env.KV, servers);
     await removeServerFromSnapshot(env.KV, id);
     return json({ ok: true });
+  }
+
+  const pauseMatch = path.match(/^\/api\/servers\/([^/]+)\/pause$/);
+  if (pauseMatch && request.method === "POST") {
+    const id = pauseMatch[1];
+    const data = (await request.json().catch(() => ({}))) as { paused?: boolean };
+    const servers = await readServers(env.KV);
+    const idx = servers.findIndex((s) => s.id === id);
+    if (idx < 0) return json({ error: "server not found" }, 404);
+    const nextPaused = data.paused !== undefined ? Boolean(data.paused) : !servers[idx].paused;
+    servers[idx].paused = nextPaused;
+    await writeServers(env.KV, servers);
+    const refreshed = await refreshFleetServer(env.KV, id);
+    if ("error" in refreshed) {
+      return json({ ok: true, server: publicServer(servers[idx]) });
+    }
+    return json({ ok: true, server: publicServer(servers[idx]), snapshot: refreshed.snapshot });
   }
 
   if (path === "/api/servers/touch" && request.method === "POST") {
