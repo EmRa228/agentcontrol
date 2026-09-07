@@ -87,19 +87,14 @@
     .projects-table th, .servers-table th { text-align: left; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
     .projects-table td, .servers-table td { padding: 10px; border-bottom: 1px solid rgba(37,43,56,.6); vertical-align: middle; }
     .projects-table tr:hover, .servers-table tr:hover { background: rgba(255,255,255,.02); }
-    .project-list { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-    .project-row {
-      display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap;
-      padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
-      border-radius: 10px; max-width: 100%;
-    }
-    .project-row-text { min-width: 0; }
-    .project-row-actions { flex-shrink: 0; }
-    .project-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
+    .project-cell { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .project-cell-name { font-weight: 600; }
+    .project-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .search-input { max-width: 280px; margin-bottom: 0; width: auto; min-width: 180px; flex: 1 1 180px; }
-    .search-input-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; }
     .search-hint { font-size: .68rem; color: var(--muted); }
-    .theme-select { width: auto; min-width: 130px; padding: 6px 10px; font-size: .75rem; }
+    .header-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .theme-select { width: auto; padding: 2px 6px; font-size: .65rem; color: var(--muted); border: 1px solid transparent; background: transparent; border-radius: 6px; cursor: pointer; }
+    .theme-select:hover { color: var(--text); border-color: var(--border); background: var(--surface); }
     .proj-name { font-weight: 600; }
     .badge { font-size: .62rem; padding: 2px 7px; border-radius: 999px; font-weight: 700; }
     .badge.ok { background: rgba(61,214,140,.15); color: var(--green); }
@@ -123,14 +118,7 @@
     .chart-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
     .chart-box h3 { font-size: .65rem; color: var(--muted); margin-bottom: 4px; }
     canvas { width: 100%; display: block; }
-    .proj-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; align-items: flex-start; }
-    .proj-item {
-      display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap;
-      padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; max-width: 100%;
-    }
-    .proj-item-main { min-width: 0; }
-    .proj-item-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .proj-list { margin-top: 10px; }
     .modal-steps { list-style: none; margin: 12px 0; padding: 0; }
     .modal-steps li { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: .82rem; color: var(--muted); }
     .modal-steps li.active { color: var(--accent); }
@@ -177,20 +165,22 @@
         <h1>AgentControl Fleet</h1>
         <p class="sub">Multi-server overview · <span id="app-version">v…</span></p>
       </div>
-      <div class="live" id="live">● connecting…</div>
+      <div class="header-tools">
+        <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme" aria-label="Color theme">
+          <option value="midnight">Theme: Midnight</option>
+          <option value="light">Theme: Light</option>
+          <option value="nord">Theme: Nord</option>
+          <option value="dracula">Theme: Dracula</option>
+          <option value="solarized">Theme: Solarized</option>
+          <option value="github">Theme: GitHub</option>
+          <option value="rose">Theme: Rosé Pine</option>
+        </select>
+        <div class="live" id="live">● connecting…</div>
+      </div>
     </header>
     <p id="update-banner" class="update-banner hidden"></p>
     <div class="toolbar">
       <input id="project-search" class="search-input" type="search" placeholder="Search all projects…" autocomplete="off" oninput="onProjectSearchInput()">
-      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme">
-        <option value="midnight">Midnight</option>
-        <option value="light">Light</option>
-        <option value="nord">Nord</option>
-        <option value="dracula">Dracula</option>
-        <option value="solarized">Solarized</option>
-        <option value="github">GitHub</option>
-        <option value="rose">Rosé Pine</option>
-      </select>
       <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy settings</button>
       <button class="btn btn-ghost btn-sm" type="button" id="fleet-update-btn" onclick="checkFleetUpdate(true)">Update fleet UI</button>
@@ -206,7 +196,10 @@
         </div>
         <button class="btn btn-ghost btn-sm" type="button" id="toggle-all-projects" onclick="toggleAllProjects()">All projects</button>
       </div>
-      <div class="project-list" id="recent-projects"></div>
+      <table class="projects-table">
+        <thead><tr><th>Project</th><th>Server</th><th>Last activity</th><th>Status</th></tr></thead>
+        <tbody id="recent-projects"></tbody>
+      </table>
     </section>
 
     <section class="section" id="overview-section">
@@ -345,18 +338,17 @@
         agent_url: p.agent_url,
       };
       const btn = renderProjectActions(p.serverId, folder);
-      return `<div class="project-row">
-        <div class="project-row-text">
-          <div class="proj-name">${esc(p.project)}</div>
-          <div class="project-meta sub">
-            <span>${esc(p.serverName)}</span>
-            <span>·</span>
-            <span>${relTime(p.touchedAt)}</span>
-            ${status}
+      return `<tr>
+        <td>
+          <div class="project-cell">
+            <span class="btn-group">${btn}</span>
+            <span class="project-cell-name">${esc(p.project)}</span>
           </div>
-        </div>
-        <div class="project-row-actions">${btn}</div>
-      </div>`;
+        </td>
+        <td>${esc(p.serverName)}</td>
+        <td>${relTime(p.touchedAt)}</td>
+        <td>${status}</td>
+      </tr>`;
     }
     function setPw(v) { localStorage.setItem(AUTH_KEY, v); }
     function clearPw() { localStorage.removeItem(AUTH_KEY); }
@@ -543,7 +535,7 @@
       } else {
         items = (showAllProjects ? (data.recentProjectsAll || data.recentProjects || []) : (data.recentProjects || []));
       }
-      const list = document.getElementById('recent-projects');
+      const tbody = document.getElementById('recent-projects');
       const titleEl = document.getElementById('projects-section-title');
       const hintEl = document.getElementById('project-search-hint');
       if (titleEl) titleEl.textContent = searching ? 'Search results' : (showAllProjects ? 'All projects' : 'Recent projects');
@@ -558,10 +550,10 @@
         const msg = searching
           ? `No projects match “${esc(projectSearch)}”`
           : 'No recent projects yet';
-        list.innerHTML = `<p class="sub">${msg}</p>`;
+        tbody.innerHTML = `<tr><td colspan="4" class="sub">${msg}</td></tr>`;
         return;
       }
-      list.innerHTML = items.map(renderProjectRow).join('');
+      tbody.innerHTML = items.map(renderProjectRow).join('');
       if (toggleBtn && !searching) toggleBtn.textContent = showAllProjects ? 'Show recent 10' : 'All projects';
     }
 
@@ -630,19 +622,19 @@
     function renderServerModalProjects(s) {
       const q = normalizeSearch(projectSearch);
       const folders = (s.folders || []).filter(f => matchesProjectSearch(f.name, s.name, projectSearch));
-      const projs = folders.map(f => {
+      const rows = folders.map(f => {
         const actions = renderProjectActions(s.id, f);
         const badge = `<span class="badge ${f.running ? 'run' : ''}">${f.running ? 'on' : 'off'}</span>`;
-        return `<div class="proj-item">
-          <div class="proj-item-main">
-            <div class="proj-name">${esc(f.name)}</div>
-            <div class="sub">${esc(s.name)} · ${esc(f.touched_relative || f.mtime_relative || '')}</div>
-          </div>
-          <div class="proj-item-actions">${badge}<span class="btn-group">${actions}</span></div>
-        </div>`;
+        return `<tr>
+          <td><div class="project-cell"><span class="btn-group">${actions}</span><span class="project-cell-name">${esc(f.name)}</span></div></td>
+          <td>${esc(s.name)}</td>
+          <td>${esc(f.touched_relative || f.mtime_relative || '—')}</td>
+          <td>${badge}</td>
+        </tr>`;
       }).join('');
-      document.getElementById('server-modal-projects').innerHTML = projs
-        || (q ? `<p class="sub">No projects match “${esc(projectSearch)}”</p>` : '<p class="sub">No projects</p>');
+      document.getElementById('server-modal-projects').innerHTML = rows
+        ? `<table class="projects-table"><thead><tr><th>Project</th><th>Server</th><th>Last activity</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`
+        : (q ? `<p class="sub">No projects match “${esc(projectSearch)}”</p>` : '<p class="sub">No projects</p>');
     }
 
     function openServerModal(id) {
