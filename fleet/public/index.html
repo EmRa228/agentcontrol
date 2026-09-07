@@ -287,12 +287,15 @@
     const AUTH_KEY = 'agentcontrol_fleet_pw';
     const CACHE_KEY = 'agentcontrol_fleet_snapshot';
     const THEME_KEY = 'agentcontrol_fleet_theme';
-    const POLL_MS = 25000;
+    const POLL_MS = 60000;
+    const REGISTRY_POLL_EVERY = 10;
     let lastSnapshot = null;
     let showAllProjects = false;
     let projectSearch = '';
     let busy = false;
     let pollTimer = null;
+    let pollCount = 0;
+    let rotateIndex = 0;
     let modalServer = null;
     let pendingAgentUrl = null;
     const loadingActions = new Set();
@@ -459,7 +462,23 @@
     function showLogin() { document.getElementById('login').classList.remove('hidden'); document.getElementById('setup').classList.add('hidden'); document.getElementById('app').classList.add('hidden'); stopPoll(); }
     function showApp() { document.getElementById('login').classList.add('hidden'); document.getElementById('setup').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); startPoll(); }
     function stopPoll() { if (pollTimer) clearTimeout(pollTimer); pollTimer = null; }
-    function startPoll() { stopPoll(); pollTimer = setTimeout(pollFleet, POLL_MS); }
+    function startPoll() {
+      stopPoll();
+      if (document.hidden) return;
+      pollTimer = setTimeout(pollFleet, POLL_MS);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      const live = document.getElementById('live');
+      if (document.hidden) {
+        stopPoll();
+        if (live && !document.getElementById('app').classList.contains('hidden')) {
+          live.textContent = '○ paused';
+        }
+      } else if (!document.getElementById('app').classList.contains('hidden')) {
+        pollFleet();
+      }
+    });
 
     async function doLogin() {
       const btn = document.getElementById('login-btn');
@@ -648,7 +667,6 @@
       const s = (lastSnapshot?.servers || []).find(x => x.id === id);
       if (!s) return;
       modalServer = s;
-      touchServer(id);
       document.getElementById('server-modal-title').textContent = s.name;
       document.getElementById('server-modal-url').textContent = s.url + (s.ip ? ' · ' + s.ip : '');
       const sm = s.summary || {};
@@ -659,7 +677,6 @@
         <div class="chart-box"><h3>Workers</h3><div>${sm.workers ?? 0} / ${sm.projects ?? 0} projects</div></div>`;
       renderServerModalProjects(s);
       document.getElementById('server-modal').classList.remove('hidden');
-      pollFleet();
     }
 
     function closeServerModal() { document.getElementById('server-modal').classList.add('hidden'); modalServer = null; }
@@ -692,53 +709,68 @@
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch (_) {}
     }
 
-    async function refreshServer(serverId) {
+    async function refreshServer(serverId, persist = false) {
       const reg = (lastSnapshot?.servers || []).find(s => s.id === serverId);
-      if (reg?.paused) return;
+      if (reg?.paused) return null;
       loadingServers.add(serverId);
       if (lastSnapshot) renderServersTable(lastSnapshot.servers || []);
       try {
-        const res = await api(`/api/fleet/server/${encodeURIComponent(serverId)}`);
+        const qs = persist ? '?persist=1' : '';
+        const res = await api(`/api/fleet/server/${encodeURIComponent(serverId)}${qs}`);
         const data = await res.json();
         if (data.snapshot) {
           renderSnapshot(data.snapshot);
           saveLocalCache(data.snapshot);
         }
+        return data;
+      } catch (_) {
+        return null;
+      } finally {
+        loadingServers.delete(serverId);
+        if (lastSnapshot) renderServersTable(lastSnapshot.servers || []);
+      }
+    }
+
+    async function syncRegistryServers() {
+      try {
+        const registryRes = await api('/api/servers');
+        const registry = (await registryRes.json()).servers || [];
+        const known = new Set((lastSnapshot?.servers || []).map(s => s.id));
+        const missing = registry.filter(s => !s.paused && !known.has(s.id));
+        for (const s of missing) {
+          await refreshServer(s.id, true);
+        }
       } catch (_) {}
-      loadingServers.delete(serverId);
-      if (lastSnapshot) renderServersTable(lastSnapshot.servers || []);
     }
 
     async function pollFleet() {
-      if (document.getElementById('app').classList.contains('hidden')) return;
+      if (document.getElementById('app').classList.contains('hidden') || document.hidden) return;
       document.getElementById('live').textContent = '● refreshing…';
       try {
-        const local = loadLocalCache();
-        if (local && !lastSnapshot) renderSnapshot(local, true);
-
-        const cacheRes = await api('/api/fleet/cache');
-        const cached = await cacheRes.json();
-        renderSnapshot(cached, true);
-        saveLocalCache(cached);
-
-        const registryRes = await api('/api/servers');
-        const registry = (await registryRes.json()).servers || [];
-        const activeRegistry = registry.filter(s => !s.paused);
-        const cachedIds = new Set((cached.servers || []).map(s => s.id));
-        const refreshIds = [
-          ...new Set([
-            ...(cached.servers || []).filter(s => !s.paused).map(s => s.id),
-            ...activeRegistry.filter(s => !cachedIds.has(s.id)).map(s => s.id),
-          ]),
-        ];
-        if (refreshIds.length) {
-          await Promise.all(refreshIds.map(id => refreshServer(id)));
-        } else {
-          const res = await api('/api/fleet/snapshot');
-          const data = await res.json();
-          renderSnapshot(data);
-          saveLocalCache(data);
+        if (!lastSnapshot) {
+          const local = loadLocalCache();
+          if (local) renderSnapshot(local, true);
+          const cacheRes = await api('/api/fleet/cache');
+          const cached = await cacheRes.json();
+          renderSnapshot(cached, false);
+          saveLocalCache(cached);
         }
+
+        pollCount += 1;
+        if (pollCount % REGISTRY_POLL_EVERY === 0) {
+          await syncRegistryServers();
+        }
+
+        const servers = (lastSnapshot?.servers || []).filter(s => !s.paused);
+        if (!servers.length) {
+          document.getElementById('msg').textContent = '';
+          startPoll();
+          return;
+        }
+
+        const serverId = servers[rotateIndex % servers.length].id;
+        rotateIndex += 1;
+        await refreshServer(serverId, false);
         document.getElementById('msg').textContent = '';
       } catch (e) {
         if (e.message !== 'unauthorized') document.getElementById('live').textContent = '● error';
@@ -749,7 +781,15 @@
     async function refreshNow() {
       const btn = document.getElementById('refresh-btn');
       stopPoll();
-      await withButtonLoading(btn, () => pollFleet());
+      await withButtonLoading(btn, async () => {
+        document.getElementById('live').textContent = '● refreshing…';
+        const res = await api('/api/fleet/snapshot');
+        const data = await res.json();
+        renderSnapshot(data);
+        saveLocalCache(data);
+        document.getElementById('msg').textContent = '';
+      });
+      startPoll();
     }
 
     function openAddModal() { document.getElementById('add-modal').classList.remove('hidden'); }
@@ -933,7 +973,7 @@
         msgEl.textContent = 'Worker connected — opening Cursor…';
         setStartStep('redirect', 'done');
         document.getElementById('start-close').classList.remove('hidden');
-        await refreshServer(serverId);
+        await refreshServer(serverId, false);
         if (pendingAgentUrl) {
           setTimeout(() => { window.location.href = pendingAgentUrl; }, 600);
         }

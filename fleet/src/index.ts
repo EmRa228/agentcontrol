@@ -560,9 +560,7 @@ async function reconcileSnapshotWithRegistry(kv: KVNamespace, cached: Record<str
 
 async function buildFleetSnapshotFromCache(kv: KVNamespace) {
   const cached = await readCachedSnapshot(kv);
-  const reconciled = await reconcileSnapshotWithRegistry(kv, cached);
-  await kv.put(KV_SNAPSHOT, JSON.stringify(reconciled));
-  return reconciled;
+  return reconcileSnapshotWithRegistry(kv, cached);
 }
 
 async function removeServerFromSnapshot(kv: KVNamespace, serverId: string) {
@@ -584,7 +582,7 @@ async function removeServerFromSnapshot(kv: KVNamespace, serverId: string) {
 }
 
 
-async function refreshFleetServer(kv: KVNamespace, serverId: string) {
+async function refreshFleetServer(kv: KVNamespace, serverId: string, persist = false) {
   const servers = await readServers(kv);
   const server = servers.find((s) => s.id === serverId);
   if (!server) return { error: "server not found" };
@@ -611,7 +609,9 @@ async function refreshFleetServer(kv: KVNamespace, serverId: string) {
     overview: buildOverview(sorted),
     at: Date.now(),
   };
-  await kv.put(KV_SNAPSHOT, JSON.stringify(payload));
+  if (persist) {
+    await kv.put(KV_SNAPSHOT, JSON.stringify(payload));
+  }
   return { server: snapshot, snapshot: payload };
 }
 
@@ -770,7 +770,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     };
     servers.push(entry);
     await writeServers(env.KV, servers);
-    const refreshed = await refreshFleetServer(env.KV, entry.id);
+    const refreshed = await refreshFleetServer(env.KV, entry.id, true);
     if ("error" in refreshed) {
       return json({ server: publicServer(entry), warning: "saved but snapshot refresh failed" });
     }
@@ -796,7 +796,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const nextPaused = data.paused !== undefined ? Boolean(data.paused) : !servers[idx].paused;
     servers[idx].paused = nextPaused;
     await writeServers(env.KV, servers);
-    const refreshed = await refreshFleetServer(env.KV, id);
+    const refreshed = await refreshFleetServer(env.KV, id, true);
     if ("error" in refreshed) {
       return json({ ok: true, server: publicServer(servers[idx]) });
     }
@@ -823,7 +823,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const serverRefreshMatch = path.match(/^\/api\/fleet\/server\/([^/]+)$/);
   if (serverRefreshMatch && request.method === "GET") {
     const serverId = serverRefreshMatch[1];
-    const result = await refreshFleetServer(env.KV, serverId);
+    const persist = url.searchParams.get("persist") === "1";
+    const result = await refreshFleetServer(env.KV, serverId, persist);
     if ("error" in result) return json(result, 404);
     return json(result);
   }
