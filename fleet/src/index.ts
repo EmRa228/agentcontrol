@@ -469,11 +469,65 @@ async function readCachedSnapshot(kv: KVNamespace): Promise<Record<string, unkno
   }
 }
 
+async function reconcileSnapshotWithRegistry(kv: KVNamespace, cached: Record<string, unknown> | null) {
+  const registered = await readServers(kv);
+  if (!cached) return buildFleetSnapshot(kv);
+
+  const registeredIds = new Set(registered.map((s) => s.id));
+  const serverList = ((cached.servers as Array<Record<string, unknown>>) || []).filter((s) =>
+    registeredIds.has(String(s.id)),
+  );
+  const cachedIds = new Set(serverList.map((s) => String(s.id)));
+
+  for (const s of registered) {
+    if (!cachedIds.has(s.id)) {
+      serverList.push({
+        id: s.id,
+        name: s.name,
+        url: s.url,
+        lastAccessedAt: s.lastAccessedAt || s.addedAt,
+        online: false,
+        error: "pending refresh",
+      });
+    }
+  }
+
+  const sorted = sortSnapshotsByRecent(serverList as Array<{ id: string; lastAccessedAt?: number }>);
+  const recentKv = await readRecentProjects(kv);
+  return {
+    servers: sorted,
+    recentProjects: aggregateRecentProjects(sorted, recentKv, 10),
+    recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
+    overview: buildOverview(sorted),
+    at: (cached.at as number) || Date.now(),
+  };
+}
+
 async function buildFleetSnapshotFromCache(kv: KVNamespace) {
   const cached = await readCachedSnapshot(kv);
-  if (cached) return cached;
-  return buildFleetSnapshot(kv);
+  const reconciled = await reconcileSnapshotWithRegistry(kv, cached);
+  await kv.put(KV_SNAPSHOT, JSON.stringify(reconciled));
+  return reconciled;
 }
+
+async function removeServerFromSnapshot(kv: KVNamespace, serverId: string) {
+  const cached = await readCachedSnapshot(kv);
+  if (!cached) return;
+  const serverList = ((cached.servers as Array<Record<string, unknown>>) || []).filter(
+    (s) => String(s.id) !== serverId,
+  );
+  const recentKv = await readRecentProjects(kv);
+  const sorted = sortSnapshotsByRecent(serverList as Array<{ id: string; lastAccessedAt?: number }>);
+  const payload = {
+    servers: sorted,
+    recentProjects: aggregateRecentProjects(sorted, recentKv, 10),
+    recentProjectsAll: aggregateRecentProjects(sorted, recentKv, 500),
+    overview: buildOverview(sorted),
+    at: Date.now(),
+  };
+  await kv.put(KV_SNAPSHOT, JSON.stringify(payload));
+}
+
 
 async function refreshFleetServer(kv: KVNamespace, serverId: string) {
   const servers = await readServers(kv);
@@ -493,7 +547,7 @@ async function refreshFleetServer(kv: KVNamespace, serverId: string) {
   if (idx >= 0) serverList[idx] = snapshot;
   else serverList.push(snapshot);
 
-  const sorted = sortSnapshotsByRecent(serverList);
+  const sorted = sortSnapshotsByRecent(serverList as Array<{ id: string; lastAccessedAt?: number }>);
   const recentKv = await readRecentProjects(kv);
   const payload = {
     servers: sorted,
@@ -650,7 +704,11 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     };
     servers.push(entry);
     await writeServers(env.KV, servers);
-    return json({ server: publicServer(entry) });
+    const refreshed = await refreshFleetServer(env.KV, entry.id);
+    if ("error" in refreshed) {
+      return json({ server: publicServer(entry), warning: "saved but snapshot refresh failed" });
+    }
+    return json({ server: publicServer(entry), snapshot: refreshed.snapshot });
   }
 
   const deleteMatch = path.match(/^\/api\/servers\/([^/]+)$/);
@@ -658,6 +716,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const id = deleteMatch[1];
     const servers = (await readServers(env.KV)).filter((s) => s.id !== id);
     await writeServers(env.KV, servers);
+    await removeServerFromSnapshot(env.KV, id);
     return json({ ok: true });
   }
 

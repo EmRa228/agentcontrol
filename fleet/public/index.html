@@ -48,6 +48,14 @@
     .projects-table th, .servers-table th { text-align: left; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
     .projects-table td, .servers-table td { padding: 10px; border-bottom: 1px solid rgba(37,43,56,.6); vertical-align: middle; }
     .projects-table tr:hover, .servers-table tr:hover { background: rgba(255,255,255,.02); }
+    .project-identity { width: 100%; }
+    .project-identity-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .project-identity-text { min-width: 0; flex: 1 1 180px; }
+    .project-identity-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+    .project-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
+    .search-input { max-width: 280px; margin-bottom: 0; }
+    .search-input-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .search-hint { font-size: .68rem; color: var(--muted); }
     .proj-name { font-weight: 600; }
     .badge { font-size: .62rem; padding: 2px 7px; border-radius: 999px; font-weight: 700; }
     .badge.ok { background: rgba(61,214,140,.15); color: var(--green); }
@@ -70,7 +78,9 @@
     .chart-box h3 { font-size: .65rem; color: var(--muted); margin-bottom: 4px; }
     canvas { width: 100%; display: block; }
     .proj-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-    .proj-item { display: grid; grid-template-columns: 60px 1fr auto; gap: 8px; align-items: center; padding: 8px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; }
+    .proj-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
+    .proj-item-main { min-width: 0; flex: 1 1 200px; }
+    .proj-item-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
     .modal-steps { list-style: none; margin: 12px 0; padding: 0; }
     .modal-steps li { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: .82rem; color: var(--muted); }
     .modal-steps li.active { color: var(--accent); }
@@ -131,10 +141,13 @@
     <section class="section" id="recent-section">
       <div class="section-head">
         <div class="section-title">Recent projects (all servers)</div>
-        <button class="btn btn-ghost btn-sm" type="button" id="toggle-all-projects" onclick="toggleAllProjects()">All projects</button>
+        <div class="search-input-wrap">
+          <input id="project-search" class="search-input" type="search" placeholder="Filter projects…" autocomplete="off" oninput="onProjectSearchInput()">
+          <button class="btn btn-ghost btn-sm" type="button" id="toggle-all-projects" onclick="toggleAllProjects()">All projects</button>
+        </div>
       </div>
       <table class="projects-table">
-        <thead><tr><th>Project</th><th>Server</th><th>Last activity</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Project</th></tr></thead>
         <tbody id="recent-projects"></tbody>
       </table>
     </section>
@@ -178,6 +191,10 @@
       <p class="sub" id="server-modal-url"></p>
       <div class="server-detail-metrics" id="server-modal-metrics"></div>
       <div class="section-title">Projects</div>
+      <div class="search-input-wrap" style="margin-bottom:10px">
+        <input id="server-project-search" class="search-input" type="search" placeholder="Filter projects on this server…" autocomplete="off" oninput="onServerProjectSearchInput()">
+        <span class="search-hint" id="server-project-search-hint"></span>
+      </div>
       <div class="proj-list" id="server-modal-projects"></div>
       <div class="modal-actions">
         <button class="btn btn-ghost btn-sm" type="button" onclick="openServerPanel()">Open panel</button>
@@ -226,6 +243,8 @@
     const POLL_MS = 25000;
     let lastSnapshot = null;
     let showAllProjects = false;
+    let projectSearch = '';
+    let serverProjectSearch = '';
     let busy = false;
     let pollTimer = null;
     let modalServer = null;
@@ -307,6 +326,24 @@
       if (sec < 3600) return Math.floor(sec/60) + 'm ago';
       if (sec < 86400) return Math.floor(sec/3600) + 'h ago';
       return Math.floor(sec/86400) + 'd ago';
+    }
+    function normalizeSearch(value) { return (value || '').trim().toLowerCase(); }
+    function matchesProjectSearch(name, serverName, query) {
+      const q = normalizeSearch(query);
+      if (!q) return true;
+      const hay = `${name || ''} ${serverName || ''}`.toLowerCase();
+      return hay.includes(q);
+    }
+    function onProjectSearchInput() {
+      projectSearch = document.getElementById('project-search').value;
+      if (lastSnapshot) renderRecentProjects(lastSnapshot);
+    }
+    function onServerProjectSearchInput() {
+      serverProjectSearch = document.getElementById('server-project-search').value;
+      if (modalServer) {
+        const s = (lastSnapshot?.servers || []).find(x => x.id === modalServer.id);
+        if (s) renderServerModalProjects(s);
+      }
     }
 
     async function api(path, opts = {}) {
@@ -399,14 +436,20 @@
     }
 
     function renderRecentProjects(data) {
-      const items = showAllProjects ? (data.recentProjectsAll || data.recentProjects || []) : (data.recentProjects || []);
+      const items = (showAllProjects ? (data.recentProjectsAll || data.recentProjects || []) : (data.recentProjects || []))
+        .filter(p => matchesProjectSearch(p.project, p.serverName, projectSearch));
       const tbody = document.getElementById('recent-projects');
       if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="sub">No recent projects yet</td></tr>';
+        const msg = normalizeSearch(projectSearch)
+          ? `No projects match “${esc(projectSearch)}”`
+          : 'No recent projects yet';
+        tbody.innerHTML = `<tr><td class="sub">${msg}</td></tr>`;
         return;
       }
       tbody.innerHTML = items.map(p => {
-        const status = p.running ? '<span class="badge run">running</span>' : '<span class="badge">idle</span>';
+        const status = p.running
+          ? '<span class="badge run">running</span>'
+          : '<span class="badge">idle</span>';
         const folder = folderFor(p.serverId, p.project) || {
           name: p.project,
           running: p.running,
@@ -414,11 +457,20 @@
         };
         const btn = renderProjectActions(p.serverId, folder);
         return `<tr>
-          <td class="proj-name">${esc(p.project)}</td>
-          <td>${esc(p.serverName)}</td>
-          <td>${relTime(p.touchedAt)}</td>
-          <td>${status}</td>
-          <td>${btn}</td>
+          <td class="project-identity">
+            <div class="project-identity-inner">
+              <div class="project-identity-text">
+                <div class="proj-name">${esc(p.project)}</div>
+                <div class="project-meta sub">
+                  <span>${esc(p.serverName)}</span>
+                  <span>·</span>
+                  <span>${relTime(p.touchedAt)}</span>
+                  ${status}
+                </div>
+              </div>
+              <div class="project-identity-actions">${btn}</div>
+            </div>
+          </td>
         </tr>`;
       }).join('');
       document.getElementById('toggle-all-projects').textContent = showAllProjects ? 'Show recent 10' : 'All projects';
@@ -467,17 +519,35 @@
     }
 
     function renderServerModalProjects(s) {
-      const projs = (s.folders || []).map(f => {
+      const q = normalizeSearch(serverProjectSearch);
+      const folders = (s.folders || []).filter(f => matchesProjectSearch(f.name, s.name, serverProjectSearch));
+      const hint = document.getElementById('server-project-search-hint');
+      if (hint) {
+        const total = (s.folders || []).length;
+        hint.textContent = q && total ? `${folders.length} / ${total}` : (total ? `${total} projects` : '');
+      }
+      const projs = folders.map(f => {
         const actions = renderProjectActions(s.id, f);
-        return `<div class="proj-item"><div class="btn-group">${actions}</div><div><div class="proj-name">${esc(f.name)}</div><div class="sub">${esc(f.touched_relative || f.mtime_relative || '')}</div></div><span class="badge ${f.running?'run':''}">${f.running?'on':'off'}</span></div>`;
+        const badge = `<span class="badge ${f.running ? 'run' : ''}">${f.running ? 'on' : 'off'}</span>`;
+        return `<div class="proj-item">
+          <div class="proj-item-main">
+            <div class="proj-name">${esc(f.name)}</div>
+            <div class="sub">${esc(s.name)} · ${esc(f.touched_relative || f.mtime_relative || '')}</div>
+          </div>
+          <div class="proj-item-actions">${badge}<span class="btn-group">${actions}</span></div>
+        </div>`;
       }).join('');
-      document.getElementById('server-modal-projects').innerHTML = projs || '<p class="sub">No projects</p>';
+      document.getElementById('server-modal-projects').innerHTML = projs
+        || (q ? `<p class="sub">No projects match “${esc(serverProjectSearch)}”</p>` : '<p class="sub">No projects</p>');
     }
 
     function openServerModal(id) {
       const s = (lastSnapshot?.servers || []).find(x => x.id === id);
       if (!s) return;
       modalServer = s;
+      serverProjectSearch = '';
+      const searchEl = document.getElementById('server-project-search');
+      if (searchEl) searchEl.value = '';
       touchServer(id);
       document.getElementById('server-modal-title').textContent = s.name;
       document.getElementById('server-modal-url').textContent = s.url + (s.ip ? ' · ' + s.ip : '');
@@ -549,9 +619,17 @@
         renderSnapshot(cached, true);
         saveLocalCache(cached);
 
-        const servers = cached.servers || [];
-        if (servers.length) {
-          await Promise.all(servers.map(s => refreshServer(s.id)));
+        const registryRes = await api('/api/servers');
+        const registry = (await registryRes.json()).servers || [];
+        const cachedIds = new Set((cached.servers || []).map(s => s.id));
+        const refreshIds = [
+          ...new Set([
+            ...(cached.servers || []).map(s => s.id),
+            ...registry.filter(s => !cachedIds.has(s.id)).map(s => s.id),
+          ]),
+        ];
+        if (refreshIds.length) {
+          await Promise.all(refreshIds.map(id => refreshServer(id)));
         } else {
           const res = await api('/api/fleet/snapshot');
           const data = await res.json();
@@ -585,6 +663,13 @@
           const res = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name, url, password }) });
           const data = await res.json();
           if (!res.ok) { document.getElementById('add-err').textContent = data.error || 'Failed'; return; }
+          if (data.snapshot) {
+            renderSnapshot(data.snapshot);
+            saveLocalCache(data.snapshot);
+          }
+          document.getElementById('add-name').value = '';
+          document.getElementById('add-url').value = '';
+          document.getElementById('add-password').value = '';
           closeAddModal();
           await refreshNow();
         } catch (e) { document.getElementById('add-err').textContent = e.message; }
