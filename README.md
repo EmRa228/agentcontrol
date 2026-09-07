@@ -141,7 +141,8 @@ Header: `X-AgentControl-Auth: <password>`
 ## Multi-server fleet (Cloudflare Workers)
 
 Manage **all servers from one URL** — no central VPS, no Tunnel.  
-See **[fleet/README.md](fleet/README.md)** for deploy steps (`wrangler login` → KV → `npm run deploy` → first-visit password setup).
+See **[fleet/README.md](fleet/README.md)** for deploy steps (`wrangler login` → KV → `npm run deploy` → first-visit password setup).  
+Contributors changing Fleet polling or caching must read **[fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md)** (Workers/KV limits).
 
 ## License
 
