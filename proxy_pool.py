@@ -502,6 +502,27 @@ def ensure_proxy_ready(*, force_reselect: bool = False) -> dict[str, Any]:
     return result
 
 
+def _proxy_identity(parsed: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(parsed.get("protocol") or ""),
+        str(parsed.get("address") or ""),
+        int(parsed.get("port") or 0),
+        str(parsed.get("uuid") or parsed.get("password") or ""),
+    )
+
+
+def _pool_has_identity(pool: dict[str, Any], parsed: dict[str, Any]) -> bool:
+    target = _proxy_identity(parsed)
+    for item in pool.get("proxies") or []:
+        try:
+            existing = parse_share_url(str(item.get("share_url") or ""))
+        except ValueError:
+            continue
+        if _proxy_identity(existing) == target:
+            return True
+    return False
+
+
 def migrate_legacy_to_pool(pool: dict[str, Any] | None = None) -> dict[str, Any]:
     pool = pool or load_pool()
     settings = load_client_settings()
@@ -515,13 +536,20 @@ def migrate_legacy_to_pool(pool: dict[str, Any] | None = None) -> dict[str, Any]
             share = build_share_url(settings)
         except ValueError:
             share = ""
-    if share:
-        add_proxy_link(pool, share, name=settings.get("address") or "legacy")
-        pool["enabled"] = True
-        if not pool.get("active_proxy_id") and pool.get("proxies"):
-            pool["active_proxy_id"] = pool["proxies"][0]["id"]
-        save_pool(pool)
-        append_log(pool, "info", "Migrated legacy xray-client.yaml proxy into pool")
+    if not share:
+        return pool
+    try:
+        parsed = parse_share_url(share)
+    except ValueError:
+        return pool
+    if _pool_has_identity(pool, parsed):
+        return pool
+    add_proxy_link(pool, share, name=settings.get("address") or "legacy")
+    pool["enabled"] = True
+    if not pool.get("active_proxy_id") and pool.get("proxies"):
+        pool["active_proxy_id"] = pool["proxies"][0]["id"]
+    save_pool(pool)
+    append_log(pool, "info", "Migrated legacy xray-client.yaml proxy into pool")
     return pool
 
 

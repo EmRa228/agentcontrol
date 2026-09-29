@@ -544,8 +544,9 @@ def _stream_settings(settings: dict[str, Any]) -> dict[str, Any]:
 
     if network == "ws":
         headers = {}
-        if settings.get("host"):
-            headers["Host"] = settings["host"]
+        host = str(settings.get("host") or settings.get("server_name") or "").strip()
+        if host:
+            headers["Host"] = host
         ws_settings: dict[str, Any] = {"path": settings.get("path") or "/"}
         if headers:
             ws_settings["headers"] = headers
