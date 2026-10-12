@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: #0b0d12; color: #eef1f6; font-family: system-ui, sans-serif; padding: 16px; }
+    form { width: 100%; max-width: 360px; background: #141820; border: 1px solid #252b38;
+      border-radius: 12px; padding: 20px; }
+    h1 { font-size: 1.1rem; margin: 0 0 8px; }
+    p { margin: 0 0 14px; color: #8b93a7; font-size: .85rem; line-height: 1.4; }
+    label { display: block; font-size: .75rem; color: #8b93a7; margin: 10px 0 4px; }
+    input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid #252b38; background: #0d1016; color: #eef1f6; font-size: .95rem; }
+    button { margin-top: 12px; width: 100%; padding: 10px; border: 0; border-radius: 8px;
+      background: #5b8cff; color: #fff; font-weight: 600; cursor: pointer; font-size: .9rem; }
+    .err { color: #f07178; font-size: .8rem; margin-top: 8px; min-height: 1.1em; }
+  </style>
+</head>
+<body>
+  <form id="setup-form">
+    <h1>First-time setup</h1>
+    <p>Choose a password for this panel.</p>
+    <label for="pw1">Password</label>
+    <input id="pw1" type="password" autocomplete="new-password" required minlength="4">
+    <label for="pw2">Confirm</label>
+    <input id="pw2" type="password" autocomplete="new-password" required minlength="4">
+    <button type="submit">Continue</button>
+    <p class="err" id="error"></p>
+  </form>
+  <script>
+    const AUTH_KEY = 'agentcontrol_auth_' + location.host;
+    document.getElementById('setup-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const pw = document.getElementById('pw1').value;
+      const pw2 = document.getElementById('pw2').value;
+      const err = document.getElementById('error');
+      err.textContent = '';
+      const res = await fetch('/api/setup/password', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw, confirm: pw2 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { err.textContent = data.error || 'Setup failed'; return; }
+      localStorage.setItem(AUTH_KEY, pw);
+      location.replace('/');
+    });
+  </script>
+</body>
+</html>

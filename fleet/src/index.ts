@@ -369,6 +369,13 @@ function activityTs(ts: number | undefined | null): number {
   return ts < 1e12 ? ts * 1000 : ts;
 }
 
+function folderAgentUrl(folder: { agent_url?: string; worker_id?: string }): string | undefined {
+  if (folder.agent_url) return folder.agent_url;
+  const id = folder.worker_id;
+  if (!id) return undefined;
+  return `https://cursor.com/agents#workerId=${id}`;
+}
+
 function aggregateRecentProjects(
   snapshots: Array<Record<string, unknown>>,
   kvRecent: RecentProject[],
@@ -384,6 +391,7 @@ function aggregateRecentProjects(
       touched_relative?: string;
       mtime?: number;
       agent_url?: string;
+      worker_id?: string;
     }>;
     for (const f of folders) {
       fromSnapshots.push({
@@ -393,7 +401,7 @@ function aggregateRecentProjects(
         project: f.name,
         touchedAt: activityTs(f.touched_at || f.mtime),
         running: f.running,
-        agent_url: f.agent_url,
+        agent_url: folderAgentUrl(f),
       });
     }
   }
@@ -441,22 +449,33 @@ async function snapshotOneServer(server: StoredServer) {
         error: `HTTP ${bundleRes.status}`,
       };
     }
-    const bundle = (await bundleRes.json()) as {
+    const raw = await bundleRes.text();
+    let bundle: {
       system?: Record<string, unknown>;
       folders?: unknown[];
       history?: unknown[];
       version?: VersionInfo;
       proxy?: Record<string, unknown>;
     };
+    try {
+      bundle = JSON.parse(raw) as typeof bundle;
+    } catch {
+      return { ...base, online: false, error: "invalid JSON (response truncated?)" };
+    }
     const system = bundle.system || {};
-    const folders = bundle.folders || [];
+    const folders = (bundle.folders || []) as Array<Record<string, unknown>>;
     const cpu = system.cpu as { percent?: number; load_percent?: number; cores?: number } | undefined;
     const memory = system.memory as {
       percent?: number;
       swap_percent?: number | null;
       swap_used_human?: string | null;
     } | undefined;
-    const disk = system.disk_root as { percent?: number } | undefined;
+    const disk = system.disk_root as {
+      percent?: number;
+      used_human?: string;
+      total_human?: string;
+    } | undefined;
+    const diskIo = system.disk_io as { busy_percent?: number | null } | undefined;
     const panel = system.panel as { running_workers?: number; project_count?: number; version?: string } | undefined;
     const hostname = system.hostname as string | undefined;
     const ip = system.ip as string | undefined;
@@ -474,6 +493,9 @@ async function snapshotOneServer(server: StoredServer) {
         ram: memory?.percent ?? null,
         swap: memory?.swap_percent ?? null,
         disk: disk?.percent ?? null,
+        disk_used: disk?.used_human ?? null,
+        disk_total: disk?.total_human ?? null,
+        disk_io: diskIo?.busy_percent ?? null,
         workers: panel?.running_workers ?? 0,
         projects: panel?.project_count ?? folders.length,
       },

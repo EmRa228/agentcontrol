@@ -221,15 +221,9 @@
 <body>
   <div id="setup-gate" class="gate hidden">
     <div class="panel">
-      <h2>First-time setup</h2>
-      <p id="setup-desc">Configure this server.</p>
-      <div id="setup-password-step">
-        <label>Panel password</label>
-        <input id="setup-password" type="password" placeholder="Choose a password" autocomplete="new-password">
-        <label>Confirm password</label>
-        <input id="setup-password2" type="password" placeholder="Repeat password" autocomplete="new-password">
-      </div>
-      <div id="setup-api-step" class="hidden">
+      <h2>API key required</h2>
+      <p id="setup-desc">Add your Cursor personal API key to start workers.</p>
+      <div id="setup-api-step">
         <label>Cursor personal API key</label>
         <input id="setup-api-key" type="password" placeholder="crsr_..." autocomplete="off">
         <p>From <a href="https://cursor.com/settings" target="_blank" rel="noopener" style="color:var(--accent)">Cursor Settings → API Keys</a>. Stored on the server only.</p>
@@ -239,17 +233,9 @@
     </div>
   </div>
 
-  <div id="login-gate" class="gate hidden">
-    <div class="panel">
-      <h2>Sign in</h2>
-      <p>Password is saved in this browser (localStorage) — you won't need to sign in again.</p>
-      <input id="login-password" type="password" placeholder="Panel password" autocomplete="current-password">
-      <button class="btn btn-primary" type="button" style="width:100%;margin-top:12px" onclick="submitLogin()">Sign in</button>
-      <p id="login-error" class="err"></p>
-    </div>
-  </div>
+</div>
 
-  <div id="app" class="wrap hidden">
+  <div id="app" class="wrap">
     <header>
       <div>
         <h1>AgentControl</h1>
@@ -465,8 +451,9 @@
 
     async function apiFetch(url, opts = {}) {
       opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
+      opts.credentials = opts.credentials || 'same-origin';
       const res = await fetch(url, opts);
-      if (res.status === 401) { clearPassword(); showLogin('Wrong password'); throw new Error('unauthorized'); }
+      if (res.status === 401) { clearPassword(); location.replace('/'); throw new Error('unauthorized'); }
       if (res.status === 403) {
         const data = await res.json().catch(() => ({}));
         if (data.needs_password) { showSetup(); throw new Error('setup'); }
@@ -477,25 +464,12 @@
 
     function showSetup() {
       document.getElementById('setup-gate').classList.remove('hidden');
-      document.getElementById('login-gate').classList.add('hidden');
       document.getElementById('app').classList.add('hidden');
-      document.getElementById('setup-password-step').classList.toggle('hidden', !setupNeedsPassword);
-      document.getElementById('setup-api-step').classList.toggle('hidden', setupNeedsPassword || !setupNeedsApiKey);
-      document.getElementById('setup-desc').textContent = setupNeedsPassword
-        ? 'Create a panel password for this server.'
-        : 'Add your Cursor API key to start workers.';
     }
 
-    function showLogin(err) {
-      document.getElementById('login-gate').classList.remove('hidden');
-      document.getElementById('setup-gate').classList.add('hidden');
-      document.getElementById('app').classList.add('hidden');
-      if (err) document.getElementById('login-error').textContent = err;
-    }
 
     function showApp() {
       document.getElementById('setup-gate').classList.add('hidden');
-      document.getElementById('login-gate').classList.add('hidden');
       document.getElementById('app').classList.remove('hidden');
       if (!refreshTimer) refreshTimer = setInterval(refreshAll, 2000);
       loadSettingsPanel();
@@ -583,73 +557,25 @@
       const errEl = document.getElementById('setup-error');
       errEl.textContent = '';
       try {
-        if (setupNeedsPassword) {
-          const pw = document.getElementById('setup-password').value;
-          const pw2 = document.getElementById('setup-password2').value;
-          const res = await fetch('/api/setup/password', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: pw, confirm: pw2 }),
-          });
-          const data = await res.json();
-          if (!res.ok) { errEl.textContent = data.error || 'Failed'; return; }
-          storePassword(pw);
-          setupNeedsPassword = false;
-          const st = await (await fetch('/api/setup/status')).json();
-          setupNeedsApiKey = st.needs_api_key;
-          if (setupNeedsApiKey) { showSetup(); return; }
-        }
-        if (setupNeedsApiKey) {
-          const key = document.getElementById('setup-api-key').value.trim();
-          const res = await fetch('/api/setup/api-key', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ api_key: key }),
-          });
-          const data = await res.json();
-          if (!res.ok) { errEl.textContent = data.error || 'Failed'; return; }
-          setupNeedsApiKey = false;
-        }
-        showApp();
-      } catch (e) {
-        errEl.textContent = 'Setup failed';
-      }
-    }
-
-    async function submitLogin() {
-      const pw = document.getElementById('login-password').value.trim();
-      if (!pw) return;
-      storePassword(pw);
-      try {
-        const res = await apiFetch('/api/auth/login', {
+        const key = document.getElementById('setup-api-key').value.trim();
+        const res = await apiFetch('/api/setup/api-key', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: pw }),
+          body: JSON.stringify({ api_key: key }),
         });
-        if (!res.ok) { clearPassword(); document.getElementById('login-error').textContent = 'Wrong password'; return; }
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error || 'Failed'; return; }
         showApp();
-      } catch (e) {}
+      } catch (e) {
+        if (e.message !== 'unauthorized') errEl.textContent = 'Setup failed';
+      }
     }
 
-    document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') submitLogin(); });
 
     async function boot() {
-      const st = await (await fetch('/api/setup/status')).json();
-      setupNeedsPassword = st.needs_password;
-      setupNeedsApiKey = st.needs_api_key;
-      if (setupNeedsPassword || setupNeedsApiKey) { showSetup(); return; }
-      if (getStoredPassword()) {
-        try {
-          const res = await apiFetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: getStoredPassword() }),
-          });
-          if (res.ok) { showApp(); return; }
-        } catch (e) {}
-        clearPassword();
-      }
-      showLogin();
+      const st = await (await apiFetch('/api/setup/status')).json();
+      if (st.needs_api_key) { showSetup(); return; }
+      showApp();
     }
 
     function healthLevel(pct, loadMode) {

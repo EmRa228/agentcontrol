@@ -213,7 +213,7 @@
         <div class="section-title">Servers</div>
       </div>
       <table class="servers-table">
-        <thead><tr><th>Name</th><th>Host / IP</th><th>Version</th><th>CPU</th><th>RAM</th><th>Workers</th><th>Proxy</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Host / IP</th><th>Version</th><th>CPU</th><th>RAM</th><th>Disk</th><th>Disk IO</th><th>Workers</th><th>Proxy</th><th>Actions</th></tr></thead>
         <tbody id="servers-table"></tbody>
       </table>
     </section>
@@ -328,7 +328,7 @@
             serverName: s.name,
             project: f.name,
             running: f.running,
-            agent_url: f.agent_url,
+            agent_url: f.agent_url || (f.worker_id ? `https://cursor.com/agents#workerId=${f.worker_id}` : undefined),
             touchedAt: activityTs(f.touched_at || f.mtime),
           });
         }
@@ -597,10 +597,21 @@
       return s.online ? '<span class="badge ok">online</span>' : '<span class="badge bad">offline</span>';
     }
 
+    function formatDiskSummary(sm) {
+      if (!sm) return '—';
+      const pct = sm.disk != null ? sm.disk + '%' : null;
+      const used = sm.disk_used;
+      const total = sm.disk_total;
+      if (pct && used && total) return `${pct} · ${used}/${total}`;
+      if (pct) return pct;
+      if (used && total) return `${used}/${total}`;
+      return '—';
+    }
+
     function renderServersTable(servers) {
       const tbody = document.getElementById('servers-table');
       if (!servers.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="sub">No servers — click Add server</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="sub">No servers — click Add server</td></tr>';
         return;
       }
       tbody.innerHTML = servers.map(s => {
@@ -617,6 +628,8 @@
           <td>${ver}</td>
           <td>${s.paused ? '—' : (sm.cpu != null ? sm.cpu + '%' : '—')}</td>
           <td>${s.paused ? '—' : (sm.ram != null ? sm.ram + '%' : '—')}</td>
+          <td>${s.paused ? '—' : formatDiskSummary(sm)}</td>
+          <td>${s.paused ? '—' : (sm.disk_io != null ? sm.disk_io + '%' : '—')}</td>
           <td>${s.paused ? '—' : (sm.workers ?? 0)}</td>
           <td>${s.paused ? '—' : proxyBadge(s)}</td>
           <td>
@@ -673,7 +686,7 @@
       document.getElementById('server-modal-metrics').innerHTML = `
         <div class="chart-box"><h3>CPU</h3><div>${sm.cpu ?? '—'}% · load ${sm.load_pct ?? '—'}%</div></div>
         <div class="chart-box"><h3>RAM</h3><div>${sm.ram ?? '—'}%</div></div>
-        <div class="chart-box"><h3>Disk</h3><div>${sm.disk ?? '—'}%</div></div>
+        <div class="chart-box"><h3>Disk</h3><div>${formatDiskSummary(sm)}</div><div class="sub">IO busy: ${sm.disk_io != null ? sm.disk_io + '%' : '—'}</div></div>
         <div class="chart-box"><h3>Workers</h3><div>${sm.workers ?? 0} / ${sm.projects ?? 0} projects</div></div>`;
       renderServerModalProjects(s);
       document.getElementById('server-modal').classList.remove('hidden');

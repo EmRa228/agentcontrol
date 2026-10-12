@@ -23,7 +23,7 @@ from urllib.parse import quote
 from urllib.request import urlopen
 
 import yaml
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, Response
 
 from xray_client import (
     apply_client_settings,
@@ -291,6 +291,7 @@ METRICS_HISTORY: deque = deque(maxlen=1800)
 _CPU_CACHE = {"percent": 0.0, "cores": 1, "at": 0.0}
 _DOCKER_CACHE = {"data": None, "at": 0.0}
 _NET_CACHE = {"rx": 0, "tx": 0, "at": 0.0}
+_DISK_IO_CACHE = {"io_ms": 0, "at": 0.0}
 app = Flask(__name__)
 
 
@@ -307,15 +308,46 @@ def auth_enabled() -> bool:
     return bool(read_panel_password())
 
 
+AUTH_COOKIE = "agentcontrol_auth"
+AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+
+
 def extract_auth_token() -> str:
     header = request.headers.get("X-AgentControl-Auth", "")
     if header:
         return header.strip()
+    cookie = request.cookies.get(AUTH_COOKIE, "")
+    if cookie:
+        return cookie.strip()
     auth = request.headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return ""
 
+
+
+
+def set_auth_cookie(response, password: str):
+    response.set_cookie(
+        AUTH_COOKIE,
+        password.strip(),
+        max_age=AUTH_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="Lax",
+        path="/",
+    )
+    return response
+
+
+def clear_auth_cookie(response):
+    response.set_cookie(AUTH_COOKIE, "", max_age=0, httponly=True, samesite="Lax", path="/")
+    return response
+
+
+def panel_session_ok() -> bool:
+    if not auth_enabled():
+        return False
+    return password_ok(extract_auth_token())
 
 def password_ok(candidate: str) -> bool:
     expected = read_panel_password()
@@ -347,6 +379,8 @@ def require_panel_auth():
     open_endpoints = {
         "health",
         "index",
+        "connectivity_test",
+        "connectivity_test_minimal_html",
         "api_auth_login",
         "api_auth_status",
         "api_setup_status",
@@ -688,6 +722,33 @@ def load_percent(load_1: float, cores: int) -> float:
     if cores <= 0:
         return 0.0
     return round(min(999.0, (load_1 / cores) * 100), 1)
+
+
+def disk_io_stats() -> dict:
+    """Approximate aggregate disk busy % from /proc/diskstats (between samples)."""
+    now = time.time()
+    io_ms = 0
+    try:
+        with open("/proc/diskstats", encoding="utf-8") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 13:
+                    continue
+                name = parts[2]
+                if name.startswith(("loop", "ram", "dm-")):
+                    continue
+                io_ms += int(parts[12])
+    except OSError:
+        return {"busy_percent": None}
+
+    busy = None
+    if _DISK_IO_CACHE["at"] > 0:
+        dt = now - _DISK_IO_CACHE["at"]
+        if dt > 0:
+            delta = io_ms - _DISK_IO_CACHE["io_ms"]
+            busy = round(min(100.0, (delta / (dt * 1000)) * 100), 1)
+    _DISK_IO_CACHE.update({"io_ms": io_ms, "at": now})
+    return {"busy_percent": busy}
 
 
 def network_stats() -> dict:
@@ -1058,6 +1119,7 @@ def collect_system_info() -> dict:
             if scan_disk
             else None
         ),
+        "disk_io": disk_io_stats(),
         "agent": {
             "installed": bool(find_agent_bin()),
             "path": find_agent_bin(),
@@ -1433,15 +1495,19 @@ def stop_worker(name: str) -> tuple[dict, int]:
 
 @app.get("/")
 def index():
-    return render_template(
-        "index.html",
-        port=CFG["port"],
-        scan_root=CFG["scan_root"],
-        version=load_version(),
-        hostname=socket.gethostname(),
-        ip=primary_ip() or "",
-        host_label=request.host or socket.gethostname(),
-    )
+    ctx = {
+        "port": CFG["port"],
+        "scan_root": CFG["scan_root"],
+        "version": load_version(),
+        "hostname": socket.gethostname(),
+        "ip": primary_ip() or "",
+        "host_label": request.host or socket.gethostname(),
+    }
+    if not auth_enabled():
+        return render_template("gate_setup.html", **ctx)
+    if not panel_session_ok():
+        return render_template("gate_login.html", **ctx)
+    return render_template("index.html", **ctx)
 
 
 @app.post("/api/auth/login")
@@ -1451,7 +1517,8 @@ def api_auth_login():
     data = request.get_json(silent=True) or {}
     password = str(data.get("password", ""))
     if password_ok(password):
-        return jsonify({"ok": True, "auth_required": True})
+        resp = jsonify({"ok": True, "auth_required": True})
+        return set_auth_cookie(resp, password)
     return jsonify({"error": "wrong password", "auth_required": True}), 401
 
 
@@ -1490,7 +1557,8 @@ def api_setup_password():
     if password != confirm:
         return jsonify({"error": "passwords do not match"}), 400
     write_panel_password(password)
-    return jsonify({"ok": True})
+    resp = jsonify({"ok": True})
+    return set_auth_cookie(resp, password)
 
 
 @app.post("/api/setup/api-key")
@@ -1665,6 +1733,52 @@ def api_xray_client_test():
     )
 
 
+
+
+def fleet_system_summary() -> dict:
+    """Smaller system payload for Fleet (avoids DPI truncating large HTTP bodies)."""
+    info = collect_system_info()
+    info.pop("docker", None)
+    panel = info.get("panel") or {}
+    panel.pop("running_worker_names", None)
+    info["panel"] = panel
+    return info
+
+
+FLEET_FOLDER_KEYS = (
+    "name",
+    "path",
+    "running",
+    "ready",
+    "mtime_relative",
+    "touched_relative",
+    "worker_id",
+)
+
+
+def fleet_folders_summary(folders: list[dict]) -> list[dict]:
+    """Omit agent_url (cursor.com) from Fleet poll payloads — DPI-sensitive."""
+    return [{k: item.get(k) for k in FLEET_FOLDER_KEYS} for item in folders]
+
+
+def fleet_proxy_summary() -> dict:
+    status = pool_status()
+    active = status.get("active_proxy") or {}
+    check = active.get("last_check") or {}
+    return {
+        "enabled": status.get("enabled"),
+        "listening": status.get("listening"),
+        "active_proxy_id": status.get("active_proxy_id"),
+        "active_proxy": (
+            {"id": active.get("id"), "name": active.get("name"), "ok": check.get("ok")}
+            if active
+            else None
+        ),
+        "proxy_count": status.get("proxy_count"),
+        "subscription_count": status.get("subscription_count"),
+    }
+
+
 @app.get("/api/fleet/bundle")
 def api_fleet_bundle():
     folders = list_folders()
@@ -1674,12 +1788,11 @@ def api_fleet_bundle():
     migrate_legacy_to_pool()
     return jsonify(
         {
-            "system": collect_system_info(),
-            "folders": folders,
-            "history": list(METRICS_HISTORY),
+            "system": fleet_system_summary(),
+            "folders": fleet_folders_summary(folders),
             "scan_root": CFG["scan_root"],
             "version": load_version(),
-            "proxy": pool_status(),
+            "proxy": fleet_proxy_summary(),
         }
     )
 
@@ -1934,6 +2047,35 @@ def health():
             "version": version.get("version", "0.0.0"),
         }
     )
+
+
+@app.get("/connectivity-test")
+def connectivity_test():
+    """Plain-text page for international reachability checks (no auth, no JS)."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = (
+        "egress connectivity test\n"
+        "service=agentcontrol\n"
+        f"port={CFG['port']}\n"
+        f"host={request.host}\n"
+        f"time_utc={stamp}\n"
+        "If you can read this from outside Iran, HTTP on this port works.\n"
+    )
+    return Response(body, mimetype="text/plain; charset=utf-8")
+
+
+@app.get("/connectivity-test-minimal.html")
+def connectivity_test_minimal_html():
+    """Minimal HTML (no scripts/stylesheets) for content-filter experiments."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    html = (
+        "<!DOCTYPE html><html><head><meta charset=utf-8>"
+        "<title>connectivity test</title></head><body>"
+        "<p>egress connectivity test — agentcontrol port "
+        f"{CFG['port']}</p><p>time: {stamp}</p>"
+        "</body></html>"
+    )
+    return Response(html, mimetype="text/html; charset=utf-8")
 
 
 if __name__ == "__main__":

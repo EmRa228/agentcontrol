@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: #0b0d12; color: #eef1f6; font-family: system-ui, sans-serif; padding: 16px; }
+    form { width: 100%; max-width: 360px; background: #141820; border: 1px solid #252b38;
+      border-radius: 12px; padding: 20px; }
+    h1 { font-size: 1.1rem; margin: 0 0 8px; }
+    p { margin: 0 0 14px; color: #8b93a7; font-size: .85rem; line-height: 1.4; }
+    input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid #252b38; background: #0d1016; color: #eef1f6; font-size: .95rem; }
+    button { margin-top: 12px; width: 100%; padding: 10px; border: 0; border-radius: 8px;
+      background: #5b8cff; color: #fff; font-weight: 600; cursor: pointer; font-size: .9rem; }
+    .err { color: #f07178; font-size: .8rem; margin-top: 8px; min-height: 1.1em; }
+  </style>
+</head>
+<body>
+  <form id="login-form">
+    <h1>Sign in</h1>
+    <p>Enter the panel password to open the control panel.</p>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Continue</button>
+    <p class="err" id="error"></p>
+  </form>
+  <script>
+    const AUTH_KEY = 'agentcontrol_auth_' + location.host;
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const pw = document.getElementById('password').value.trim();
+      const err = document.getElementById('error');
+      err.textContent = '';
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        err.textContent = data.error === 'wrong password' ? 'Wrong password' : (data.error || 'Sign in failed');
+        return;
+      }
+      localStorage.setItem(AUTH_KEY, pw);
+      location.replace('/');
+    });
+    document.getElementById('password').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('login-form').requestSubmit();
+    });
+  </script>
+</body>
+</html>
