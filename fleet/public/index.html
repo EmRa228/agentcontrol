@@ -403,16 +403,18 @@
       const enc = encodeURIComponent(folder.name);
       const stopKey = actionKey('stop', serverId, folder.name);
       const startKey = actionKey('start', serverId, folder.name);
+      const parts = [];
       if (folder.running) {
-        const parts = [cursorBtn(serverId, folder.name, folder.agent_url || projectAgentUrl(serverId, folder.name))];
-        parts.push(isLoading(stopKey)
-          ? loadingBtn('Stop', 'btn-danger')
-          : `<button class="btn btn-danger btn-sm" type="button" onclick="stopWorker('${esc(serverId)}','${enc}')">Stop</button>`);
-        return `<span class="btn-group">${parts.filter(Boolean).join('')}</span>`;
+        const agentUrl = folder.agent_url || projectAgentUrl(serverId, folder.name);
+        if (agentUrl) parts.push(cursorBtn(serverId, folder.name, agentUrl));
       }
-      return isLoading(startKey)
+      parts.push(isLoading(startKey)
         ? loadingBtn('Start', 'btn-primary')
-        : `<button class="btn btn-primary btn-sm" type="button" onclick="startWorker('${esc(serverId)}','${enc}')">Start</button>`;
+        : `<button class="btn btn-primary btn-sm" type="button" onclick="startWorker('${esc(serverId)}','${enc}')">Start</button>`);
+      parts.push(isLoading(stopKey)
+        ? loadingBtn('Stop', 'btn-danger')
+        : `<button class="btn btn-danger btn-sm" type="button" onclick="stopWorker('${esc(serverId)}','${enc}')">Stop</button>`);
+      return `<span class="btn-group">${parts.filter(Boolean).join('')}</span>`;
     }
     function refreshActionButtons() {
       if (!lastSnapshot) return;

@@ -27,3 +27,5 @@ default_model: ""
 
 # Path to agent CLI (empty = search PATH)
 agent_bin: ""
+
+# Cursor edge bridge: use /etc/agentcontrol/.env (see .env.example), not this file, for IPs.

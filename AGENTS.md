@@ -425,3 +425,19 @@ Project owner often communicates in **Persian (Farsi)**. Summaries and install i
 - [README.md](README.md) — install, config, service commands
 - [fleet/README.md](fleet/README.md) — install, user guide, custom domain
 - [fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md) — Workers/KV limits and fleet design rules for contributors
+
+---
+
+## Cursor edge bridge (Iran → foreign VPS)
+
+When `api2.cursor.sh` is region-blocked, workers use a **TLS stream proxy** on a foreign VPS (`cursor-edge-proxy`).
+
+| Item | Location |
+|------|----------|
+| Secrets / foreign IP | `/etc/agentcontrol/.env` (from `.env.example`, **never commit**) |
+| Panel UI | Settings → **Cursor edge bridge** → Save / **Test Cursor connection** |
+| Code | `cursor_bridge.py` — sets `CURSOR_API_ENDPOINT`, updates `/etc/hosts` marker `agentcontrol-cursor-bridge` |
+
+API: `GET/POST /api/settings/bridge`, `POST /api/settings/bridge/test`
+
+Workers call `apply_cursor_bridge_env()` after `apply_proxy_env()`.

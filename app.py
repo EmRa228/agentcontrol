@@ -39,6 +39,13 @@ from xray_client import (
     test_cursor_api,
     test_proxy,
 )
+from cursor_bridge import (
+    apply_cursor_bridge_env,
+    load_bridge_settings,
+    public_bridge_settings,
+    save_bridge_from_panel,
+    test_cursor_bridge,
+)
 from proxy_pool import (
     add_proxy_link,
     add_subscription,
@@ -281,6 +288,7 @@ def save_config_patch(updates: dict) -> None:
 
 
 CFG = load_config()
+load_bridge_settings()  # /etc/agentcontrol/.env → os.environ
 STATE_DIR = Path(CFG["state_dir"])
 STATE_FILE = STATE_DIR / "workers.json"
 WORKER_DATA_ROOT = STATE_DIR / "worker-data"
@@ -420,6 +428,7 @@ def list_agent_models() -> list[dict]:
     if not agent_bin:
         return []
     env = apply_proxy_env(os.environ.copy())
+    env = apply_cursor_bridge_env(env)
     api_key = read_api_key()
     if api_key:
         env["CURSOR_API_KEY"] = api_key
@@ -523,6 +532,7 @@ def verify_cursor_api_key(api_key: str) -> dict[str, object]:
     check_dir = Path("/tmp/agentcontrol-key-check")
     check_dir.mkdir(parents=True, exist_ok=True)
     env = apply_proxy_env(os.environ.copy())
+    env = apply_cursor_bridge_env(env)
     env["CURSOR_API_KEY"] = key
     env["PATH"] = "/root/.local/bin:" + env.get("PATH", "")
 
@@ -1413,6 +1423,7 @@ def start_worker(name: str) -> tuple[dict, int]:
     worker_id = worker_id_for(name)
     port = mgmt_port(name)
     env = apply_proxy_env(os.environ.copy())
+    env = apply_cursor_bridge_env(env)
     env["CURSOR_AGENT_WORKER_ID"] = worker_id
     env["CURSOR_API_KEY"] = api_key
     env["PATH"] = "/root/.local/bin:" + env.get("PATH", "")
@@ -1603,8 +1614,33 @@ def api_settings():
             "idle_hours": round(CFG["idle_release_seconds"] / 3600, 1),
             "scan_root": CFG["scan_root"],
             "port": CFG["port"],
+            "api_key_set": bool(read_api_key()),
+            "cursor_bridge": public_bridge_settings(),
         }
     )
+
+
+@app.get("/api/settings/bridge")
+def api_settings_bridge_get():
+    return jsonify(public_bridge_settings())
+
+
+@app.post("/api/settings/bridge")
+def api_settings_bridge_save():
+    data = request.get_json(silent=True) or {}
+    try:
+        settings = save_bridge_from_panel(data)
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "cursor_bridge": public_bridge_settings(), "endpoint": settings.endpoint})
+
+
+@app.post("/api/settings/bridge/test")
+def api_settings_bridge_test():
+    api_key = read_api_key()
+    result = test_cursor_bridge(api_key=api_key)
+    status = 200 if result.get("ok") else 502
+    return jsonify(result), status
 
 
 @app.post("/api/settings/model")

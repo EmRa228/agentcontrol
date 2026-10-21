@@ -22,6 +22,21 @@
     .btn { border: none; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; font-size: .85rem; }
     .btn-primary { background: var(--accent); color: #fff; }
     .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-sm { padding: 6px 10px; font-size: .75rem; }
+    .btn-danger { background: rgba(240,113,120,.15); color: var(--red); border: 1px solid rgba(240,113,120,.3); }
+    .btn-group { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .badge { font-size: .65rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+    .badge.run { border-color: rgba(61,214,140,.35); color: var(--green); }
+    .projects-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: auto; margin-bottom: 16px; }
+    .projects-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+    .projects-table th, .projects-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .projects-table th { font-size: .65rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+    .projects-table tr:last-child td { border-bottom: none; }
+    .project-row.running td { background: rgba(61,214,140,.04); }
+    .project-row.pressing { outline: 1px solid var(--accent); }
+    .project-path { font-size: .65rem; color: var(--muted); margin-top: 2px; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
     .btn-sm { padding: 7px 12px; font-size: .78rem; }
     .btn.loading, .btn:disabled { opacity: 0.65; cursor: wait; }
     .err { color: var(--red); font-size: .78rem; min-height: 1.2em; margin-top: 8px; }
@@ -93,8 +108,7 @@
     }
     .docker-item:first-child { border-top: none; }
     .docker-item-name { font-weight: 600; margin-bottom: 4px; }
-    #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; margin-bottom: 16px; }
-    @media (min-width: 1100px) { #list { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); } }
+    #list { display: block; margin-bottom: 8px; }
     .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
     .toolbar .pill { font-size: .72rem; color: var(--muted); padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); }
     .pool-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; max-height: 200px; overflow: auto; }
@@ -255,7 +269,7 @@
       <span class="pill" id="toolbar-cpu-pill">CPU: …</span>
     </div>
 
-    <div class="section-title">Projects — hold to hide · tap Start / Stop</div>
+    <div class="section-title">Projects — right-click or long-press to hide</div>
     <div id="list"><p class="loading">Loading projects…</p></div>
     <p id="msg"></p>
 
@@ -352,6 +366,29 @@
             <button class="btn btn-primary btn-sm" type="button" onclick="saveDefaultModel()">Save model</button>
           </div>
           <div class="api-key-hint" id="settings-model-status">—</div>
+        </div>
+        <div class="settings-block">
+          <div class="section-title">Cursor edge bridge</div>
+          <p class="settings-note">When direct <code>api2.cursor.sh</code> fails (region block), route workers through your foreign VPS TLS stream proxy. Values are stored in <code>/etc/agentcontrol/.env</code> on this server (not in the public Git repo).</p>
+          <div class="xray-mode">
+            <div>
+              <label for="bridge-enabled">Use edge bridge</label>
+              <div class="hint">Sets <code>CURSOR_API_ENDPOINT</code> for every worker</div>
+            </div>
+            <input id="bridge-enabled" type="checkbox">
+          </div>
+          <div class="xray-grid" style="margin-top:10px">
+            <div><label>Edge server IP</label><input id="bridge-edge-ip" placeholder="203.0.113.10" autocomplete="off"></div>
+            <div><label>Port</label><input id="bridge-port" type="number" min="1" max="65535" placeholder="33443"></div>
+            <div><label>TLS hostname (SNI)</label><input id="bridge-tls-host" placeholder="api2.cursor.sh"></div>
+            <div class="full"><label>Full endpoint URL (optional override)</label><input id="bridge-endpoint" placeholder="https://api2.cursor.sh:33443"></div>
+          </div>
+          <div class="xray-actions">
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveBridgeSettings()">Save bridge</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="testBridgeConnection()">Test Cursor connection</button>
+          </div>
+          <div class="api-key-hint" id="bridge-settings-status">—</div>
+          <pre class="xray-log hidden" id="bridge-test-log"></pre>
         </div>
         <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" onclick="closeSettingsModal()">Close</button></div>
       </div>
@@ -944,18 +981,40 @@
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
     }
 
+    function openCursorUrl(url) {
+      if (!url) return;
+      window.location.href = url;
+    }
+
+    function renderProjectActions(folder) {
+      const parts = [];
+      if (folder.running && folder.agent_url) {
+        const encUrl = encodeURIComponent(folder.agent_url);
+        parts.push(`<button type="button" class="btn btn-primary btn-sm" onclick="openCursorUrl(decodeURIComponent('${encUrl}'))">Cursor</button>`);
+      }
+      const dis = busy ? ' disabled' : '';
+      parts.push(`<button type="button" class="btn btn-primary btn-sm" data-action="start"${dis}>Start</button>`);
+      parts.push(`<button type="button" class="btn btn-danger btn-sm" data-action="stop"${dis}>Stop</button>`);
+      return `<span class="btn-group">${parts.join('')}</span>`;
+    }
+
     function renderFolders(folders) {
-      if (!folders.length) { list.innerHTML = '<p class="loading">No folders found</p>'; lastFoldersJson = '[]'; return; }
-      const json = JSON.stringify(folders.map(f => ({ n: f.name, r: f.running, t: f.mtime_relative })));
-      if (json === lastFoldersJson && list.querySelector('.row')) return;
+      if (!folders.length) { list.innerHTML = '<p class="loading">No projects found</p>'; lastFoldersJson = '[]'; return; }
+      const json = JSON.stringify(folders.map(f => ({ n: f.name, r: f.running, rd: f.ready, t: f.touched_relative })));
+      if (json === lastFoldersJson && list.querySelector('.projects-table')) return;
       lastFoldersJson = json;
-      list.innerHTML = folders.map(f => {
+      const rows = folders.map(f => {
         const running = f.running ? ' running' : '';
-        const action = f.running
-          ? '<button type="button" class="action stop" data-action="stop">Stop</button>'
-          : '<button type="button" class="action start" data-action="start">Start</button>';
-        return `<div class="row${running}" data-name="${esc(f.name)}" data-path="${esc(f.path)}">${action}<div><div class="name">${esc(f.name)}</div><div class="time">${esc(f.touched_relative || f.mtime_relative)}</div></div></div>`;
+        const badge = `<span class="badge ${f.running ? 'run' : ''}">${f.running ? 'on' : 'off'}</span>`;
+        const statusHint = f.running && f.ready ? ' · connected' : '';
+        return `<tr class="project-row${running}" data-name="${esc(f.name)}" data-path="${esc(f.path)}">
+          <td><strong>${esc(f.name)}</strong><div class="project-path">${esc(f.path)}</div></td>
+          <td>${esc(f.touched_relative || f.mtime_relative || '—')}</td>
+          <td>${badge}<span class="sub">${statusHint}</span></td>
+          <td>${renderProjectActions(f)}</td>
+        </tr>`;
       }).join('');
+      list.innerHTML = `<div class="projects-section"><table class="projects-table"><thead><tr><th>Project</th><th>Last activity</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
     let pendingAgentUrl = null;
@@ -1031,12 +1090,12 @@
     }
 
     function removeProjectRow(name) {
-      const row = [...list.querySelectorAll('.row')].find(r => r.dataset.name === name);
+      const row = [...list.querySelectorAll('.project-row')].find(r => r.dataset.name === name);
       if (row) {
         row.classList.add('removing');
         setTimeout(() => {
           row.remove();
-          if (!list.querySelector('.row')) {
+          if (!list.querySelector('.project-row')) {
             list.innerHTML = '<p class="loading">No folders found</p>';
           }
         }, 150);
@@ -1074,7 +1133,68 @@
             : 'No API key saved yet — workers cannot start.';
           statusEl.className = 'api-key-hint' + (settings.api_key_set ? ' ok' : '');
         }
+        const bridge = settings.cursor_bridge || {};
+        document.getElementById('bridge-enabled').checked = !!bridge.enabled;
+        document.getElementById('bridge-edge-ip').value = bridge.edge_ip || '';
+        document.getElementById('bridge-port').value = bridge.port || 33443;
+        document.getElementById('bridge-tls-host').value = bridge.tls_host || 'api2.cursor.sh';
+        document.getElementById('bridge-endpoint').value = bridge.endpoint || '';
+        const bStatus = document.getElementById('bridge-settings-status');
+        if (bridge.enabled && bridge.endpoint) {
+          bStatus.textContent = 'Active endpoint: ' + bridge.endpoint + (bridge.hosts_configured ? ' · /etc/hosts OK' : ' · hosts pending');
+          bStatus.className = 'api-key-hint ok';
+        } else {
+          bStatus.textContent = 'Direct api2 (no edge bridge)';
+          bStatus.className = 'api-key-hint';
+        }
       } catch (e) {}
+    }
+
+    async function saveBridgeSettings() {
+      const status = document.getElementById('bridge-settings-status');
+      const payload = {
+        enabled: document.getElementById('bridge-enabled').checked,
+        edge_ip: document.getElementById('bridge-edge-ip').value.trim(),
+        port: parseInt(document.getElementById('bridge-port').value, 10) || 33443,
+        tls_host: document.getElementById('bridge-tls-host').value.trim() || 'api2.cursor.sh',
+        endpoint: document.getElementById('bridge-endpoint').value.trim(),
+      };
+      try {
+        const res = await apiFetch('/api/settings/bridge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) { status.textContent = data.error || 'Save failed'; status.className = 'api-key-hint'; return; }
+        status.textContent = 'Saved — endpoint: ' + (data.endpoint || data.cursor_bridge?.endpoint || '—');
+        status.className = 'api-key-hint ok';
+        await loadSettingsPanel();
+      } catch (e) {
+        status.textContent = 'Save failed';
+      }
+    }
+
+    async function testBridgeConnection() {
+      const status = document.getElementById('bridge-settings-status');
+      const logEl = document.getElementById('bridge-test-log');
+      status.textContent = 'Testing edge bridge…';
+      logEl.classList.remove('hidden');
+      logEl.textContent = '';
+      try {
+        const res = await apiFetch('/api/settings/bridge/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json();
+        logEl.textContent = JSON.stringify(data, null, 2);
+        if (data.ok) {
+          status.textContent = 'OK — HTTP ' + data.http_status + (data.worker_auth_ok ? ' · worker auth OK' : '');
+          status.className = 'api-key-hint ok';
+        } else {
+          status.textContent = data.error || 'Test failed';
+          status.className = 'api-key-hint';
+        }
+      } catch (e) {
+        status.textContent = 'Test failed';
+      }
     }
 
     async function saveDefaultModel() {
@@ -1131,7 +1251,7 @@
         if (!btn) return;
         e.preventDefault();
         e.stopPropagation();
-        const row = btn.closest('.row');
+        const row = btn.closest('.project-row');
         const name = row?.dataset.name;
         if (!name || busy) return;
         if (btn.dataset.action === 'start') startAgent(name);
@@ -1139,7 +1259,7 @@
       });
 
       list.addEventListener('contextmenu', (e) => {
-        const row = e.target.closest('.row');
+        const row = e.target.closest('.project-row');
         if (!row) return;
         e.preventDefault();
         openCtxModal(row.dataset.name);
@@ -1153,8 +1273,8 @@
       };
 
       list.addEventListener('touchstart', (e) => {
-        const row = e.target.closest('.row');
-        if (!row || e.target.closest('[data-action]')) return;
+        const row = e.target.closest('.project-row');
+        if (!row || e.target.closest('[data-action]') || e.target.closest('.btn')) return;
         clearPress();
         longPressRow = row;
         row.classList.add('pressing');
