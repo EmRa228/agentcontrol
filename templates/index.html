@@ -381,7 +381,7 @@
             <div><label>Edge server IP</label><input id="bridge-edge-ip" placeholder="203.0.113.10" autocomplete="off"></div>
             <div><label>Port</label><input id="bridge-port" type="number" min="1" max="65535" placeholder="33443"></div>
             <div><label>TLS hostname (SNI)</label><input id="bridge-tls-host" placeholder="api2.cursor.sh"></div>
-            <div class="full"><label>Full endpoint URL (optional override)</label><input id="bridge-endpoint" placeholder="https://api2.cursor.sh:33443"></div>
+            <div class="full"><label>Full endpoint URL (optional override)</label><input id="bridge-endpoint" placeholder="https://api2.cursor.sh:33443"><p class="settings-note">Use <strong>https://api2.cursor.sh:PORT</strong> only — not <code>http://EDGE_IP</code>. The edge port is TLS passthrough, not HTTP.</p></div>
           </div>
           <div class="xray-actions">
             <button class="btn btn-primary btn-sm" type="button" onclick="saveBridgeSettings()">Save bridge</button>

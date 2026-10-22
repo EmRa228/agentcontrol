@@ -201,7 +201,11 @@ def save_bridge_from_panel(data: dict[str, object]) -> BridgeSettings:
         values["CURSOR_API_ENDPOINT"] = ""
         values["CURSOR_BRIDGE_EDGE_IP"] = ""
     elif endpoint_override:
-        values["CURSOR_API_ENDPOINT"] = endpoint_override.rstrip("/")
+        ep = endpoint_override.rstrip("/")
+        # Stream bridge is TLS to api2 hostname — not plain HTTP to the edge IP.
+        if ep.lower().startswith("http://") and edge_ip and edge_ip in ep:
+            ep = f"https://{tls_host}:{port}"
+        values["CURSOR_API_ENDPOINT"] = ep
     elif edge_ip:
         values["CURSOR_API_ENDPOINT"] = f"https://{tls_host}:{port}"
     else:
@@ -216,18 +220,60 @@ def save_bridge_from_panel(data: dict[str, object]) -> BridgeSettings:
     return settings
 
 
+def tcp_reachable(host: str, port: int, timeout: float = 8.0) -> tuple[bool, str]:
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, int(port)))
+        return True, "tcp ok"
+    except OSError as exc:
+        return False, str(exc)
+    finally:
+        sock.close()
+
+
 def test_cursor_bridge(api_key: str | None = None) -> dict[str, object]:
     settings = load_bridge_settings()
     endpoint = settings.endpoint
     if not settings.enabled or not endpoint:
         return {"ok": False, "error": "Edge bridge is disabled or incomplete (.env)"}
 
+    if endpoint.lower().startswith("http://"):
+        endpoint = f"https://{settings.tls_host}:{settings.port}"
+        result_hint = "normalized_endpoint"
+    else:
+        result_hint = None
+
     hosts_ok, hosts_msg = apply_bridge_hosts(settings)
     result: dict[str, object] = {
         "endpoint": endpoint,
+        "edge_ip": settings.edge_ip,
+        "edge_port": settings.port,
         "hosts_ok": hosts_ok,
         "hosts_msg": hosts_msg,
     }
+    if result_hint:
+        result["hint"] = (
+            "Edge proxy uses TLS stream — use https://api2.cursor.sh:PORT "
+            "(not http://EDGE_IP). Endpoint was normalized for this test."
+        )
+
+    if settings.edge_ip:
+        tcp_ok, tcp_err = tcp_reachable(settings.edge_ip, settings.port)
+        result["tcp_ok"] = tcp_ok
+        if not tcp_ok:
+            result.update(
+                {
+                    "ok": False,
+                    "error": (
+                        f"Cannot reach edge server {settings.edge_ip}:{settings.port} "
+                        f"({tcp_err}). Wrong IP after VPS move, or firewall blocks Iran."
+                    ),
+                }
+            )
+            return result
 
     probe_url = endpoint if endpoint.endswith("/") else endpoint + "/"
     started = time.time()
