@@ -107,8 +107,16 @@
     .metric-mini span b { color: var(--text); }
     .badge.pause { background: rgba(232,196,104,.15); color: var(--yellow); }
     .server-row.paused td { opacity: 0.72; }
-    .modal-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; overflow: auto; }
-    .modal { width: 100%; max-width: 720px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; max-height: 90vh; overflow: auto; }
+    .modal-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: flex-start; justify-content: center; padding: max(16px, 4vh) 16px 16px; z-index: 50; overflow: auto; }
+    @media (min-width: 800px) { .modal-overlay { align-items: center; } }
+    .modal { width: 100%; max-width: min(720px, 96vw); background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; max-height: min(90vh, 900px); overflow: auto; margin: auto 0; }
+    .modal-wide { max-width: min(920px, 96vw); }
+    .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .modal-header h2, .modal-header h3 { margin: 0; }
+    .modal-close-x { border: none; background: transparent; color: var(--muted); font-size: 1.25rem; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+    .modal-close-x:hover { color: var(--text); background: rgba(255,255,255,.04); }
+    .badge.git { background: rgba(232,196,104,.12); color: var(--yellow); }
+    .btn.restart { background: rgba(232,196,104,.15); color: var(--yellow); border: 1px solid rgba(232,196,104,.35); }
     .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } .wrap { padding: 12px; } }
@@ -220,9 +228,9 @@
     <p id="msg"></p>
   </div>
 
-  <div id="add-modal" class="modal-overlay hidden">
+  <div id="add-modal" class="modal-overlay hidden" data-modal-closable="1">
     <div class="modal" style="max-width:420px">
-      <h2>Add server</h2>
+      <div class="modal-header"><h2>Add server</h2><button type="button" class="modal-close-x" onclick="closeAddModal()" aria-label="Close">×</button></div>
       <p class="sub">Use a hostname (not raw IP) — Cloudflare Workers block direct IPs.</p>
       <label>Name</label><input id="add-name" placeholder="e.g. iran-1">
       <label>URL</label><input id="add-url" placeholder="http://ac.example.com:30228">
@@ -235,9 +243,9 @@
     </div>
   </div>
 
-  <div id="server-modal" class="modal-overlay hidden">
-    <div class="modal">
-      <h2 id="server-modal-title">Server</h2>
+  <div id="server-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal modal-wide">
+      <div class="modal-header"><h2 id="server-modal-title">Server</h2><button type="button" class="modal-close-x" onclick="closeServerModal()" aria-label="Close">×</button></div>
       <p class="sub" id="server-modal-url"></p>
       <div class="server-detail-metrics" id="server-modal-metrics"></div>
       <div class="section-title">Projects</div>
@@ -249,9 +257,9 @@
     </div>
   </div>
 
-  <div id="proxy-modal" class="modal-overlay hidden">
-    <div class="modal">
-      <h2>Fleet proxy settings</h2>
+  <div id="proxy-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal modal-wide">
+      <div class="modal-header"><h2>Fleet proxy settings</h2><button type="button" class="modal-close-x" onclick="closeProxyModal()" aria-label="Close">×</button></div>
       <p class="sub">Push proxy links and subscriptions to all servers. Each server runs failover on worker start.</p>
       <label><input type="checkbox" id="proxy-enabled" style="width:auto;margin-right:6px"> Enable proxy on all servers</label>
       <label>Proxy share links (one per line)</label>
@@ -267,9 +275,9 @@
     </div>
   </div>
 
-  <div id="start-modal" class="modal-overlay hidden">
-    <div class="modal" style="max-width:420px">
-      <h2 id="start-title">Starting…</h2>
+  <div id="start-modal" class="modal-overlay hidden" data-modal-closable="1" data-modal-guard-busy="1">
+    <div class="modal modal-wide">
+      <div class="modal-header"><h2 id="start-title">Starting…</h2><button type="button" class="modal-close-x" onclick="closeStartModal()" aria-label="Close">×</button></div>
       <ul class="modal-steps" id="start-steps">
         <li data-step="request"><span class="step-dot">1</span>Send start request</li>
         <li data-step="launch"><span class="step-dot">2</span>Launch worker process</li>
@@ -328,6 +336,8 @@
             serverName: s.name,
             project: f.name,
             running: f.running,
+            ready: f.ready,
+            git_has_remote: f.git_has_remote,
             agent_url: f.agent_url || (f.worker_id ? `https://cursor.com/agents#workerId=${f.worker_id}` : undefined),
             touchedAt: activityTs(f.touched_at || f.mtime),
           });
@@ -337,8 +347,9 @@
     }
 
     function renderProjectRow(p) {
+      const gitHint = p.git_has_remote === false ? ' <span class="badge git" title="No git remote on server">no git</span>' : '';
       const status = p.running
-        ? '<span class="badge run">running</span>'
+        ? (p.ready ? '<span class="badge ok">connected</span>' : '<span class="badge run">running</span>')
         : '<span class="badge">idle</span>';
       const folder = folderFor(p.serverId, p.project) || {
         name: p.project,
@@ -350,7 +361,7 @@
         <td>
           <div class="project-cell">
             <span class="btn-group">${btn}</span>
-            <span class="project-cell-name">${esc(p.project)}</span>
+            <span class="project-cell-name">${esc(p.project)}${gitHint}</span>
           </div>
         </td>
         <td>${esc(p.serverName)}</td>
@@ -403,6 +414,7 @@
       const enc = encodeURIComponent(folder.name);
       const stopKey = actionKey('stop', serverId, folder.name);
       const startKey = actionKey('start', serverId, folder.name);
+      const restartKey = actionKey('restart', serverId, folder.name);
       const parts = [];
       if (folder.running) {
         const agentUrl = folder.agent_url || projectAgentUrl(serverId, folder.name);
@@ -414,6 +426,9 @@
       parts.push(isLoading(stopKey)
         ? loadingBtn('Stop', 'btn-danger')
         : `<button class="btn btn-danger btn-sm" type="button" onclick="stopWorker('${esc(serverId)}','${enc}')">Stop</button>`);
+      parts.push(isLoading(restartKey)
+        ? loadingBtn('Restart', 'btn-warn')
+        : `<button class="btn btn-sm restart" type="button" onclick="restartWorker('${esc(serverId)}','${enc}')">Restart</button>`);
       return `<span class="btn-group">${parts.filter(Boolean).join('')}</span>`;
     }
     function refreshActionButtons() {
@@ -955,7 +970,9 @@
         const res = await api(`/api/fleet/${serverId}/ready/${project}`);
         const data = await res.json();
         if (!data.running) throw new Error('stopped');
+        if (data.has_errors && !data.ready) throw new Error((data.log_errors || []).join('\n') || 'Worker error');
         if (data.ready) return data;
+        if (data.readyz && data.readyz.connected) return data;
         await new Promise(r => setTimeout(r, 1500));
       }
       throw new Error('timeout');
@@ -1010,6 +1027,38 @@
       } finally {
         busy = false;
         setLoading(startKey, false);
+      }
+    }
+
+    async function restartWorker(serverId, project) {
+      if (busy) return;
+      const restartKey = actionKey('restart', serverId, project);
+      const projectName = decodeURIComponent(project);
+      busy = true;
+      setLoading(restartKey, true);
+      openStartModal('Restarting ' + projectName);
+      const msgEl = document.getElementById('start-msg');
+      try {
+        const res = await api(`/api/fleet/${serverId}/restart/${project}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Restart failed');
+        setStartStep('request', 'done');
+        setStartStep('launch', 'done');
+        setStartStep('connect', 'active');
+        const ready = await waitReady(serverId, project);
+        pendingAgentUrl = ready.agent_url || data.agent_url;
+        setStartStep('connect', 'done');
+        setStartStep('redirect', 'done');
+        msgEl.textContent = 'Worker connected.';
+        document.getElementById('start-close').classList.remove('hidden');
+        await refreshServer(serverId, false);
+      } catch (e) {
+        setStartStep('connect', 'error');
+        msgEl.textContent = e.message || 'Restart failed';
+        document.getElementById('start-close').classList.remove('hidden');
+      } finally {
+        busy = false;
+        setLoading(restartKey, false);
       }
     }
 
@@ -1106,8 +1155,25 @@
       } catch (e) { if (e.message !== 'unauthorized') showLogin(); }
     }
 
+    function bindModalBackdrops() {
+      const closers = {
+        'add-modal': closeAddModal,
+        'server-modal': closeServerModal,
+        'proxy-modal': closeProxyModal,
+        'start-modal': closeStartModal,
+      };
+      document.querySelectorAll('.modal-overlay[data-modal-closable]').forEach((overlay) => {
+        overlay.addEventListener('click', (e) => {
+          if (e.target !== overlay) return;
+          if (overlay.dataset.modalGuardBusy === '1' && busy) return;
+          closers[overlay.id]?.();
+        });
+      });
+    }
+
     document.getElementById('setup-pw2').addEventListener('keydown', e => { if (e.key === 'Enter') submitSetup(); });
     document.getElementById('login-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    bindModalBackdrops();
     boot();
   </script>
 </body>
