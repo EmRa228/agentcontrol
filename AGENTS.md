@@ -378,6 +378,8 @@ Fleet: `cd fleet && npm run dev` (usually `http://localhost:8787`).
 | Worker cannot reach Cursor | Proxy/xray misconfigured | `/etc/agentcontrol/env`, xray outbound, test in UI |
 | xray apply fails in container | Missing mounts/caps | Mount `/usr/local/etc/xray`, `SYS_ADMIN` + `pid: host` |
 | Start fails | No API key | `/etc/agentcontrol/api-key` or Settings |
+| Start OK but UI never “connected” | Log false positives / no `/readyz` | Panel v1.5.9+ uses `readyz` first; truncate log session markers on start |
+| Cursor greys out worker | No `git remote` in `--worker-dir` | Auto `git init` on start; set `.agentcontrol-git-remote` or `git_remote_*` in config |
 | Empty project list | Wrong `scan_root` / ignored | config + `.agentcontrol-ignore` |
 | Port 30228 in use | Docker + legacy systemd | `docker compose ps`; `systemctl stop agentcontrol` |
 | Fleet KV daily cap / 429 errors | Too many KV writes (old polling refreshed all servers) | Deploy v1.5.3+; close extra tabs; see [fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md) |

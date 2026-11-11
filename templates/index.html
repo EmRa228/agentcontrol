@@ -115,7 +115,15 @@
     .pool-item { padding: 8px 10px; background: #0d1016; border: 1px solid var(--border); border-radius: 8px; font-size: .75rem; display: flex; justify-content: space-between; gap: 8px; }
     .pool-item.ok { border-color: rgba(61,214,140,.3); }
     .pool-item.bad { border-color: rgba(240,113,120,.35); }
-    .modal-wide { max-width: 720px; width: 100%; max-height: 90vh; overflow: auto; }
+    .modal-wide { max-width: min(920px, 96vw); width: 100%; max-height: min(90vh, 900px); overflow: auto; }
+    .modal-overlay { cursor: default; }
+    .modal-overlay .modal, .modal-overlay .modal-wide { cursor: auto; }
+    .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .modal-header h3 { margin: 0; font-size: 1rem; }
+    .modal-close-x { border: none; background: transparent; color: var(--muted); font-size: 1.25rem; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+    .modal-close-x:hover { color: var(--text); background: rgba(255,255,255,.05); }
+    .badge.warn { border-color: rgba(232,196,104,.35); color: var(--yellow); }
+    .btn.restart { background: rgba(232,196,104,.12); color: var(--yellow); border: 1px solid rgba(232,196,104,.3); }
     .row {
       display: grid; grid-template-columns: 58px 1fr; gap: 6px; align-items: center;
       background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
@@ -131,11 +139,15 @@
     button.stop { background: rgba(240,113,120,.15); color: var(--red); }
     .modal-overlay {
       position: fixed; inset: 0; background: rgba(11,13,18,.88); display: flex;
-      align-items: center; justify-content: center; padding: 16px; z-index: 60;
+      align-items: flex-start; justify-content: center; padding: max(16px, 4vh) 16px 16px; z-index: 60;
+      overflow-y: auto;
+    }
+    @media (min-width: 800px) {
+      .modal-overlay { align-items: center; padding: 16px; }
     }
     .modal {
-      width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--border);
-      border-radius: 12px; padding: 16px;
+      width: 100%; max-width: min(520px, 96vw); background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 16px 18px; margin: auto 0;
     }
     .modal h3 { font-size: .95rem; margin-bottom: 10px; }
     .modal-steps { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
@@ -273,9 +285,12 @@
     <div id="list"><p class="loading">Loading projects…</p></div>
     <p id="msg"></p>
 
-    <div id="metrics-modal" class="modal-overlay hidden">
+    <div id="metrics-modal" class="modal-overlay hidden" data-modal-closable="1">
       <div class="modal modal-wide">
-        <h3>Server metrics</h3>
+        <div class="modal-header">
+          <h3>Server metrics</h3>
+          <button type="button" class="modal-close-x" onclick="closeMetricsModal()" aria-label="Close">×</button>
+        </div>
         <div id="server-card">
       <div class="server-summary" onclick="toggleServerDetails()">
         <div class="metric" id="metric-cpu">
@@ -345,9 +360,13 @@
       </div>
     </div>
 
-    <div id="settings-modal" class="modal-overlay hidden">
+    <div id="settings-modal" class="modal-overlay hidden" data-modal-closable="1">
       <div class="modal modal-wide">
-        <h3>Settings</h3>
+        <div class="modal-header">
+          <h3>Settings</h3>
+          <button type="button" class="modal-close-x" onclick="closeSettingsModal()" aria-label="Close">×</button>
+        </div>
+        <p class="settings-note" style="margin-bottom:10px">API key, default model, and edge bridge for Cursor workers on this server.</p>
         <div class="api-key-block">
           <div class="section-title">Cursor API key</div>
           <div class="api-key-row">
@@ -394,9 +413,12 @@
       </div>
     </div>
 
-    <div id="proxy-modal" class="modal-overlay hidden">
+    <div id="proxy-modal" class="modal-overlay hidden" data-modal-closable="1">
       <div class="modal modal-wide">
-        <h3>Proxy pool</h3>
+        <div class="modal-header">
+          <h3>Proxy pool</h3>
+          <button type="button" class="modal-close-x" onclick="closeProxyModal()" aria-label="Close">×</button>
+        </div>
         <p class="settings-note">All Cursor traffic uses the local xray HTTP proxy when enabled — no direct connection to Cursor.</p>
         <div class="xray-mode">
           <div>
@@ -431,9 +453,12 @@
     </div>
   </div>
 
-  <div id="start-modal" class="modal-overlay hidden">
-    <div class="modal">
-      <h3 id="start-modal-title">Starting worker</h3>
+  <div id="start-modal" class="modal-overlay hidden" data-modal-closable="1" data-modal-guard-busy="1">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3 id="start-modal-title">Starting worker</h3>
+        <button type="button" class="modal-close-x" onclick="closeStartModal()" aria-label="Close">×</button>
+      </div>
       <ul class="modal-steps" id="start-steps">
         <li data-step="request"><span class="step-dot">1</span>Send start request</li>
         <li data-step="launch"><span class="step-dot">2</span>Launch worker process</li>
@@ -449,9 +474,12 @@
     </div>
   </div>
 
-  <div id="ctx-modal" class="modal-overlay hidden">
+  <div id="ctx-modal" class="modal-overlay hidden" data-modal-closable="1">
     <div class="modal">
-      <h3 id="ctx-modal-title">Project</h3>
+      <div class="modal-header">
+        <h3 id="ctx-modal-title">Project</h3>
+        <button type="button" class="modal-close-x" onclick="closeCtxModal()" aria-label="Close">×</button>
+      </div>
       <p style="font-size:.78rem;color:var(--muted);margin-bottom:12px" id="ctx-modal-hint">Long-press or right-click a project for options.</p>
       <button type="button" class="ctx-item danger" id="ctx-hide-btn">Hide from list</button>
       <div class="modal-actions" style="margin-top:12px">
@@ -995,6 +1023,7 @@
       const dis = busy ? ' disabled' : '';
       parts.push(`<button type="button" class="btn btn-primary btn-sm" data-action="start"${dis}>Start</button>`);
       parts.push(`<button type="button" class="btn btn-danger btn-sm" data-action="stop"${dis}>Stop</button>`);
+      parts.push(`<button type="button" class="btn btn-sm restart" data-action="restart"${dis}>Restart</button>`);
       return `<span class="btn-group">${parts.join('')}</span>`;
     }
 
@@ -1006,9 +1035,10 @@
       const rows = folders.map(f => {
         const running = f.running ? ' running' : '';
         const badge = `<span class="badge ${f.running ? 'run' : ''}">${f.running ? 'on' : 'off'}</span>`;
-        const statusHint = f.running && f.ready ? ' · connected' : '';
+        const statusHint = f.running && f.ready ? ' · connected' : (f.running ? ' · starting…' : '');
+        const gitBadge = f.git_has_remote ? '' : '<span class="badge warn" title="No git remote — Cursor may show this machine as disabled">no git remote</span>';
         return `<tr class="project-row${running}" data-name="${esc(f.name)}" data-path="${esc(f.path)}">
-          <td><strong>${esc(f.name)}</strong><div class="project-path">${esc(f.path)}</div></td>
+          <td><strong>${esc(f.name)}</strong> ${gitBadge}<div class="project-path">${esc(f.path)}</div></td>
           <td>${esc(f.touched_relative || f.mtime_relative || '—')}</td>
           <td>${badge}<span class="sub">${statusHint}</span></td>
           <td>${renderProjectActions(f)}</td>
@@ -1256,6 +1286,7 @@
         if (!name || busy) return;
         if (btn.dataset.action === 'start') startAgent(name);
         if (btn.dataset.action === 'stop') stopAgent(name);
+        if (btn.dataset.action === 'restart') restartAgent(name);
       });
 
       list.addEventListener('contextmenu', (e) => {
@@ -1356,11 +1387,12 @@
         const data = await res.json();
         if (!data.running) throw new Error('stopped');
         if (data.log_tail) showStartLog(data.log_tail);
-        if (data.has_errors) {
+        if (data.has_errors && !data.ready) {
           const errText = formatLogErrors(data.log_errors) || 'Worker reported errors in log';
           throw new Error(errText);
         }
         if (data.ready) return data;
+        if (data.readyz && data.readyz.connected) return data;
         msgEl.textContent = 'Waiting for Cursor connection…';
         await new Promise(r => setTimeout(r, 1500));
       }
@@ -1441,7 +1473,65 @@
       }
     }
 
+    async function restartAgent(name) {
+      if (busy) return;
+      busy = true;
+      try { await apiFetch('/api/projects/touch/' + encodeURIComponent(name), { method: 'POST' }); } catch (_) {}
+      openStartModal(name);
+      document.getElementById('start-modal-title').textContent = 'Restarting ' + name;
+      const msgEl = document.getElementById('start-modal-msg');
+      try {
+        setStartStep('request', 'active');
+        const res = await apiFetch('/api/restart/' + encodeURIComponent(name), { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          setStartStep('request', 'error');
+          msgEl.textContent = data.error || 'Restart failed';
+          document.getElementById('start-modal-close').classList.remove('hidden');
+          return;
+        }
+        setStartStep('request', 'done');
+        setStartStep('launch', 'done');
+        setStartStep('connect', 'active');
+        msgEl.textContent = 'Waiting for Cursor connection…';
+        const ready = await waitReady(name);
+        setStartStep('connect', 'done');
+        setStartStep('redirect', 'active');
+        pendingAgentUrl = ready.agent_url || data.agent_url;
+        msgEl.textContent = 'Worker connected — opening Cursor…';
+        setStartStep('redirect', 'done');
+        document.getElementById('start-modal-close').classList.remove('hidden');
+        if (pendingAgentUrl) {
+          setTimeout(() => { window.location.href = pendingAgentUrl; }, 600);
+        }
+      } catch (e) {
+        setStartStep('connect', 'error');
+        msgEl.textContent = e.message || 'Restart failed';
+        document.getElementById('start-modal-close').classList.remove('hidden');
+      } finally {
+        if (document.getElementById('start-modal').classList.contains('hidden')) busy = false;
+      }
+    }
+
+    function bindModalBackdrops() {
+      const closers = {
+        'metrics-modal': closeMetricsModal,
+        'settings-modal': closeSettingsModal,
+        'proxy-modal': closeProxyModal,
+        'start-modal': closeStartModal,
+        'ctx-modal': closeCtxModal,
+      };
+      document.querySelectorAll('.modal-overlay[data-modal-closable]').forEach((overlay) => {
+        overlay.addEventListener('click', (e) => {
+          if (e.target !== overlay) return;
+          if (overlay.dataset.modalGuardBusy === '1' && busy) return;
+          closers[overlay.id]?.();
+        });
+      });
+    }
+
     bindProjectList();
+    bindModalBackdrops();
     boot();
   </script>
 </body>

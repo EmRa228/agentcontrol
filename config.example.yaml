@@ -25,6 +25,12 @@ state_dir: /var/lib/agentcontrol
 # Default model appended to Cursor redirect URL (e.g. composer-2.5, not composer-2.5-fast)
 default_model: ""
 
+# Optional: auto-set git origin when a project folder has no remote (Cursor repo label).
+# Per-project override: <folder>/.agentcontrol-git-remote (one URL per line)
+# git_remote_template: "git@git.favin.ir:emra/{name}.git"
+# git_remote_overrides:
+#   aksbaz: git@git.favin.ir:emra/aksbaz.git
+
 # Path to agent CLI (empty = search PATH)
 agent_bin: ""
 

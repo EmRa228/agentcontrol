@@ -873,6 +873,17 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json(await readJsonSafe(res), res.status);
   }
 
+  const restartMatch = path.match(/^\/api\/fleet\/([^/]+)\/restart\/([^/]+)$/);
+  if (restartMatch && request.method === "POST") {
+    const [, serverId, project] = restartMatch;
+    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    if (!server) return json({ error: "server not found" }, 404);
+    await touchServerAccess(env.KV, serverId);
+    await touchRecentProject(env.KV, server, decodeURIComponent(project), true);
+    const res = await proxyAgent(server, `/api/restart/${encodeURIComponent(project)}`, "POST");
+    return json(await readJsonSafe(res), res.status);
+  }
+
   const stopMatch = path.match(/^\/api\/fleet\/([^/]+)\/stop\/([^/]+)$/);
   if (stopMatch && request.method === "POST") {
     const [, serverId, project] = stopMatch;

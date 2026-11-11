@@ -58,6 +58,7 @@ from proxy_pool import (
     set_pool_enabled,
     test_all_proxies,
 )
+from worker_git import ensure_worker_git, folder_git_status
 
 IGNORE_MARKER = ".agentcontrol-ignore"
 WORKER_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -267,6 +268,8 @@ def load_config() -> dict:
     cfg.setdefault("worker_ready_timeout", int(os.environ.get("WORKER_READY_TIMEOUT", 45)))
     cfg.setdefault("auth_password_file", os.environ.get("AUTH_PASSWORD_FILE", "/etc/agentcontrol/auth-password"))
     cfg.setdefault("default_model", os.environ.get("DEFAULT_MODEL", ""))
+    cfg.setdefault("git_remote_template", os.environ.get("GIT_REMOTE_TEMPLATE", ""))
+    cfg.setdefault("git_remote_overrides", {})
 
     if os.environ.get("PORT"):
         cfg["port"] = int(os.environ["PORT"])
@@ -1262,11 +1265,13 @@ def list_folders() -> list[dict]:
         running = bool(pid and is_running(pid))
         mtime = folder_mtime(entry)
         touched = touches.get(name) or mtime
+        git_status = folder_git_status(entry)
         folders.append(
             {
                 "name": name,
                 "path": str(entry),
                 "running": running,
+                "ready": worker_ready(name) if running else False,
                 "worker_id": worker_id_for(name),
                 "agent_url": agent_url(name),
                 "started_at": info.get("started_at"),
@@ -1275,6 +1280,9 @@ def list_folders() -> list[dict]:
                 "mtime_relative": relative_time_en(mtime),
                 "touched_at": touched,
                 "touched_relative": relative_time_en(touched),
+                "git_is_repo": git_status["is_repo"],
+                "git_has_remote": git_status["has_remote"],
+                "git_remote_url": git_status.get("remote_url"),
             }
         )
 
@@ -1291,35 +1299,48 @@ def folder_path(name: str) -> Path | None:
     return None
 
 
-LOG_ERROR_MARKERS = (
+WORKER_LOG_SESSION_MARKER = "--- agentcontrol worker start "
+
+LOG_ERROR_PHRASES = (
     "failed to reach",
-    "error",
-    "unauthorized",
-    "denied",
+    "api key is invalid",
     "worker not found",
     "do not have access",
     "another worker daemon",
-    "exec-daemon",
-    "✗",
-    "fatal",
-    "refused",
     "econnrefused",
-    "proxy",
+    "connection refused",
+    "unknown option",
+    "unauthorized",
 )
+
+
+def worker_log_session(log_tail: str) -> str:
+    if not log_tail:
+        return ""
+    if WORKER_LOG_SESSION_MARKER in log_tail:
+        return log_tail.rsplit(WORKER_LOG_SESSION_MARKER, 1)[-1]
+    return log_tail
 
 
 def detect_worker_log_errors(log_tail: str) -> list[str]:
     if not log_tail:
         return []
+    session = worker_log_session(log_tail)
     errors: list[str] = []
-    for line in log_tail.splitlines():
+    for line in session.splitlines():
         text = line.strip()
         if not text:
             continue
         low = text.lower()
-        if any(marker in low for marker in LOG_ERROR_MARKERS):
+        if low.startswith("error:"):
             errors.append(text)
-    return errors[-12:]
+            continue
+        if re.search(r"\b(ERROR|FATAL)\b", text) and "ctx=worker-mode" in text:
+            errors.append(text)
+            continue
+        if any(phrase in low for phrase in LOG_ERROR_PHRASES):
+            errors.append(text)
+    return errors[-8:]
 
 
 def worker_log_tail(info: dict) -> str:
@@ -1332,6 +1353,15 @@ def worker_log_tail(info: dict) -> str:
         return ""
 
 
+def probe_worker_readyz(port: int) -> dict | None:
+    try:
+        with urlopen(f"http://127.0.0.1:{int(port)}/readyz", timeout=1.5) as resp:
+            body = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
+            return {"http_status": resp.status, **body}
+    except (URLError, OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
 def worker_ready(name: str) -> bool:
     state = reconcile_state()
     info = state.get(name)
@@ -1341,29 +1371,33 @@ def worker_ready(name: str) -> bool:
     if not pid or not is_running(pid):
         return False
 
-    tail = worker_log_tail(info)
-    if detect_worker_log_errors(tail):
-        return False
-
     port = info.get("mgmt_port")
     if port:
-        try:
-            with urlopen(f"http://127.0.0.1:{port}/readyz", timeout=1) as resp:
-                return resp.status == 200
-        except (URLError, OSError, ValueError):
-            pass
+        probe = probe_worker_readyz(port)
+        if probe and int(probe.get("http_status", 0)) == 200:
+            if probe.get("connected") is True:
+                return True
+            if str(probe.get("status", "")).lower() == "ok":
+                return True
 
-    if tail:
-        markers = ("connected", "Connected", "workerId", "bridge", "ready")
-        if any(marker in tail for marker in markers):
+    tail = worker_log_tail(info)
+    session = worker_log_session(tail)
+    if detect_worker_log_errors(session):
+        return False
+
+    if session:
+        markers = ("Private worker started", "Worker is now running", "connected: true")
+        low = session.lower()
+        if any(marker.lower() in low for marker in markers):
             return True
 
     started_at = info.get("started_at")
+    wait_sec = int(CFG.get("worker_ready_timeout", 45))
     if started_at:
         try:
             started = datetime.fromisoformat(started_at)
             age = (datetime.now(timezone.utc) - started).total_seconds()
-            return age >= 25
+            return age >= min(wait_sec, 25)
         except ValueError:
             pass
     return False
@@ -1419,6 +1453,7 @@ def start_worker(name: str) -> tuple[dict, int]:
     except OSError:
         pass
     touch_project(name)
+    git_prepare = ensure_worker_git(name, path, CFG)
 
     worker_id = worker_id_for(name)
     port = mgmt_port(name)
@@ -1432,6 +1467,12 @@ def start_worker(name: str) -> tuple[dict, int]:
         env["CURSOR_MODEL"] = default_model
 
     log_file = STATE_DIR / f"{name}.log"
+    marker = f"\n{WORKER_LOG_SESSION_MARKER}{datetime.now(timezone.utc).isoformat()} ---\n"
+    try:
+        with open(log_file, "ab") as log:
+            log.write(marker.encode("utf-8"))
+    except OSError:
+        pass
     cmd = [
         agent_bin,
         "worker",
@@ -1477,7 +1518,25 @@ def start_worker(name: str) -> tuple[dict, int]:
         "agent_url": agent_url(name),
         "ready": False,
         "pid": proc.pid,
+        "git": git_prepare,
     }, 200
+
+
+def restart_worker(name: str) -> tuple[dict, int]:
+    if not folder_path(name):
+        return {"error": "folder not found"}, 404
+    state = reconcile_state()
+    info = state.get(name)
+    was_running = bool(info and info.get("pid") and is_running(info["pid"]))
+    if was_running:
+        stop_result, stop_code = stop_worker(name)
+        if stop_code >= 400 and stop_result.get("error"):
+            return stop_result, stop_code
+        time.sleep(0.6)
+    start_result, start_code = start_worker(name)
+    start_result["restarted"] = True
+    start_result["was_running"] = was_running
+    return start_result, start_code
 
 
 def stop_worker(name: str) -> tuple[dict, int]:
@@ -1789,6 +1848,8 @@ FLEET_FOLDER_KEYS = (
     "mtime_relative",
     "touched_relative",
     "worker_id",
+    "git_is_repo",
+    "git_has_remote",
 )
 
 
@@ -1939,15 +2000,18 @@ def api_proxy_pool_select():
 @app.get("/api/folders")
 def api_folders():
     folders = list_folders()
-    for item in folders:
-        if item["running"]:
-            item["ready"] = worker_ready(item["name"])
     return jsonify({"folders": folders, "scan_root": CFG["scan_root"]})
 
 
 @app.post("/api/start/<name>")
 def api_start(name: str):
     result, code = start_worker(name)
+    return jsonify(result), code
+
+
+@app.post("/api/restart/<name>")
+def api_restart(name: str):
+    result, code = restart_worker(name)
     return jsonify(result), code
 
 
@@ -1977,9 +2041,10 @@ def api_ready(name: str):
     if not info:
         return jsonify({"ready": False, "running": False}), 200
     running = bool(info.get("pid") and is_running(info["pid"]))
-    log_tail = worker_log_tail(info)[-2000:]
+    log_tail = worker_log_session(worker_log_tail(info))[-2000:]
     log_errors = detect_worker_log_errors(log_tail)
     ready = worker_ready(name) if running else False
+    probe = probe_worker_readyz(info["mgmt_port"]) if running and info.get("mgmt_port") else None
     return jsonify(
         {
             "ready": ready,
@@ -1987,7 +2052,8 @@ def api_ready(name: str):
             "agent_url": agent_url(name),
             "log_tail": log_tail,
             "log_errors": log_errors,
-            "has_errors": bool(log_errors),
+            "has_errors": bool(log_errors) and not ready,
+            "readyz": probe,
         }
     )
 
