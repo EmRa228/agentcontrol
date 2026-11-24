@@ -63,6 +63,16 @@ Docker **build** is direct (Debian/PyPI). **Proxy applies at runtime** via `/etc
 - **Hide project:** `.agentcontrol-ignore` in folder; POST `/api/hide/<name>`.
 - **Metrics history:** in-memory `deque` (max 1800 points, ~2s refresh → ~1h). Fields: `cpu`, `load_pct`, `ram`, `disk`, `swap`, `net`, `docker_running`.
 
+**OpenCode (shared `opencode serve`):**
+
+- Module: `opencode_panel.py` — one headless server on `127.0.0.1:4096` (config `opencode_port`).
+- UI reverse-proxied at `/oc/` after panel session (injects upstream Basic auth; no separate OpenCode login in browser).
+- Per project: query `directory=/abs/path`; `POST /api/opencode/open/<name>` ensures serve + returns URL.
+- Secrets: `/etc/agentcontrol/opencode-secrets.json` → `opencode-providers.env` + `~/.config/opencode/opencode.json` (Anthropic, OpenAI, OpenCode Go `oc_sk_…`).
+- Optional **TOTP:** `panel_totp.py`, `/etc/agentcontrol/totp.json`; login requires password + 6-digit code when enabled.
+- Fleet: `POST /api/fleet/<id>/opencode/<project>`; folder fields `opencode_path`, `opencode_healthy`.
+- **No** per-project `opencode serve` and **no** stop-serve button in UI.
+
 ### Fleet
 
 ```

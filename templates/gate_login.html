@@ -23,25 +23,43 @@
     <h1>Sign in</h1>
     <p>Enter the panel password to open the control panel.</p>
     <input id="password" type="password" autocomplete="current-password" required>
+    <label for="totp" id="totp-wrap" style="display:none;margin-top:12px;font-size:.75rem;color:#8b93a7">Authenticator code</label>
+    <input id="totp" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" placeholder="6-digit code" style="display:none;margin-top:6px">
     <button type="submit">Continue</button>
     <p class="err" id="error"></p>
   </form>
   <script>
     const AUTH_KEY = 'agentcontrol_auth_' + location.host;
+    let totpRequired = false;
+    fetch('/api/auth/status').then(r => r.json()).then(data => {
+      totpRequired = !!(data.totp && data.totp.enabled);
+      if (totpRequired) {
+        document.getElementById('totp-wrap').style.display = 'block';
+        document.getElementById('totp').style.display = 'block';
+        document.getElementById('totp').required = true;
+      }
+    }).catch(() => {});
     document.getElementById('login-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const pw = document.getElementById('password').value.trim();
+      const totp = document.getElementById('totp').value.trim();
       const err = document.getElementById('error');
       err.textContent = '';
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw }),
+        body: JSON.stringify({ password: pw, totp }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        err.textContent = data.error === 'wrong password' ? 'Wrong password' : (data.error || 'Sign in failed');
+        if (data.totp_required) {
+          document.getElementById('totp-wrap').style.display = 'block';
+          document.getElementById('totp').style.display = 'block';
+          document.getElementById('totp').required = true;
+        }
+        err.textContent = data.error === 'wrong password' ? 'Wrong password'
+          : (data.error === 'invalid authenticator code' ? 'Invalid authenticator code' : (data.error || 'Sign in failed'));
         return;
       }
       localStorage.setItem(AUTH_KEY, pw);

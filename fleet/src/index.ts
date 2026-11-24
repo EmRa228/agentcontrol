@@ -915,6 +915,25 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json(await readJsonSafe(res), res.status);
   }
 
+  const opencodeMatch = path.match(/^\/api\/fleet\/([^/]+)\/opencode\/([^/]+)$/);
+  if (opencodeMatch && request.method === "POST") {
+    const [, serverId, project] = opencodeMatch;
+    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    if (!server) return json({ error: "server not found" }, 404);
+    await touchServerAccess(env.KV, serverId);
+    await touchRecentProject(env.KV, server, decodeURIComponent(project), true);
+    const res = await proxyAgent(
+      server,
+      `/api/opencode/open/${encodeURIComponent(project)}`,
+      "POST",
+    );
+    const body = await readJsonSafe(res);
+    if (res.ok && body && typeof body === "object" && body.opencode_path) {
+      body.fleet_opencode_url = `${server.url}${body.opencode_path}`;
+    }
+    return json(body, res.status);
+  }
+
   return json({ error: "not found" }, 404);
 }
 

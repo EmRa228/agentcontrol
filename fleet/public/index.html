@@ -410,6 +410,31 @@
       const encProj = encodeURIComponent(project);
       return `<button class="btn btn-primary btn-sm" type="button" onclick="openCursorWithActivity('${esc(serverId)}','${encProj}',decodeURIComponent('${encUrl}'))">Cursor</button>`;
     }
+    function fleetOpencodeUrl(serverId, folder) {
+      const s = (lastSnapshot?.servers || []).find(x => x.id === serverId);
+      if (!s?.url || !folder?.opencode_path) return null;
+      return s.url.replace(/\/$/, '') + folder.opencode_path;
+    }
+    function opencodeBtn(serverId, project, folder) {
+      const encProj = encodeURIComponent(project);
+      return `<button class="btn btn-ghost btn-sm" type="button" onclick="openOpencodeWorker('${esc(serverId)}','${encProj}')">OpenCode</button>`;
+    }
+    async function openOpencodeWorker(serverId, project) {
+      if (busy) return;
+      busy = true;
+      try {
+        const res = await api(`/api/fleet/${serverId}/opencode/${project}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'OpenCode failed');
+        const url = data.fleet_opencode_url || data.opencode_url;
+        if (url) window.open(url, '_blank', 'noopener');
+      } catch (e) {
+        alert(e.message || 'OpenCode failed');
+      } finally {
+        busy = false;
+        refreshActionButtons();
+      }
+    }
     function renderProjectActions(serverId, folder) {
       const enc = encodeURIComponent(folder.name);
       const stopKey = actionKey('stop', serverId, folder.name);
@@ -420,6 +445,7 @@
         const agentUrl = folder.agent_url || projectAgentUrl(serverId, folder.name);
         if (agentUrl) parts.push(cursorBtn(serverId, folder.name, agentUrl));
       }
+      parts.push(opencodeBtn(serverId, folder.name, folder));
       parts.push(isLoading(startKey)
         ? loadingBtn('Start', 'btn-primary')
         : `<button class="btn btn-primary btn-sm" type="button" onclick="startWorker('${esc(serverId)}','${enc}')">Start</button>`);

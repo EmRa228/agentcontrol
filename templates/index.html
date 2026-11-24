@@ -378,6 +378,35 @@
           <p id="settings-msg" class="err"></p>
         </div>
         <div class="settings-block">
+          <div class="section-title">Panel authenticator (TOTP)</div>
+          <p class="settings-note">Optional second factor at sign-in. Session cookie lasts 30 days after a successful login.</p>
+          <div class="api-key-hint" id="totp-settings-status">—</div>
+          <input id="totp-secret-preview" type="text" readonly placeholder="Secret (after rotate)" style="font-size:.72rem;margin-top:6px">
+          <div class="settings-row" style="margin-top:8px">
+            <input id="totp-enable-code" type="text" inputmode="numeric" placeholder="6-digit code to enable" autocomplete="off">
+            <button class="btn btn-primary btn-sm" type="button" onclick="enableTotpFromSettings()">Enable</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="rotateTotpSecret()">Rotate secret</button>
+            <button class="btn btn-danger btn-sm" type="button" onclick="disableTotp()">Disable</button>
+          </div>
+        </div>
+        <div class="settings-block">
+          <div class="section-title">OpenCode (shared serve)</div>
+          <p class="settings-note">API keys sync to <code>/etc/agentcontrol/opencode-secrets.json</code> and <code>~/.config/opencode/opencode.json</code>. UI opens at <code>/oc/</code> after sign-in.</p>
+          <div class="api-key-hint" id="opencode-settings-status">—</div>
+          <div class="settings-row" style="flex-direction:column;align-items:stretch">
+            <input id="oc-anthropic-key" type="password" placeholder="Anthropic API key (optional)" autocomplete="off">
+            <input id="oc-openai-key" type="password" placeholder="OpenAI API key (optional)" autocomplete="off">
+            <input id="oc-go-key" type="password" placeholder="OpenCode Go key (oc_sk_…)" autocomplete="off">
+            <input id="oc-default-model" type="text" placeholder="Default model (e.g. opencode/… or anthropic/…)" autocomplete="off">
+            <input id="oc-remote-url" type="url" placeholder="Remote UI URL (optional — OpenCode cloud / tunnel)" autocomplete="off">
+          </div>
+          <div class="xray-actions">
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveOpencodeSettings()">Save OpenCode keys</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="refreshOpencodeRemote()">Refresh console URL</button>
+          </div>
+          <div class="api-key-hint" id="opencode-save-msg"></div>
+        </div>
+        <div class="settings-block">
           <div class="section-title">Default agent model</div>
           <div class="settings-note">Used in the Cursor redirect after Start.</div>
           <div class="settings-row">
@@ -1021,10 +1050,35 @@
         parts.push(`<button type="button" class="btn btn-primary btn-sm" onclick="openCursorUrl(decodeURIComponent('${encUrl}'))">Cursor</button>`);
       }
       const dis = busy ? ' disabled' : '';
+      parts.push(`<button type="button" class="btn btn-ghost btn-sm" data-action="opencode"${dis}>OpenCode</button>`);
       parts.push(`<button type="button" class="btn btn-primary btn-sm" data-action="start"${dis}>Start</button>`);
       parts.push(`<button type="button" class="btn btn-danger btn-sm" data-action="stop"${dis}>Stop</button>`);
       parts.push(`<button type="button" class="btn btn-sm restart" data-action="restart"${dis}>Restart</button>`);
       return `<span class="btn-group">${parts.join('')}</span>`;
+    }
+
+    async function openOpencodeProject(name) {
+      if (busy) return;
+      busy = true;
+      msg.textContent = 'Starting OpenCode…';
+      try {
+        const res = await apiFetch('/api/opencode/open/' + encodeURIComponent(name), { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          msg.textContent = data.error || 'OpenCode failed';
+          msg.className = 'error';
+          return;
+        }
+        msg.textContent = 'OpenCode ready';
+        msg.className = '';
+        window.open(data.opencode_url, '_blank', 'noopener');
+        lastFoldersJson = '';
+        await refreshAll();
+      } catch (e) {
+        if (e.message !== 'unauthorized') msg.textContent = e.message || 'OpenCode failed';
+      } finally {
+        busy = false;
+      }
     }
 
     function renderFolders(folders) {
@@ -1177,7 +1231,107 @@
           bStatus.textContent = 'Direct api2 (no edge bridge)';
           bStatus.className = 'api-key-hint';
         }
+        const totp = settings.totp || {};
+        const totpEl = document.getElementById('totp-settings-status');
+        if (totpEl) {
+          totpEl.textContent = totp.enabled
+            ? 'Authenticator enabled — required at sign-in.'
+            : (totp.configured ? 'Secret saved but not enabled yet.' : 'Authenticator off.');
+          totpEl.className = 'api-key-hint' + (totp.enabled ? ' ok' : '');
+        }
+        const oc = settings.opencode || {};
+        const ocSecrets = oc.secrets || {};
+        const ocEl = document.getElementById('opencode-settings-status');
+        if (ocEl) {
+          const bits = [
+            oc.installed ? 'CLI installed' : 'CLI missing',
+            oc.healthy ? 'serve healthy' : 'serve down',
+            ocSecrets.opencode_go_set ? 'Go key set' : 'Go key —',
+            ocSecrets.anthropic_set ? 'Anthropic set' : '',
+            ocSecrets.openai_set ? 'OpenAI set' : '',
+          ].filter(Boolean).join(' · ');
+          ocEl.textContent = bits;
+          ocEl.className = 'api-key-hint' + (oc.healthy ? ' ok' : '');
+        }
+        if (ocSecrets.default_model) {
+          document.getElementById('oc-default-model').placeholder = 'Current: ' + ocSecrets.default_model;
+        }
+        if (ocSecrets.remote_public_url) {
+          document.getElementById('oc-remote-url').value = ocSecrets.remote_public_url;
+        }
       } catch (e) {}
+    }
+
+    async function saveOpencodeSettings() {
+      const msgEl = document.getElementById('opencode-save-msg');
+      msgEl.textContent = 'Saving…';
+      const body = {
+        anthropic_api_key: document.getElementById('oc-anthropic-key').value.trim(),
+        openai_api_key: document.getElementById('oc-openai-key').value.trim(),
+        opencode_go_key: document.getElementById('oc-go-key').value.trim(),
+        default_model: document.getElementById('oc-default-model').value.trim(),
+        remote_public_url: document.getElementById('oc-remote-url').value.trim(),
+        restart_serve: true,
+      };
+      try {
+        const res = await apiFetch('/api/settings/opencode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        msgEl.textContent = res.ok ? 'Saved — restarting shared serve if needed' : (data.error || 'Failed');
+        msgEl.style.color = res.ok ? 'var(--green)' : 'var(--red)';
+        if (res.ok) {
+          document.getElementById('oc-anthropic-key').value = '';
+          document.getElementById('oc-openai-key').value = '';
+          document.getElementById('oc-go-key').value = '';
+        }
+        await loadSettingsPanel();
+      } catch (e) { msgEl.textContent = 'Failed'; }
+    }
+
+    async function refreshOpencodeRemote() {
+      const msgEl = document.getElementById('opencode-save-msg');
+      try {
+        const res = await apiFetch('/api/settings/opencode/remote/refresh', { method: 'POST' });
+        const data = await res.json();
+        msgEl.textContent = res.ok
+          ? (data.remote_public_url ? 'Remote URL: ' + data.remote_public_url : 'No remote URL returned — use /oc/ on this panel')
+          : (data.error || 'Failed');
+      } catch (e) { msgEl.textContent = 'Failed'; }
+    }
+
+    async function rotateTotpSecret() {
+      const res = await apiFetch('/api/settings/totp/rotate', { method: 'POST' });
+      const data = await res.json();
+      document.getElementById('totp-secret-preview').value = data.secret || '';
+      document.getElementById('totp-settings-status').textContent = data.provisioning_uri
+        ? 'Scan URI in your app: ' + data.provisioning_uri
+        : 'Secret rotated — enter a code to enable.';
+    }
+
+    async function enableTotpFromSettings() {
+      const code = document.getElementById('totp-enable-code').value.trim();
+      const res = await apiFetch('/api/settings/totp/enable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+      const el = document.getElementById('totp-settings-status');
+      if (!res.ok) {
+        el.textContent = data.error || 'Enable failed';
+        return;
+      }
+      el.textContent = 'Authenticator enabled.';
+      document.getElementById('totp-enable-code').value = '';
+      await loadSettingsPanel();
+    }
+
+    async function disableTotp() {
+      await apiFetch('/api/settings/totp/disable', { method: 'POST' });
+      await loadSettingsPanel();
     }
 
     async function saveBridgeSettings() {
@@ -1287,6 +1441,7 @@
         if (btn.dataset.action === 'start') startAgent(name);
         if (btn.dataset.action === 'stop') stopAgent(name);
         if (btn.dataset.action === 'restart') restartAgent(name);
+        if (btn.dataset.action === 'opencode') openOpencodeProject(name);
       });
 
       list.addEventListener('contextmenu', (e) => {

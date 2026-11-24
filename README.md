@@ -123,6 +123,16 @@ journalctl -u agentcontrol -f
 Worker logs: `/var/lib/agentcontrol/<folder>.log`  
 Worker names in Cursor: `agentcontrol-<folder>`
 
+## OpenCode (shared serve)
+
+- One `opencode serve` on loopback (default `127.0.0.1:4096`).
+- After panel sign-in, open a project via **OpenCode** (UI at `/oc/?directory=…` on the same port as the panel).
+- Provider keys: Settings → **OpenCode** — Anthropic, OpenAI, and/or **OpenCode Go** (`oc_sk_…`).
+- Optional **TOTP** in Settings (password + 6-digit code at sign-in; 30-day session cookie after login).
+- Fleet: `POST /api/fleet/<serverId>/opencode/<project>` opens the server panel URL (sign in to that panel in the browser once).
+
+Install OpenCode CLI on the host: `curl -fsSL https://opencode.ai/install | bash`
+
 ## API
 
 | Method | Path | Auth |
@@ -134,6 +144,11 @@ Worker names in Cursor: `agentcontrol-<folder>`
 | GET | `/api/folders` | yes |
 | POST | `/api/start/<name>` | yes |
 | POST | `/api/stop/<name>` | yes |
+| POST | `/api/opencode/open/<name>` | yes |
+| GET | `/api/opencode/status` | yes |
+| GET/POST | `/api/settings/opencode` | yes |
+| GET/POST | `/api/settings/totp/*` | yes |
+| GET | `/oc/…` | panel session cookie |
 | GET | `/health` | no |
 
 Header: `X-AgentControl-Auth: <password>`

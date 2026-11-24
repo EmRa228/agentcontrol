@@ -59,6 +59,8 @@ from proxy_pool import (
     test_all_proxies,
 )
 from worker_git import ensure_worker_git, folder_git_status
+import opencode_panel
+import panel_totp
 
 IGNORE_MARKER = ".agentcontrol-ignore"
 WORKER_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -270,6 +272,21 @@ def load_config() -> dict:
     cfg.setdefault("default_model", os.environ.get("DEFAULT_MODEL", ""))
     cfg.setdefault("git_remote_template", os.environ.get("GIT_REMOTE_TEMPLATE", ""))
     cfg.setdefault("git_remote_overrides", {})
+    cfg.setdefault("opencode_bin", os.environ.get("OPENCODE_BIN", ""))
+    cfg.setdefault("opencode_port", int(os.environ.get("OPENCODE_PORT", "4096")))
+    cfg.setdefault("opencode_hostname", os.environ.get("OPENCODE_HOSTNAME", "127.0.0.1"))
+    cfg.setdefault(
+        "opencode_secrets_file",
+        os.environ.get("OPENCODE_SECRETS_FILE", "/etc/agentcontrol/opencode-secrets.json"),
+    )
+    cfg.setdefault(
+        "opencode_env_file",
+        os.environ.get("OPENCODE_ENV_FILE", "/etc/agentcontrol/opencode-providers.env"),
+    )
+    cfg.setdefault(
+        "opencode_serve_password_file",
+        os.environ.get("OPENCODE_SERVE_PASSWORD_FILE", "/etc/agentcontrol/opencode-serve-password"),
+    )
 
     if os.environ.get("PORT"):
         cfg["port"] = int(os.environ["PORT"])
@@ -293,6 +310,7 @@ def save_config_patch(updates: dict) -> None:
 CFG = load_config()
 load_bridge_settings()  # /etc/agentcontrol/.env → os.environ
 STATE_DIR = Path(CFG["state_dir"])
+opencode_panel.reconcile_serve_state(STATE_DIR)
 STATE_FILE = STATE_DIR / "workers.json"
 WORKER_DATA_ROOT = STATE_DIR / "worker-data"
 RECENT_TOUCHES_FILE = STATE_DIR / "recent-touches.json"
@@ -460,7 +478,10 @@ def list_agent_models() -> list[dict]:
 
 
 def mgmt_port(name: str) -> int:
-    digest = hashlib.md5(name.encode(), usedforsecurity=False).hexdigest()
+    try:
+        digest = hashlib.md5(name.encode(), usedforsecurity=False).hexdigest()
+    except TypeError:
+        digest = hashlib.md5(name.encode()).hexdigest()
     return MGMT_PORT_BASE + (int(digest[:4], 16) % MGMT_PORT_RANGE)
 
 
@@ -1266,6 +1287,9 @@ def list_folders() -> list[dict]:
         mtime = folder_mtime(entry)
         touched = touches.get(name) or mtime
         git_status = folder_git_status(entry)
+        oc_healthy = opencode_panel.is_serve_healthy(
+            CFG, opencode_panel.serve_password(CFG, read_panel_password())
+        )
         folders.append(
             {
                 "name": name,
@@ -1274,6 +1298,8 @@ def list_folders() -> list[dict]:
                 "ready": worker_ready(name) if running else False,
                 "worker_id": worker_id_for(name),
                 "agent_url": agent_url(name),
+                "opencode_path": opencode_panel.opencode_public_path(str(entry)),
+                "opencode_healthy": oc_healthy,
                 "started_at": info.get("started_at"),
                 "pid": pid if running else None,
                 "mtime": mtime,
@@ -1586,10 +1612,12 @@ def api_auth_login():
         return jsonify({"ok": True, "auth_required": False})
     data = request.get_json(silent=True) or {}
     password = str(data.get("password", ""))
-    if password_ok(password):
-        resp = jsonify({"ok": True, "auth_required": True})
-        return set_auth_cookie(resp, password)
-    return jsonify({"error": "wrong password", "auth_required": True}), 401
+    if not password_ok(password):
+        return jsonify({"error": "wrong password", "auth_required": True}), 401
+    if panel_totp.totp_enabled() and not panel_totp.verify_login_code(str(data.get("totp", ""))):
+        return jsonify({"error": "invalid authenticator code", "totp_required": True}), 401
+    resp = jsonify({"ok": True, "auth_required": True})
+    return set_auth_cookie(resp, password)
 
 
 @app.get("/api/auth/status")
@@ -1600,6 +1628,7 @@ def api_auth_status():
             "api_key_set": api_key_configured(),
             "needs_password": not auth_enabled(),
             "needs_api_key": not api_key_configured(),
+            "totp": panel_totp.public_totp_status(socket.gethostname()),
         }
     )
 
@@ -1675,6 +1704,8 @@ def api_settings():
             "port": CFG["port"],
             "api_key_set": bool(read_api_key()),
             "cursor_bridge": public_bridge_settings(),
+            "totp": panel_totp.public_totp_status(socket.gethostname()),
+            "opencode": opencode_panel.opencode_status(CFG, STATE_DIR, read_panel_password()),
         }
     )
 
@@ -1850,6 +1881,8 @@ FLEET_FOLDER_KEYS = (
     "worker_id",
     "git_is_repo",
     "git_has_remote",
+    "opencode_path",
+    "opencode_healthy",
 )
 
 
@@ -1890,6 +1923,12 @@ def api_fleet_bundle():
             "scan_root": CFG["scan_root"],
             "version": load_version(),
             "proxy": fleet_proxy_summary(),
+            "opencode": {
+                "healthy": opencode_panel.is_serve_healthy(
+                    CFG, opencode_panel.serve_password(CFG, read_panel_password())
+                ),
+                "proxy_prefix": "/oc",
+            },
         }
     )
 
@@ -2032,6 +2071,142 @@ def api_hide(name: str):
 def api_stop(name: str):
     result, code = stop_worker(name)
     return jsonify(result), code
+
+
+@app.get("/api/opencode/status")
+def api_opencode_status():
+    return jsonify(opencode_panel.opencode_status(CFG, STATE_DIR, read_panel_password()))
+
+
+@app.post("/api/opencode/ensure")
+def api_opencode_ensure():
+    result = opencode_panel.ensure_serve(CFG, STATE_DIR, read_panel_password())
+    code = 200 if result.get("ok") else 503
+    return jsonify(result), code
+
+
+@app.post("/api/opencode/open/<name>")
+def api_opencode_open(name: str):
+    path = folder_path(name)
+    if not path:
+        return jsonify({"error": "folder not found"}), 404
+    touch_project(name)
+    ensure = opencode_panel.ensure_serve(CFG, STATE_DIR, read_panel_password())
+    if not ensure.get("ok"):
+        return jsonify(ensure), 503
+    public_path = opencode_panel.opencode_public_path(str(path))
+    return jsonify(
+        {
+            "status": "ready",
+            "name": name,
+            "path": str(path),
+            "opencode_path": public_path,
+            "opencode_url": request.host_url.rstrip("/") + public_path,
+        }
+    )
+
+
+@app.get("/api/settings/opencode")
+def api_settings_opencode_get():
+    return jsonify(
+        {
+            "status": opencode_panel.opencode_status(CFG, STATE_DIR, read_panel_password()),
+            "secrets": opencode_panel.public_secrets(opencode_panel.load_secrets(CFG)),
+        }
+    )
+
+
+@app.post("/api/settings/opencode")
+def api_settings_opencode_save():
+    data = request.get_json(silent=True) or {}
+    secrets = opencode_panel.save_secrets(CFG, data)
+    if data.get("restart_serve"):
+        opencode_panel.start_serve_process(
+            CFG, STATE_DIR, serve_password_for_panel(), force=True
+        )
+    return jsonify({"ok": True, "secrets": secrets})
+
+
+@app.post("/api/settings/opencode/remote/refresh")
+def api_settings_opencode_remote_refresh():
+    result = opencode_panel.try_refresh_remote_url(CFG, STATE_DIR, read_panel_password())
+    code = 200 if result.get("ok") else 502
+    return jsonify(result), code
+
+
+@app.get("/api/settings/totp")
+def api_settings_totp_get():
+    host = socket.gethostname()
+    return jsonify(panel_totp.public_totp_status(host))
+
+
+@app.post("/api/settings/totp/begin")
+def api_settings_totp_begin():
+    secret = panel_totp.touch_pending_secret()
+    host = socket.gethostname()
+    uri = panel_totp.provisioning_uri(secret, account=host)
+    return jsonify({"secret": secret, "provisioning_uri": uri, "enabled": False})
+
+
+@app.post("/api/settings/totp/enable")
+def api_settings_totp_enable():
+    data = request.get_json(silent=True) or {}
+    secret = str(data.get("secret", "")).strip()
+    if not secret:
+        state = panel_totp.load_totp_state()
+        secret = state.get("secret", "")
+    code = str(data.get("code", ""))
+    ok, err = panel_totp.enable_totp(secret, code)
+    if not ok:
+        return jsonify({"error": err or "invalid code"}), 400
+    return jsonify({"ok": True, "totp": panel_totp.public_totp_status(socket.gethostname())})
+
+
+@app.post("/api/settings/totp/rotate")
+def api_settings_totp_rotate():
+    secret = panel_totp.rotate_totp_secret()
+    host = socket.gethostname()
+    return jsonify(
+        {
+            "secret": secret,
+            "provisioning_uri": panel_totp.provisioning_uri(secret, account=host),
+            "enabled": False,
+        }
+    )
+
+
+@app.post("/api/settings/totp/disable")
+def api_settings_totp_disable():
+    panel_totp.disable_totp()
+    return jsonify({"ok": True, "totp": panel_totp.public_totp_status(socket.gethostname())})
+
+
+def serve_password_for_panel() -> str:
+    return opencode_panel.serve_password(CFG, read_panel_password())
+
+
+@app.get("/oc")
+@app.get("/oc/")
+@app.get("/oc/<path:subpath>")
+def opencode_proxy(subpath: str = ""):
+    if not panel_session_ok():
+        return Response(
+            '<p>Sign in to AgentControl first, then open OpenCode.</p>',
+            status=401,
+            mimetype="text/html; charset=utf-8",
+        )
+    body = request.get_data(cache=False)
+    headers = {k: v for k, v in request.headers.items()}
+    status, resp_headers, payload = opencode_panel.proxy_request(
+        CFG,
+        read_panel_password(),
+        subpath,
+        request.method,
+        request.query_string,
+        headers,
+        body if body else None,
+    )
+    return Response(payload, status=status, headers=resp_headers)
 
 
 @app.get("/api/ready/<name>")
