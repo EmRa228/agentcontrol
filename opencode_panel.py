@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import socket
@@ -23,12 +24,91 @@ import websocket
 
 _SERVE_LOCK = threading.Lock()
 _SERVE_PROC: subprocess.Popen | None = None
+_INSTALL_LOCK = threading.Lock()
+_INSTALL_PROC: subprocess.Popen | None = None
 
 DEFAULT_BIN_CANDIDATES = (
     Path("/root/.opencode/bin/opencode"),
     Path.home() / ".opencode/bin/opencode",
     Path("/usr/local/bin/opencode"),
 )
+
+LAUNCH_TOKEN_TTL = 180
+_LAUNCH_LOCK = threading.Lock()
+_LAUNCH_TOKENS: dict[str, tuple[str, float]] = {}
+_VERSION_CACHE: dict[tuple[str, float], str] = {}
+
+
+def pinned_version() -> str:
+    path = Path(__file__).resolve().parent / "scripts/opencode-versions.sh"
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("opencode_version="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return "2.4.1"
+
+
+def binary_version(path: str | Path | None) -> str:
+    if not path:
+        return ""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return ""
+    key = (str(path), stat.st_mtime)
+    cached = _VERSION_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        proc = subprocess.run(
+            [str(path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        version = (proc.stdout or "").strip().splitlines()
+    except (OSError, subprocess.SubprocessError):
+        version = []
+    result = version[-1].strip().removeprefix("opencode v") if version else ""
+    if len(_VERSION_CACHE) > 16:
+        _VERSION_CACHE.clear()
+    _VERSION_CACHE[key] = result
+    return result
+
+
+def web_build_version() -> str:
+    try:
+        return (opencode_web_root() / "OPENCODE_VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def create_launch_path(directory: str) -> str:
+    """Create a single-use link that signs the browser into the panel and opens a project."""
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with _LAUNCH_LOCK:
+        for key, (_, expires) in list(_LAUNCH_TOKENS.items()):
+            if expires < now:
+                _LAUNCH_TOKENS.pop(key, None)
+        _LAUNCH_TOKENS[token] = (directory, now + LAUNCH_TOKEN_TTL)
+    return "/api/fleet/sso?" + urlencode({"token": token})
+
+
+def consume_launch_token(token: str) -> str | None:
+    if not token:
+        return None
+    with _LAUNCH_LOCK:
+        item = _LAUNCH_TOKENS.pop(token, None)
+    if not item:
+        return None
+    directory, expires = item
+    if expires < time.time():
+        return None
+    return directory
 
 
 def secrets_file(cfg: dict) -> Path:
@@ -45,15 +125,69 @@ def serve_state_file(state_dir: Path) -> Path:
 
 def find_opencode_bin(cfg: dict) -> str | None:
     custom = (cfg.get("opencode_bin") or "").strip()
-    if custom and Path(custom).is_file():
+    custom_executable = custom and Path(custom).is_file() and os.access(custom, os.X_OK)
+    if custom_executable and binary_version(custom) == pinned_version():
+        return custom
+    managed = Path(cfg.get("state_dir", "/var/lib/agentcontrol")) / "opencode-bin/opencode"
+    if managed.is_file() and os.access(managed, os.X_OK):
+        return str(managed)
+    if custom_executable:
         return custom
     found = shutil.which("opencode")
     if found:
         return found
     for candidate in DEFAULT_BIN_CANDIDATES:
-        if candidate.is_file():
+        if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
     return None
+
+
+def opencode_web_root() -> Path:
+    return Path(__file__).resolve().parent / "opencode-web"
+
+
+def web_install_required(cfg: dict) -> bool:
+    binary = find_opencode_bin(cfg)
+    if not binary or not (opencode_web_root() / "index.html").is_file():
+        return True
+    expected = pinned_version()
+    return binary_version(binary) != expected or web_build_version() != expected
+
+
+def install_status(cfg: dict, state_dir: Path) -> dict[str, Any]:
+    # Polling reaps the installer and lets any authenticated tab rejoin it.
+    with _INSTALL_LOCK:
+        exit_code = _INSTALL_PROC.poll() if _INSTALL_PROC else None
+        if _INSTALL_PROC and exit_code is None:
+            return {"status": "installing"}
+        if not web_install_required(cfg):
+            return {"status": "ready", "version": pinned_version()}
+        if _INSTALL_PROC:
+            error = f"OpenCode installation failed. See {state_dir / 'opencode-install.log'}."
+            return {"status": "failed", "error": error}
+        return {"status": "missing", "version": pinned_version()}
+
+
+def start_install(cfg: dict, state_dir: Path) -> tuple[dict[str, Any], int]:
+    global _INSTALL_PROC
+    with _INSTALL_LOCK:
+        if _INSTALL_PROC and _INSTALL_PROC.poll() is None:
+            return {"status": "installing"}, 202
+        if not web_install_required(cfg):
+            return {"status": "ready"}, 200
+        script = opencode_web_root().parent / "scripts/install-opencode.sh"
+        log_path = state_dir / "opencode-install.log"
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            with log_path.open("w", encoding="utf-8") as log:
+                _INSTALL_PROC = subprocess.Popen(
+                    ["timeout", "--kill-after=10s", "20m", "bash", str(script)],
+                    env={**os.environ, "STATE_DIR": str(state_dir), "OPENCODE_BIN": find_opencode_bin(cfg) or ""},
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                )
+        except OSError:
+            return {"status": "failed", "error": "Could not start the OpenCode installer."}, 500
+        return {"status": "installing"}, 202
 
 
 def load_secrets(cfg: dict) -> dict[str, str]:
@@ -156,7 +290,17 @@ def apply_provider_config(cfg: dict, secrets: dict[str, str]) -> None:
 
     config_path = global_config_file(cfg)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    providers: dict[str, Any] = {}
+    body: dict[str, Any] = {}
+    if config_path.is_file():
+        try:
+            existing = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                body = existing
+        except (json.JSONDecodeError, OSError):
+            body = {}
+    providers = body.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
     if secrets.get("anthropic_api_key"):
         providers["anthropic"] = {
             "settings": {"apiKey": "{env:ANTHROPIC_API_KEY}"},
@@ -169,10 +313,14 @@ def apply_provider_config(cfg: dict, secrets: dict[str, str]) -> None:
         providers["opencode"] = {
             "settings": {"apiKey": "{env:OPENCODE_API_KEY}"},
         }
-    body: dict[str, Any] = {
-        "$schema": "https://opencode.ai/config.json",
-        "providers": providers,
-    }
+    body["$schema"] = "https://opencode.ai/config.json"
+    body["providers"] = providers
+    permissions = body.get("permissions")
+    if not isinstance(permissions, list) or not permissions:
+        # Shared server agents need full local access: every tool, edits, and paths
+        # outside the project directory without interactive permission prompts.
+        body["permissions"] = [{"action": "*", "resource": "*", "effect": "allow"}]
+    body.setdefault("update", "notify")
     model = (secrets.get("default_model") or "").strip()
     if model:
         body["model"] = model
@@ -212,14 +360,23 @@ def serve_base_url(cfg: dict) -> str:
 
 
 def is_serve_healthy(cfg: dict, password: str) -> bool:
-    url = f"{serve_base_url(cfg)}/global/health"
-    try:
-        req = Request(url, headers={"Authorization": _basic_auth_header(password)})
-        with urlopen(req, timeout=3) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-            return bool(body.get("healthy"))
-    except (HTTPError, URLError, OSError, json.JSONDecodeError, ValueError):
-        return False
+    # OpenCode 2.x exposes server identity under /api/info; 1.x used /global/health.
+    for path, check in (
+        ("/api/info", lambda body: isinstance(body, dict)),
+        ("/global/health", lambda body: isinstance(body, dict) and body.get("healthy") is True),
+    ):
+        try:
+            req = Request(
+                f"{serve_base_url(cfg)}{path}",
+                headers={"Authorization": _basic_auth_header(password)},
+            )
+            with urlopen(req, timeout=3) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                if check(body):
+                    return True
+        except (HTTPError, URLError, OSError, json.JSONDecodeError, ValueError):
+            continue
+    return False
 
 
 def _basic_auth_header(password: str) -> str:
@@ -353,10 +510,12 @@ def start_serve_process(
                 "port": port,
                 "started_at": time.time(),
                 "log_file": str(log_path),
+                "binary": opencode_bin,
+                "version": binary_version(opencode_bin),
             },
         )
 
-    deadline = time.time() + 20
+    deadline = time.time() + 60
     while time.time() < deadline:
         if is_serve_healthy(cfg, password):
             return {"ok": True, "status": "started", "pid": proc.pid}
@@ -376,7 +535,12 @@ def ensure_serve(cfg: dict, state_dir: Path, panel_password: str | None) -> dict
     password = serve_password(cfg, panel_password)
     if is_serve_healthy(cfg, password):
         state = load_serve_state(state_dir)
-        return {"ok": True, "healthy": True, "pid": state.get("pid"), "port": opencode_port(cfg)}
+        current_bin = find_opencode_bin(cfg)
+        current_version = binary_version(current_bin)
+        if state.get("binary") != current_bin or state.get("version") != current_version:
+            kill_serve_process(state_dir)
+        else:
+            return {"ok": True, "healthy": True, "pid": state.get("pid"), "port": opencode_port(cfg)}
     return start_serve_process(cfg, state_dir, password)
 
 
@@ -390,8 +554,13 @@ def opencode_status(cfg: dict, state_dir: Path, panel_password: str | None) -> d
     healthy = is_serve_healthy(cfg, password)
     state = load_serve_state(state_dir)
     secrets = public_secrets(load_secrets(cfg))
+    binary = find_opencode_bin(cfg)
     return {
-        "installed": bool(find_opencode_bin(cfg)),
+        "installed": bool(binary),
+        "version": binary_version(binary) if binary else "",
+        "pinned_version": pinned_version(),
+        "web_version": web_build_version(),
+        "install_required": web_install_required(cfg),
         "healthy": healthy,
         "port": opencode_port(cfg),
         "pid": state.get("pid") if healthy else None,
@@ -477,9 +646,16 @@ def proxy_request(
     return response.status, out, stream(), upstream.close
 
 
-def proxy_terminal(cfg: dict, panel_password: str | None, terminal: str, query: bytes, environ: dict) -> int:
+def proxy_terminal(
+    cfg: dict,
+    panel_password: str | None,
+    terminal: str,
+    query: bytes,
+    environ: dict,
+    prefix: str = "pty",
+) -> int:
     url = serve_base_url(cfg).replace("http://", "ws://", 1)
-    target = _upstream_target(f"pty/{terminal}/connect", query)
+    target = _upstream_target(f"{prefix}/{terminal}/connect", query)
     password = serve_password(cfg, panel_password)
     try:
         upstream = websocket.create_connection(

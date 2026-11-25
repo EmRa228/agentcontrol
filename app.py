@@ -415,6 +415,7 @@ def require_panel_auth():
         "api_auth_status",
         "api_setup_status",
         "api_setup_password",
+        "api_fleet_sso",
     }
     if request.endpoint in open_endpoints:
         return None
@@ -2086,25 +2087,74 @@ def api_opencode_ensure():
     return jsonify(result), code
 
 
+@app.route("/api/opencode/install", methods=["GET", "POST"])
+def api_opencode_install():
+    denied = opencode_proxy_access()
+    if denied is not None:
+        return denied
+    if request.method == "POST":
+        result, code = opencode_panel.start_install(CFG, STATE_DIR)
+        return jsonify(result), code
+    return jsonify(opencode_panel.install_status(CFG, STATE_DIR))
+
+
 @app.post("/api/opencode/open/<name>")
 def api_opencode_open(name: str):
     path = folder_path(name)
     if not path:
         return jsonify({"error": "folder not found"}), 404
+    if opencode_panel.web_install_required(CFG):
+        return jsonify(
+            {
+                "ok": False,
+                "status": "install_required",
+                "version": opencode_panel.pinned_version(),
+                "error": "OpenCode needs to be installed.",
+            }
+        ), 409
     touch_project(name)
     ensure = opencode_panel.ensure_serve(CFG, STATE_DIR, read_panel_password())
     if not ensure.get("ok"):
         return jsonify(ensure), 503
     public_path = opencode_panel.opencode_public_path(str(path))
-    return jsonify(
-        {
-            "status": "ready",
-            "name": name,
-            "path": str(path),
-            "opencode_path": public_path,
-            "opencode_url": request.host_url.rstrip("/") + public_path,
-        }
-    )
+    payload = {
+        "status": "ready",
+        "name": name,
+        "path": str(path),
+        "opencode_path": public_path,
+        "opencode_url": request.host_url.rstrip("/") + public_path,
+        "opencode_version": opencode_panel.pinned_version(),
+    }
+    if auth_enabled() and not panel_totp.totp_enabled():
+        launch_path = opencode_panel.create_launch_path(str(path))
+        payload["opencode_launch_path"] = launch_path
+        # Older Fleet workers ignore opencode_launch_path and open opencode_path directly.
+        # Use the same one-time sign-in handoff there so the OpenCode button never lands on
+        # an unauthenticated /oc/ page ("Sign in to AgentControl first").
+        payload["opencode_path"] = launch_path
+    return jsonify(payload)
+
+
+@app.get("/api/fleet/sso")
+def api_fleet_sso():
+    """Consume a Fleet launch token, sign the browser in, and open OpenCode."""
+    if not auth_enabled():
+        return redirect("/")
+    token = request.args.get("token", "")
+    directory = opencode_panel.consume_launch_token(token)
+    if not directory:
+        return Response(
+            "This OpenCode link expired. Open the project from Fleet again.",
+            status=401,
+            content_type="text/plain",
+        )
+    if panel_totp.totp_enabled():
+        return redirect("/")
+    response = redirect(opencode_panel.opencode_public_path(directory), code=302)
+    set_auth_cookie(response, read_panel_password() or "")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @app.get("/api/settings/opencode")
@@ -2245,13 +2295,27 @@ def opencode_proxy(subpath: str):
 
 @app.route("/oc/pty/<terminal>/connect", websocket=True)
 def opencode_terminal_proxy(terminal: str):
+    return opencode_terminal_proxy_for(terminal, "pty")
+
+
+@app.route("/oc/api/pty/<terminal>/connect", websocket=True)
+def opencode_api_terminal_proxy(terminal: str):
+    return opencode_terminal_proxy_for(terminal, "api/pty")
+
+
+@app.route("/oc/api/experimental/persistent-pty/<terminal>/connect", websocket=True)
+def opencode_persistent_terminal_proxy(terminal: str):
+    return opencode_terminal_proxy_for(terminal, "api/experimental/persistent-pty")
+
+
+def opencode_terminal_proxy_for(terminal: str, prefix: str):
     denied = opencode_proxy_access()
     if denied is not None:
         return denied
     if not re.fullmatch(r"pty_[A-Za-z0-9]+", terminal):
         return Response(status=404)
     status = opencode_panel.proxy_terminal(
-        CFG, read_panel_password(), terminal, request.query_string, request.environ,
+        CFG, read_panel_password(), terminal, request.query_string, request.environ, prefix=prefix,
     )
     return Response(status=status)
 

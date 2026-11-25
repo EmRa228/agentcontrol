@@ -10,6 +10,62 @@ import opencode_panel
 
 
 class OpenCodePanelTests(unittest.TestCase):
+    def test_binary_version_accepts_opencode_2_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "opencode"
+            binary.touch()
+            with mock.patch.object(opencode_panel.subprocess, "run") as run:
+                run.return_value.stdout = "opencode v2.4.1\n"
+                self.assertEqual(opencode_panel.binary_version(binary), "2.4.1")
+
+    def test_missing_opencode_project_can_install_and_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(panel, "STATE_DIR", Path(tmp)),
+                mock.patch.object(panel, "read_panel_password", return_value="test-password"),
+                mock.patch.object(panel, "folder_path", return_value=Path("/project")),
+                mock.patch.object(panel, "touch_project"),
+                mock.patch.object(opencode_panel, "_INSTALL_PROC", None),
+                mock.patch.object(opencode_panel, "web_install_required", return_value=True) as missing,
+                mock.patch.object(opencode_panel, "find_opencode_bin", return_value=None),
+                mock.patch.object(opencode_panel.subprocess, "Popen") as launch,
+                mock.patch.object(opencode_panel, "ensure_serve", return_value={"ok": True}) as ensure,
+                mock.patch.object(panel.panel_totp, "totp_enabled", return_value=False),
+                panel.app.test_client() as client,
+            ):
+                install_url = "/api/opencode/install"
+                project_url = "/api/opencode/open/project"
+                self.assertEqual(client.post(install_url).status_code, 401)
+                client.set_cookie(panel.AUTH_COOKIE, "test-password")
+                response = client.post(project_url)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json["status"], "install_required")
+                ensure.assert_not_called()
+                self.assertEqual(client.get(install_url).json["status"], "missing")
+
+                process = launch.return_value
+                process.poll.return_value = None
+                self.assertEqual(client.post(install_url).status_code, 202)
+                self.assertEqual(client.post(install_url).status_code, 202)
+                self.assertEqual(client.get(install_url).json["status"], "installing")
+                launch.assert_called_once()
+
+                process.poll.return_value = 1
+                self.assertEqual(client.get(install_url).json["status"], "failed")
+                process.poll.return_value = 1
+                self.assertEqual(client.post(install_url).status_code, 202)
+                self.assertEqual(launch.call_count, 2)
+
+                process.poll.return_value = 0
+                missing.return_value = False
+                self.assertEqual(client.get(install_url).json["status"], "ready")
+                ready = client.post(project_url).json
+                self.assertEqual(ready["status"], "ready")
+                self.assertEqual(ready["path"], "/project")
+                self.assertTrue(ready["opencode_path"].startswith("/api/fleet/sso?token="))
+                self.assertEqual(ready["opencode_path"], ready["opencode_launch_path"])
+                ensure.assert_called_once()
+
     def test_session_reload_serves_frontend_with_panel_cookie(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -105,3 +161,83 @@ class OpenCodePanelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpenCodeLaunchTests(unittest.TestCase):
+    def test_launch_token_is_single_use(self):
+        token_path = opencode_panel.create_launch_path("/root/demo")
+        token = token_path.split("token=", 1)[1]
+        self.assertEqual(opencode_panel.consume_launch_token(token), "/root/demo")
+        self.assertIsNone(opencode_panel.consume_launch_token(token))
+
+    def test_launch_token_expires(self):
+        with mock.patch.object(opencode_panel.time, "time", return_value=1000.0):
+            token_path = opencode_panel.create_launch_path("/root/demo")
+        token = token_path.split("token=", 1)[1]
+        with mock.patch.object(opencode_panel.time, "time", return_value=1000.0 + opencode_panel.LAUNCH_TOKEN_TTL + 1):
+            self.assertIsNone(opencode_panel.consume_launch_token(token))
+
+    def test_fleet_sso_sets_cookie_and_redirects(self):
+        with (
+            mock.patch.object(panel, "read_panel_password", return_value="panel-password"),
+            panel.app.test_client() as client,
+        ):
+            token = opencode_panel.create_launch_path("/root/demo").split("token=", 1)[1]
+            response = client.get(f"/api/fleet/sso?token={token}")
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.headers["Location"], "/oc/?directory=%2Froot%2Fdemo")
+            self.assertIn(panel.AUTH_COOKIE, response.headers.get("Set-Cookie", ""))
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            replay = client.get(f"/api/fleet/sso?token={token}")
+            self.assertEqual(replay.status_code, 401)
+
+    def test_open_returns_launch_path_for_fleet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(panel, "STATE_DIR", Path(tmp)),
+                mock.patch.object(panel, "read_panel_password", return_value="panel-password"),
+                mock.patch.object(panel, "folder_path", return_value=Path("/project")),
+                mock.patch.object(panel, "touch_project"),
+                mock.patch.object(panel.panel_totp, "totp_enabled", return_value=False),
+                mock.patch.object(opencode_panel, "web_install_required", return_value=False),
+                mock.patch.object(opencode_panel, "ensure_serve", return_value={"ok": True}),
+                panel.app.test_client() as client,
+            ):
+                client.set_cookie(panel.AUTH_COOKIE, "panel-password")
+                body = client.post("/api/opencode/open/project").json
+                self.assertEqual(body["status"], "ready")
+                self.assertIn("/api/fleet/sso?token=", body["opencode_launch_path"])
+
+
+class OpenCodeConfigTests(unittest.TestCase):
+    def test_provider_config_merges_and_preserves_permissions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "opencode.json"
+            config_path.write_text(
+                '{"theme":"custom","providers":{"keep":{"settings":{}}},'
+                '"permission":{"bash":"ask"},"permissions":[{"action":"bash","resource":"*","effect":"deny"}]}'
+            )
+            cfg = {
+                "opencode_secrets_file": f"{tmp}/secrets.json",
+                "opencode_env_file": f"{tmp}/providers.env",
+                "opencode_config_file": str(config_path),
+            }
+            opencode_panel.save_secrets(cfg, {"openai_api_key": "sk-test"})
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(config["theme"], "custom")
+            self.assertIn("keep", config["providers"])
+            self.assertIn("openai", config["providers"])
+            self.assertEqual(config["permission"], {"bash": "ask"})
+            self.assertEqual(config["permissions"], [{"action": "bash", "resource": "*", "effect": "deny"}])
+
+    def test_install_required_when_binary_version_differs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {"state_dir": tmp, "opencode_bin": str(Path(tmp) / "opencode")}
+            with (
+                mock.patch.object(opencode_panel, "find_opencode_bin", return_value="/usr/bin/opencode"),
+                mock.patch.object(opencode_panel, "binary_version", return_value="1.19.6"),
+                mock.patch.object(opencode_panel, "web_build_version", return_value="1.19.6"),
+                mock.patch.object(opencode_panel, "opencode_web_root", return_value=Path(tmp)),
+            ):
+                (Path(tmp) / "index.html").write_text("ok")
+                self.assertTrue(opencode_panel.web_install_required(cfg))

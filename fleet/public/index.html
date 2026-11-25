@@ -418,21 +418,54 @@
       return s.url.replace(/\/$/, '') + folder.opencode_path;
     }
     function opencodeBtn(serverId, project, folder) {
-      const encProj = encodeURIComponent(project);
+      const encProj = encodeURIComponent(project).replace(/'/g, '%27');
+      const key = actionKey('opencode', serverId, project);
+      if (isLoading(key)) return loadingBtn('OpenCode', 'btn-ghost');
       return `<button class="btn btn-ghost btn-sm" type="button" onclick="openOpencodeWorker('${esc(serverId)}','${encProj}')">OpenCode</button>`;
     }
     async function openOpencodeWorker(serverId, project) {
       if (busy) return;
       busy = true;
+      const key = actionKey('opencode', serverId, decodeURIComponent(project));
       try {
-        const res = await api(`/api/fleet/${serverId}/opencode/${project}`, { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'OpenCode failed');
+        let res = await api(`/api/fleet/${serverId}/opencode/${project}`, { method: 'POST' });
+        let data = await res.json();
+        if (data.status === 'install_required') {
+          const target = data.version ? `OpenCode ${data.version}` : 'OpenCode';
+          if (!confirm(`Install ${target} on this server? This downloads the binary and builds the web UI, and can take several minutes. Existing chats and settings are kept.`)) {
+            return;
+          }
+          setLoading(key, true);
+          const installUrl = `/api/fleet/${serverId}/opencode-install`;
+          const start = await api(installUrl, { method: 'POST' });
+          let installation = await start.json();
+          if (!start.ok && installation.status !== 'installing') {
+            throw new Error(installation.error || 'Could not start OpenCode installation.');
+          }
+          while (installation.status === 'installing') {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            installation = await (await api(installUrl)).json();
+          }
+          if (installation.status !== 'ready') {
+            throw new Error(installation.error || 'OpenCode installation failed.');
+          }
+          res = await api(`/api/fleet/${serverId}/opencode/${project}`, { method: 'POST' });
+          data = await res.json();
+        }
+        if (!res.ok) {
+          if (data.fleet_panel_url) {
+            location.assign(data.fleet_panel_url);
+            return;
+          }
+          throw new Error(data.error || 'OpenCode failed');
+        }
         const url = data.fleet_opencode_url || data.opencode_url;
-        if (url) window.open(url, '_blank', 'noopener');
+        if (url) location.assign(url);
+        else if (data.fleet_panel_url) location.assign(data.fleet_panel_url);
       } catch (e) {
         alert(e.message || 'OpenCode failed');
       } finally {
+        setLoading(key, false);
         busy = false;
         refreshActionButtons();
       }

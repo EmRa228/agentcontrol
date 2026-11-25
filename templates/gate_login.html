@@ -63,7 +63,7 @@
         return;
       }
       localStorage.setItem(AUTH_KEY, pw);
-      location.replace('/');
+      location.replace('/' + location.search);
     });
     document.getElementById('password').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') document.getElementById('login-form').requestSubmit();

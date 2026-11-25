@@ -2,11 +2,11 @@
 set -euo pipefail
 
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-version=1.19.6
-revision=f4e363c8295fa90a03dddc451882fffe8fbce357
+source "$repo/scripts/opencode-versions.sh"
+version="$opencode_version"
 bun="$(command -v "${BUN_BIN:-bun}")"
-if [[ "$("$bun" --version)" != 1.4.4 ]]; then
-    echo "OpenCode $version requires Bun 1.4.4 for this build." >&2
+if [[ "$("$bun" --version)" != "$bun_version" ]]; then
+    echo "OpenCode $version requires Bun $bun_version for this build." >&2
     exit 1
 fi
 
@@ -14,12 +14,13 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 git clone --depth 1 --branch "v$version" https://github.com/anomalyco/opencode.git "$work/source"
 cd "$work/source"
-test "$(git rev-parse HEAD)" = "$revision"
+test "$(git rev-parse HEAD)" = "$opencode_revision"
 git apply "$repo/scripts/opencode-web-$version.patch"
 "$bun" install --frozen-lockfile --ignore-scripts
 cd packages/app
 "$bun" run --bun build --base=/oc/ --sourcemap=false
 test -s dist/index.html
+printf '%s\n' "$version" > dist/OPENCODE_VERSION
 
 # Prepare a complete release before switching the path served by Flask.
 mkdir -p "$repo/.opencode-web-builds"

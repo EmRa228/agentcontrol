@@ -915,21 +915,54 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json(await readJsonSafe(res), res.status);
   }
 
+  const opencodeInstallMatch = path.match(/^\/api\/fleet\/([^/]+)\/opencode-install$/);
+  if (opencodeInstallMatch && (request.method === "GET" || request.method === "POST")) {
+    const [, serverId] = opencodeInstallMatch;
+    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    if (!server) return json({ error: "server not found" }, 404);
+    const res = await proxyAgent(server, "/api/opencode/install", request.method);
+    return json(await readJsonSafe(res), res.status);
+  }
+
   const opencodeMatch = path.match(/^\/api\/fleet\/([^/]+)\/opencode\/([^/]+)$/);
   if (opencodeMatch && request.method === "POST") {
-    const [, serverId, project] = opencodeMatch;
+    const [, serverId, projectSegment] = opencodeMatch;
+    const project = decodeURIComponent(projectSegment);
     const server = (await readServers(env.KV)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
     await touchServerAccess(env.KV, serverId);
-    await touchRecentProject(env.KV, server, decodeURIComponent(project), true);
+    await touchRecentProject(env.KV, server, project, true);
     const res = await proxyAgent(
       server,
       `/api/opencode/open/${encodeURIComponent(project)}`,
       "POST",
     );
     const body = await readJsonSafe(res);
-    if (res.ok && body && typeof body === "object" && body.opencode_path) {
-      body.fleet_opencode_url = `${server.url}${body.opencode_path}`;
+    if (body && typeof body === "object") {
+      const panelUrl = `${server.url.replace(/\/$/, "")}/?${new URLSearchParams({ opencode: project })}`;
+      if (res.ok && "opencode_launch_path" in body && typeof body.opencode_launch_path === "string") {
+        return json(
+          {
+            ...body,
+            fleet_opencode_url: `${server.url.replace(/\/$/, "")}${body.opencode_launch_path}`,
+            fleet_panel_url: panelUrl,
+          },
+          res.status,
+        );
+      }
+      if (res.ok && "opencode_path" in body && typeof body.opencode_path === "string") {
+        return json(
+          {
+            ...body,
+            fleet_opencode_url: `${server.url.replace(/\/$/, "")}${body.opencode_path}`,
+            fleet_panel_url: panelUrl,
+          },
+          res.status,
+        );
+      }
+      if (res.status === 409 && "status" in body && body.status === "install_required") {
+        return json({ ...body, fleet_panel_url: panelUrl }, res.status);
+      }
     }
     return json(body, res.status);
   }

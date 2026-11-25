@@ -6,7 +6,7 @@ AgentControl runs Cursor Cloud Agent workers per project on Linux. The optional 
 |---|---|
 | Panel | `app.py`, `templates/index.html`, `config.example.yaml` |
 | Cursor workers | `app.py`, `worker_git.py`, `cursor_bridge.py` |
-| OpenCode | `opencode_panel.py`, `app.py`, `scripts/build-opencode-web.sh`, versioned frontend patch |
+| OpenCode | `opencode_panel.py`, `app.py`, `scripts/install-opencode.sh`, versioned frontend patch |
 | Authentication | `app.py`, `panel_totp.py`, gate templates |
 | Fleet | `fleet/src/index.ts`, `fleet/public/index.html`, `fleet/CLOUDFLARE.md` |
 | Host install/update | `bootstrap.sh`, `install-wizard.sh`, `install.sh`, `agentcontrol.service`, `scripts/panel-update.sh` |
@@ -24,8 +24,9 @@ AgentControl runs Cursor Cloud Agent workers per project on Linux. The optional 
 
 - One shared `opencode serve` on loopback port 4096 by default. Preserve the service user and OpenCode data directory across restarts.
 - `POST /api/opencode/open/<name>` ensures the service and returns `/oc/?directory=…`. The patched frontend opens the requested project. Reloading a saved session URL uses the same panel cookie and session ID.
+- When the binary or web build is missing or mismatched, the project API returns `install_required`. The panel starts installation with `POST /api/opencode/install`, polls its GET, then retries the project. The installer reuses matching binaries and stores a managed binary and install log under the panel state directory. Fleet proxies installation and polls status without KV writes.
 - The authenticated same-origin proxy serves the frontend and forwards API, SSE and terminal WebSocket traffic with upstream Basic auth. Keep routes, assets and SDK calls under `/oc/`.
-- The frontend is built locally by `scripts/build-opencode-web.sh` (OpenCode 1.19.6 with Bun 1.4.4). Match the backend, pinned source and patch. The build is ignored by Git. Follow the OpenCode section in README for deployment and verification.
+- The frontend is built locally by `scripts/build-opencode-web.sh` (OpenCode 2.4.1 with Bun 1.4.4). Match the backend, pinned source and patch. The build is ignored by Git. Follow the OpenCode section in README for deployment and verification.
 
 ## Fleet
 

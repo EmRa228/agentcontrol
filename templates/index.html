@@ -284,6 +284,7 @@
     <div class="section-title">Projects — right-click or long-press to hide</div>
     <div id="list"><p class="loading">Loading projects…</p></div>
     <p id="msg"></p>
+    <p id="opencode-msg" role="status" hidden></p>
 
     <div id="metrics-modal" class="modal-overlay hidden" data-modal-closable="1">
       <div class="modal modal-wide">
@@ -569,6 +570,13 @@
       loadSettingsPanel();
       refreshAll();
       checkAndApplyUpdate(false);
+      const url = new URL(location.href);
+      const project = url.searchParams.get('opencode');
+      if (project) {
+        url.searchParams.delete('opencode');
+        window.history.replaceState(null, '', url);
+        openOpencodeProject(project, true);
+      }
     }
 
     function updatePageTitle(sys) {
@@ -1057,27 +1065,65 @@
       return `<span class="btn-group">${parts.join('')}</span>`;
     }
 
-    async function openOpencodeProject(name) {
-      if (busy) return;
-      busy = true;
-      msg.textContent = 'Starting OpenCode…';
+    let opencodeOpening = false;
+    async function openOpencodeProject(name, sameTab = false) {
+      if (busy || opencodeOpening) return;
+      opencodeOpening = true;
+      const status = document.getElementById('opencode-msg');
+      const projectUrl = '/api/opencode/open/' + encodeURIComponent(name);
+      status.hidden = false;
+      status.className = '';
+      status.textContent = 'Starting OpenCode…';
       try {
-        const res = await apiFetch('/api/opencode/open/' + encodeURIComponent(name), { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) {
-          msg.textContent = data.error || 'OpenCode failed';
-          msg.className = 'error';
+        let res = await apiFetch(projectUrl, { method: 'POST' });
+        let data = await res.json();
+        if (data.status === 'install_required') {
+          const installUrl = '/api/opencode/install';
+          let installation = await (await apiFetch(installUrl)).json();
+          if (installation.status !== 'installing' && installation.status !== 'ready') {
+            const target = data.version ? `OpenCode ${data.version}` : 'OpenCode';
+            if (!confirm(`Install ${target} and build its web interface on this server? This can take several minutes. Existing chats and settings are kept.`)) {
+              status.hidden = true;
+              return;
+            }
+            const start = await apiFetch(installUrl, { method: 'POST' });
+            installation = await start.json();
+            if (!start.ok) throw new Error(installation.error || 'Could not start installation.');
+          }
+          status.textContent = 'Installing OpenCode on this server…';
+          while (installation.status === 'installing') {
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            installation = await (await apiFetch(installUrl)).json();
+          }
+          if (installation.status !== 'ready') {
+            throw new Error(installation.error || 'Installation stopped. Click OpenCode to try again.');
+          }
+          status.textContent = 'Installation complete. Starting OpenCode…';
+          res = await apiFetch(projectUrl, { method: 'POST' });
+          data = await res.json();
+          sameTab = true;
+        }
+        if (!res.ok) throw new Error(data.error || 'OpenCode failed');
+        if (sameTab) {
+          location.assign(data.opencode_path);
           return;
         }
-        msg.textContent = 'OpenCode ready';
-        msg.className = '';
-        window.open(data.opencode_url, '_blank', 'noopener');
+        const link = document.createElement('a');
+        link.href = data.opencode_path;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'Open project';
+        status.replaceChildren('OpenCode ready. ', link);
+        window.open(data.opencode_path, '_blank', 'noopener');
         lastFoldersJson = '';
         await refreshAll();
       } catch (e) {
-        if (e.message !== 'unauthorized') msg.textContent = e.message || 'OpenCode failed';
+        if (e.message !== 'unauthorized') {
+          status.textContent = e.message || 'OpenCode failed';
+          status.className = 'error';
+        }
       } finally {
-        busy = false;
+        opencodeOpening = false;
       }
     }
 
@@ -1244,7 +1290,10 @@
         const ocEl = document.getElementById('opencode-settings-status');
         if (ocEl) {
           const bits = [
-            oc.installed ? 'CLI installed' : 'CLI missing',
+            oc.installed
+              ? `CLI ${oc.version || 'installed'}${oc.pinned_version && oc.version !== oc.pinned_version ? ` (target ${oc.pinned_version})` : ''}`
+              : 'CLI missing',
+            oc.install_required ? 'install required' : '',
             oc.healthy ? 'serve healthy' : 'serve down',
             ocSecrets.opencode_go_set ? 'Go key set' : 'Go key —',
             ocSecrets.anthropic_set ? 'Anthropic set' : '',

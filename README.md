@@ -127,12 +127,15 @@ Worker names in Cursor: `agentcontrol-<folder>`
 
 - AgentControl runs one shared OpenCode server on `127.0.0.1:4096`. Keep port 4096 on loopback.
 - After panel sign-in, select **OpenCode** on a project. The URL at `/oc/?directory=…` opens a draft for that directory. The frontend and API share the panel origin.
+- If the OpenCode binary or web frontend is missing, confirm installation in the panel. AgentControl installs the missing components in the background and opens the selected project when ready. Fleet can start the installation on the selected server and open the project when it finishes.
 - Reload or bookmark an OpenCode session URL to return to that session while the panel login cookie is valid.
 - The proxy requires a panel session, adds upstream Basic auth, forwards API methods and SSE, and bridges the OpenCode terminal WebSocket. If the panel sits behind another proxy, preserve its host and scheme and allow long-lived streaming and WebSocket upgrades for `/oc/`.
 - Panel Settings → **OpenCode** manages API keys. To use a ChatGPT Plus or Pro subscription, open OpenCode's provider connection dialog, select **OpenAI**, and choose **ChatGPT Pro/Plus (headless)** for a remote server. Complete the device authorization on the official OpenAI page. Use the same OpenCode service user and data directory after restarts so saved credentials are reused.
 - Fleet project launch returns the server panel's OpenCode URL. Sign in to that panel in the browser once.
 
-The frontend build is pinned to OpenCode 1.19.6 and uses Bun 1.4.4. With that OpenCode release on the server, run `scripts/build-opencode-web.sh` from the AgentControl checkout. Set `BUN_BIN` if Bun is installed outside PATH. The script installs the built app at `opencode-web`. The patch makes the assets, router and API clients prefix-aware. Update the pinned source, patch, and matching backend together when upgrading OpenCode.
+The installer targets glibc-based Linux x86_64 and ARM64. It verifies the pinned OpenCode 2.4.1 and Bun 1.4.4 downloads, reuses a matching OpenCode binary when available, and builds the patched frontend at `opencode-web`. The host needs access to GitHub and the package registries used during the build. Check `/var/lib/agentcontrol/opencode-install.log` if a panel install fails.
+
+To run the installer from SSH, use `sudo bash /opt/agentcontrol/scripts/install-opencode.sh`. Set `STATE_DIR` to match the panel if it uses a custom state directory. To build only the frontend, use `scripts/build-opencode-web.sh` with Bun 1.4.4. Set `BUN_BIN` if Bun is outside PATH. Update the pinned source, download checksums, frontend patch and matching backend together when upgrading OpenCode.
 
 To verify a deployment, test the authenticated OpenCode service directly on loopback first, then sign in through the panel and open two projects. Check that the selected project survives browser refresh, JS and CSS use `/oc/assets/` with the proper MIME types, `/oc/global/event` delivers an event before closing, and the terminal can send and receive over its WebSocket. Verify ChatGPT OAuth by making an OpenAI model request, restarting just the OpenCode child process, and repeating the request without signing in again.
 
@@ -150,6 +153,7 @@ Back up `/etc/agentcontrol`, the OpenCode configuration, and its private data di
 | POST | `/api/start/<name>` | yes |
 | POST | `/api/stop/<name>` | yes |
 | POST | `/api/opencode/open/<name>` | yes |
+| GET/POST | `/api/opencode/install` | yes |
 | GET | `/api/opencode/status` | yes |
 | GET/POST | `/api/settings/opencode` | yes |
 | GET/POST | `/api/settings/totp/*` | yes |
