@@ -123,6 +123,32 @@ journalctl -u agentcontrol -f
 Worker logs: `/var/lib/agentcontrol/<folder>.log`  
 Worker names in Cursor: `agentcontrol-<folder>`
 
+## Bundled Caddy (TLS) and sessions
+
+The panel ships a managed Caddy reverse proxy. It serves TLS on the public `port` and forwards to Flask on a loopback-only `internal_port`, so it can coexist with any system nginx/Caddy and never binds 80/443 for the site.
+
+```yaml
+# /etc/agentcontrol/config.yaml
+port: 30228             # public port (Caddy)
+internal_port: 30328    # Flask, loopback only
+bind_host: 127.0.0.1
+public_hostname: panel.example.com
+# tls_cert_file: /path/fullchain.pem   # optional: reuse an existing cert
+# tls_key_file:  /path/key.pem
+# acme_email: you@example.com          # optional
+```
+
+```bash
+sudo bash /opt/agentcontrol/scripts/install-caddy.sh
+systemctl status agentcontrol-caddy
+```
+
+Without certificate files, Caddy obtains a Let's Encrypt certificate with HTTP-01, which needs inbound **80** only for `/.well-known/acme-challenge`; there is no redirect and the app is never served there. If port 80 belongs to another proxy, provide `tls_cert_file`/`tls_key_file` instead. Always allow the public port and keep `internal_port` loopback-only.
+
+Browser authentication now uses server-side sessions in `/var/lib/agentcontrol/sessions.db` (only token hashes are stored). TOTP is checked when the session is created, so a device stays signed in for `session_days` (default 30) after one password + 2FA entry. Settings → **Sessions** can **Sign out all devices**; the API is `POST /api/auth/sessions/revoke-all`. The panel no longer stores the password in `localStorage`.
+
+
+
 ## OpenCode (shared serve)
 
 - AgentControl runs one shared OpenCode server on `127.0.0.1:4096`. Keep port 4096 on loopback.
@@ -147,7 +173,10 @@ Back up `/etc/agentcontrol`, the OpenCode configuration, and its private data di
 |--------|------|------|
 | GET | `/` | no |
 | POST | `/api/auth/login` | no |
+| POST | `/api/auth/logout` | no |
 | GET | `/api/auth/status` | no |
+| GET | `/api/auth/sessions` | yes |
+| POST | `/api/auth/sessions/revoke-all` | yes |
 | GET | `/api/system` | yes |
 | GET | `/api/folders` | yes |
 | POST | `/api/start/<name>` | yes |

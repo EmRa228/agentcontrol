@@ -29,7 +29,8 @@
     <p class="err" id="error"></p>
   </form>
   <script>
-    const AUTH_KEY = 'agentcontrol_auth_' + location.host;
+    // Sessions live in an HttpOnly cookie now; drop any legacy password copy.
+    localStorage.removeItem('agentcontrol_auth_' + location.host);
     let totpRequired = false;
     fetch('/api/auth/status').then(r => r.json()).then(data => {
       totpRequired = !!(data.totp && data.totp.enabled);
@@ -62,7 +63,6 @@
           : (data.error === 'invalid authenticator code' ? 'Invalid authenticator code' : (data.error || 'Sign in failed'));
         return;
       }
-      localStorage.setItem(AUTH_KEY, pw);
       location.replace('/' + location.search);
     });
     document.getElementById('password').addEventListener('keydown', (e) => {

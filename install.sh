@@ -10,6 +10,13 @@ export PATH="/root/.local/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
 
 log() { echo "==> $*"; }
 
+caddy_configured() {
+  local cfg="${CONFIG_DIR}/config.yaml"
+  [[ -f "${cfg}" ]] || return 1
+  grep -qE '^public_hostname:[[:space:]]*[^"'"'"'[:space:]]' "${cfg}" || return 1
+  grep -qE '^internal_port:[[:space:]]*[1-9][0-9]*' "${cfg}" || return 1
+}
+
 need_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     echo "Run as root: sudo $0"
@@ -164,6 +171,12 @@ install_app() {
   systemctl enable agentcontrol
   systemctl restart agentcontrol
   write_host_only_guard
+
+  if caddy_configured; then
+    log "Installing/refreshing the bundled Caddy reverse proxy"
+    INSTALL_DIR="${INSTALL_DIR}" CONFIG_DIR="${CONFIG_DIR}" STATE_DIR="${STATE_DIR}" \
+      bash "${INSTALL_DIR}/scripts/install-caddy.sh" || log "Caddy setup failed — panel is on the internal port until this is fixed"
+  fi
 }
 
 write_host_only_guard() {
@@ -191,7 +204,13 @@ main() {
   IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
   echo ""
   echo "Done."
-  echo "Panel: http://${IP:-localhost}:30228"
+  if caddy_configured; then
+    host="$(awk -v k='public_hostname:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR}/config.yaml")"
+    port="$(awk -v k='port:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR}/config.yaml")"
+    echo "Panel: https://${host}:${port:-30228}"
+  else
+    echo "Panel: http://${IP:-localhost}:30228"
+  fi
   echo "Set panel password and Cursor API key in the web UI on first visit."
   echo "API key: ${CONFIG_DIR}/api-key"
   echo "Logs:    journalctl -u agentcontrol -f"

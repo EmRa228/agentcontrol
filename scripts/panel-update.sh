@@ -29,6 +29,13 @@ trap 'rm -f "${LOCK_FILE}"' EXIT
 
 log() { echo "$*" | tee -a "${LOG_FILE}"; }
 
+caddy_configured() {
+  local cfg="${CONFIG_DIR:-/etc/agentcontrol}/config.yaml"
+  [[ -f "${cfg}" ]] || return 1
+  grep -qE '^public_hostname:[[:space:]]*[^"'"'"'[:space:]]' "${cfg}" || return 1
+  grep -qE '^internal_port:[[:space:]]*[1-9][0-9]*' "${cfg}" || return 1
+}
+
 GIT_FETCH_TIMEOUT="${GIT_FETCH_TIMEOUT:-180}"
 
 ensure_https_origin() {
@@ -84,6 +91,13 @@ sync_main_branch() {
   else
     log "No agentcontrol systemd service — run: bash ${INSTALL_DIR}/install.sh"
     exit 1
+  fi
+
+  if [[ -x "${INSTALL_DIR}/scripts/install-caddy.sh" ]] && caddy_configured; then
+    log "Refreshing bundled Caddy"
+    INSTALL_DIR="${INSTALL_DIR}" CONFIG_DIR="${CONFIG_DIR:-/etc/agentcontrol}" STATE_DIR="${STATE_DIR}" \
+      bash "${INSTALL_DIR}/scripts/install-caddy.sh" >> "${LOG_FILE}" 2>&1 \
+      || log "Caddy refresh failed — see ${LOG_FILE}"
   fi
 
   log "=== panel update finished $(date -Iseconds) ==="

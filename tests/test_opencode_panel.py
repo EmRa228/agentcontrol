@@ -7,6 +7,7 @@ from unittest import mock
 
 import app as panel
 import opencode_panel
+import panel_sessions
 
 
 class OpenCodePanelTests(unittest.TestCase):
@@ -20,8 +21,11 @@ class OpenCodePanelTests(unittest.TestCase):
 
     def test_missing_opencode_project_can_install_and_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
+            store = panel_sessions.SessionStore(Path(tmp) / "sessions.db")
+            store.initialize()
             with (
                 mock.patch.object(panel, "STATE_DIR", Path(tmp)),
+                mock.patch.object(panel, "SESSIONS", store),
                 mock.patch.object(panel, "read_panel_password", return_value="test-password"),
                 mock.patch.object(panel, "folder_path", return_value=Path("/project")),
                 mock.patch.object(panel, "touch_project"),
@@ -36,7 +40,7 @@ class OpenCodePanelTests(unittest.TestCase):
                 install_url = "/api/opencode/install"
                 project_url = "/api/opencode/open/project"
                 self.assertEqual(client.post(install_url).status_code, 401)
-                client.set_cookie(panel.AUTH_COOKIE, "test-password")
+                client.set_cookie(panel.SESSION_COOKIE, store.create(3600))
                 response = client.post(project_url)
                 self.assertEqual(response.status_code, 409)
                 self.assertEqual(response.json["status"], "install_required")
@@ -72,8 +76,11 @@ class OpenCodePanelTests(unittest.TestCase):
             web = root / "opencode-web"
             web.mkdir()
             (web / "index.html").write_text('<script src="/oc/assets/app.js"></script>')
+            store = panel_sessions.SessionStore(root / "sessions.db")
+            store.initialize()
             with (
                 mock.patch.object(panel, "__file__", str(root / "app.py")),
+                mock.patch.object(panel, "SESSIONS", store),
                 mock.patch.object(panel, "read_panel_password", return_value="test-password"),
                 mock.patch.object(opencode_panel, "proxy_request",
                                   return_value=(200, {"Content-Type": "application/json"}, b"{}", None)) as proxy,
@@ -178,18 +185,22 @@ class OpenCodeLaunchTests(unittest.TestCase):
             self.assertIsNone(opencode_panel.consume_launch_token(token))
 
     def test_fleet_sso_sets_cookie_and_redirects(self):
-        with (
-            mock.patch.object(panel, "read_panel_password", return_value="panel-password"),
-            panel.app.test_client() as client,
-        ):
-            token = opencode_panel.create_launch_path("/root/demo").split("token=", 1)[1]
-            response = client.get(f"/api/fleet/sso?token={token}")
-            self.assertEqual(response.status_code, 302)
-            self.assertEqual(response.headers["Location"], "/oc/?directory=%2Froot%2Fdemo")
-            self.assertIn(panel.AUTH_COOKIE, response.headers.get("Set-Cookie", ""))
-            self.assertEqual(response.headers["Cache-Control"], "no-store")
-            replay = client.get(f"/api/fleet/sso?token={token}")
-            self.assertEqual(replay.status_code, 401)
+        with tempfile.TemporaryDirectory() as tmp:
+            store = panel_sessions.SessionStore(Path(tmp) / "sessions.db")
+            store.initialize()
+            with (
+                mock.patch.object(panel, "SESSIONS", store),
+                mock.patch.object(panel, "read_panel_password", return_value="panel-password"),
+                panel.app.test_client() as client,
+            ):
+                token = opencode_panel.create_launch_path("/root/demo").split("token=", 1)[1]
+                response = client.get(f"/api/fleet/sso?token={token}")
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.headers["Location"], "/oc/?directory=%2Froot%2Fdemo")
+                self.assertIn(panel.SESSION_COOKIE, response.headers.get("Set-Cookie", ""))
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                replay = client.get(f"/api/fleet/sso?token={token}")
+                self.assertEqual(replay.status_code, 401)
 
     def test_open_returns_launch_path_for_fleet(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,8 +214,10 @@ class OpenCodeLaunchTests(unittest.TestCase):
                 mock.patch.object(opencode_panel, "ensure_serve", return_value={"ok": True}),
                 panel.app.test_client() as client,
             ):
-                client.set_cookie(panel.AUTH_COOKIE, "panel-password")
-                body = client.post("/api/opencode/open/project").json
+                body = client.post(
+                    "/api/opencode/open/project",
+                    headers={"X-AgentControl-Auth": "panel-password"},
+                ).json
                 self.assertEqual(body["status"], "ready")
                 self.assertIn("/api/fleet/sso?token=", body["opencode_launch_path"])
 
@@ -241,3 +254,70 @@ class OpenCodeConfigTests(unittest.TestCase):
             ):
                 (Path(tmp) / "index.html").write_text("ok")
                 self.assertTrue(opencode_panel.web_install_required(cfg))
+
+
+class SessionAuthTests(unittest.TestCase):
+    def _client(self, tmp):
+        store = panel_sessions.SessionStore(Path(tmp) / "sessions.db")
+        store.initialize()
+        return store
+
+    def test_login_sets_opaque_session_cookie_and_revoke_all(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._client(tmp)
+            with (
+                mock.patch.object(panel, "SESSIONS", store),
+                mock.patch.object(panel, "read_panel_password", return_value="panel-password"),
+                mock.patch.object(panel.panel_totp, "totp_enabled", return_value=False),
+                panel.app.test_client() as client,
+            ):
+                res = client.post("/api/auth/login", json={"password": "panel-password"})
+                self.assertEqual(res.status_code, 200)
+                cookie = res.headers.get("Set-Cookie", "")
+                self.assertIn(panel.SESSION_COOKIE, cookie)
+                self.assertIn("HttpOnly", cookie)
+                self.assertNotIn("panel-password", cookie)
+                self.assertEqual(store.count(), 1)
+                self.assertEqual(client.get("/api/auth/sessions").json["count"], 1)
+
+                token = client.get_cookie(panel.SESSION_COOKIE).value
+                revoked = client.post("/api/auth/sessions/revoke-all", json={})
+                self.assertEqual(revoked.status_code, 200)
+                self.assertEqual(revoked.json["revoked"], 1)
+                self.assertFalse(store.validate(token))
+                client.set_cookie(panel.SESSION_COOKIE, token)
+                self.assertEqual(client.get("/api/auth/sessions").status_code, 401)
+
+    def test_logout_revokes_only_current_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._client(tmp)
+            with (
+                mock.patch.object(panel, "SESSIONS", store),
+                mock.patch.object(panel, "read_panel_password", return_value="panel-password"),
+                mock.patch.object(panel.panel_totp, "totp_enabled", return_value=False),
+                panel.app.test_client() as client,
+            ):
+                first = client.post("/api/auth/login", json={"password": "panel-password"})
+                self.assertEqual(first.status_code, 200)
+                token = client.get_cookie(panel.SESSION_COOKIE).value
+                other = store.create(3600)
+                self.assertEqual(store.count(), 2)
+                out = client.post("/api/auth/logout")
+                self.assertEqual(out.status_code, 200)
+                self.assertFalse(store.validate(token))
+                self.assertTrue(store.validate(other))
+
+    def test_header_password_still_authorizes_fleet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._client(tmp)
+            with (
+                mock.patch.object(panel, "SESSIONS", store),
+                mock.patch.object(panel, "read_panel_password", return_value="panel-password"),
+                panel.app.test_client() as client,
+            ):
+                res = client.get(
+                    "/api/auth/sessions",
+                    headers={"X-AgentControl-Auth": "panel-password"},
+                )
+                self.assertEqual(res.status_code, 200)
+                self.assertEqual(store.count(), 0)

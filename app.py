@@ -24,6 +24,7 @@ from urllib.request import urlopen
 
 import yaml
 from flask import Flask, jsonify, redirect, render_template, request, Response, send_from_directory
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import safe_join
 
 from xray_client import (
@@ -61,6 +62,7 @@ from proxy_pool import (
 )
 from worker_git import ensure_worker_git, folder_git_status
 import opencode_panel
+import panel_sessions
 import panel_totp
 
 IGNORE_MARKER = ".agentcontrol-ignore"
@@ -288,6 +290,16 @@ def load_config() -> dict:
         "opencode_serve_password_file",
         os.environ.get("OPENCODE_SERVE_PASSWORD_FILE", "/etc/agentcontrol/opencode-serve-password"),
     )
+    cfg.setdefault("internal_port", int(os.environ.get("INTERNAL_PORT", "0") or 0))
+    cfg.setdefault("bind_host", os.environ.get("BIND_HOST", ""))
+    cfg.setdefault("public_hostname", os.environ.get("PUBLIC_HOSTNAME", ""))
+    cfg.setdefault("tls_cert_file", os.environ.get("TLS_CERT_FILE", ""))
+    cfg.setdefault("tls_key_file", os.environ.get("TLS_KEY_FILE", ""))
+    cfg.setdefault("acme_email", os.environ.get("ACME_EMAIL", ""))
+    cfg.setdefault(
+        "session_days",
+        int(os.environ.get("SESSION_DAYS", str(panel_sessions.DEFAULT_SESSION_DAYS))),
+    )
 
     if os.environ.get("PORT"):
         cfg["port"] = int(os.environ["PORT"])
@@ -311,6 +323,8 @@ def save_config_patch(updates: dict) -> None:
 CFG = load_config()
 load_bridge_settings()  # /etc/agentcontrol/.env → os.environ
 STATE_DIR = Path(CFG["state_dir"])
+SESSIONS = panel_sessions.SessionStore(STATE_DIR / "sessions.db")
+SESSIONS.initialize()
 opencode_panel.reconcile_serve_state(STATE_DIR)
 STATE_FILE = STATE_DIR / "workers.json"
 WORKER_DATA_ROOT = STATE_DIR / "worker-data"
@@ -323,6 +337,11 @@ _DOCKER_CACHE = {"data": None, "at": 0.0}
 _NET_CACHE = {"rx": 0, "tx": 0, "at": 0.0}
 _DISK_IO_CACHE = {"io_ms": 0, "at": 0.0}
 app = Flask(__name__)
+if CFG.get("internal_port"):
+    # The bundled Caddy terminates TLS and forwards X-Forwarded-* headers.
+    # Only trust a single proxy hop, and only when the app is bound to loopback
+    # behind that proxy (internal_port is configured).
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 
 def read_panel_password() -> str | None:
@@ -338,46 +357,75 @@ def auth_enabled() -> bool:
     return bool(read_panel_password())
 
 
-AUTH_COOKIE = "agentcontrol_auth"
+AUTH_COOKIE = "agentcontrol_auth"  # legacy cookie that used to hold the raw password
 AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+SESSION_COOKIE = panel_sessions.SESSION_COOKIE
 
 
-def extract_auth_token() -> str:
+def session_ttl_seconds() -> float:
+    try:
+        days = float(CFG.get("session_days", panel_sessions.DEFAULT_SESSION_DAYS))
+    except (TypeError, ValueError):
+        days = float(panel_sessions.DEFAULT_SESSION_DAYS)
+    return max(0.1, days) * 24 * 60 * 60
+
+
+def header_password() -> str:
     header = request.headers.get("X-AgentControl-Auth", "")
     if header:
         return header.strip()
-    cookie = request.cookies.get(AUTH_COOKIE, "")
-    if cookie:
-        return cookie.strip()
     auth = request.headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return ""
 
 
+def session_token() -> str:
+    return request.cookies.get(SESSION_COOKIE, "").strip()
 
 
-def set_auth_cookie(response, password: str):
+def set_session_cookie(response, token: str):
     response.set_cookie(
-        AUTH_COOKIE,
-        password.strip(),
-        max_age=AUTH_COOKIE_MAX_AGE,
+        SESSION_COOKIE,
+        token,
+        max_age=int(session_ttl_seconds()),
         httponly=True,
         samesite="Lax",
+        secure=request.is_secure,
         path="/",
     )
     return response
 
 
-def clear_auth_cookie(response):
-    response.set_cookie(AUTH_COOKIE, "", max_age=0, httponly=True, samesite="Lax", path="/")
+def clear_session_cookie(response):
+    response.set_cookie(
+        SESSION_COOKIE,
+        "",
+        max_age=0,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure,
+        path="/",
+    )
     return response
+
+
+def create_session() -> str:
+    return SESSIONS.create(
+        session_ttl_seconds(),
+        ip=request.remote_addr or "",
+        ua=request.headers.get("User-Agent", ""),
+    )
 
 
 def panel_session_ok() -> bool:
     if not auth_enabled():
         return False
-    return password_ok(extract_auth_token())
+    candidate = header_password()
+    if candidate and password_ok(candidate):
+        return True
+    return SESSIONS.validate(session_token())
+
 
 def password_ok(candidate: str) -> bool:
     expected = read_panel_password()
@@ -412,6 +460,7 @@ def require_panel_auth():
         "connectivity_test",
         "connectivity_test_minimal_html",
         "api_auth_login",
+        "api_auth_logout",
         "api_auth_status",
         "api_setup_status",
         "api_setup_password",
@@ -425,7 +474,7 @@ def require_panel_auth():
         return None
     if not auth_enabled():
         return jsonify({"error": "setup_required", "needs_password": True}), 403
-    if password_ok(extract_auth_token()):
+    if panel_session_ok():
         return None
     return jsonify({"error": "unauthorized"}), 401
 
@@ -1619,7 +1668,37 @@ def api_auth_login():
     if panel_totp.totp_enabled() and not panel_totp.verify_login_code(str(data.get("totp", ""))):
         return jsonify({"error": "invalid authenticator code", "totp_required": True}), 401
     resp = jsonify({"ok": True, "auth_required": True})
-    return set_auth_cookie(resp, password)
+    return set_session_cookie(resp, create_session())
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout():
+    SESSIONS.revoke(session_token())
+    resp = jsonify({"ok": True})
+    return clear_session_cookie(resp)
+
+
+@app.get("/api/auth/sessions")
+def api_auth_sessions():
+    return jsonify(
+        {
+            "count": SESSIONS.count(),
+            "ttl_days": round(session_ttl_seconds() / 86400, 3),
+        }
+    )
+
+
+@app.post("/api/auth/sessions/revoke-all")
+def api_auth_sessions_revoke_all():
+    data = request.get_json(silent=True) or {}
+    keep_current = bool(data.get("keep_current"))
+    current = session_token()
+    if keep_current and current:
+        revoked = SESSIONS.revoke_all(except_token=current)
+        return jsonify({"ok": True, "revoked": revoked, "kept_current": True})
+    revoked = SESSIONS.revoke_all()
+    resp = jsonify({"ok": True, "revoked": revoked, "kept_current": False})
+    return clear_session_cookie(resp)
 
 
 @app.get("/api/auth/status")
@@ -1659,7 +1738,7 @@ def api_setup_password():
         return jsonify({"error": "passwords do not match"}), 400
     write_panel_password(password)
     resp = jsonify({"ok": True})
-    return set_auth_cookie(resp, password)
+    return set_session_cookie(resp, create_session())
 
 
 @app.post("/api/setup/api-key")
@@ -1669,7 +1748,7 @@ def api_setup_api_key():
     if not api_key:
         return jsonify({"error": "api_key required"}), 400
     if api_key_configured():
-        if not auth_enabled() or not password_ok(extract_auth_token()):
+        if not auth_enabled() or not panel_session_ok():
             return jsonify({"error": "unauthorized"}), 401
 
     verify = request.args.get("verify", "1").strip().lower() not in {
@@ -2123,6 +2202,7 @@ def api_opencode_open(name: str):
         "path": str(path),
         "opencode_path": public_path,
         "opencode_url": request.host_url.rstrip("/") + public_path,
+        "public_base": request.host_url.rstrip("/"),
         "opencode_version": opencode_panel.pinned_version(),
     }
     if auth_enabled() and not panel_totp.totp_enabled():
@@ -2151,7 +2231,7 @@ def api_fleet_sso():
     if panel_totp.totp_enabled():
         return redirect("/")
     response = redirect(opencode_panel.opencode_public_path(directory), code=302)
-    set_auth_cookie(response, read_panel_password() or "")
+    set_session_cookie(response, create_session())
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
@@ -2210,26 +2290,47 @@ def api_settings_totp_enable():
     ok, err = panel_totp.enable_totp(secret, code)
     if not ok:
         return jsonify({"error": err or "invalid code"}), 400
-    return jsonify({"ok": True, "totp": panel_totp.public_totp_status(socket.gethostname())})
+    # A change to the second factor invalidates existing browser sessions so they
+    # must re-authenticate with the new factor configuration.
+    SESSIONS.revoke_all()
+    resp = jsonify(
+        {
+            "ok": True,
+            "totp": panel_totp.public_totp_status(socket.gethostname()),
+            "reauthentication_required": True,
+        }
+    )
+    return clear_session_cookie(resp)
 
 
 @app.post("/api/settings/totp/rotate")
 def api_settings_totp_rotate():
     secret = panel_totp.rotate_totp_secret()
     host = socket.gethostname()
-    return jsonify(
+    SESSIONS.revoke_all()
+    resp = jsonify(
         {
             "secret": secret,
             "provisioning_uri": panel_totp.provisioning_uri(secret, account=host),
             "enabled": False,
+            "reauthentication_required": True,
         }
     )
+    return clear_session_cookie(resp)
 
 
 @app.post("/api/settings/totp/disable")
 def api_settings_totp_disable():
     panel_totp.disable_totp()
-    return jsonify({"ok": True, "totp": panel_totp.public_totp_status(socket.gethostname())})
+    SESSIONS.revoke_all()
+    resp = jsonify(
+        {
+            "ok": True,
+            "totp": panel_totp.public_totp_status(socket.gethostname()),
+            "reauthentication_required": True,
+        }
+    )
+    return clear_session_cookie(resp)
 
 
 def serve_password_for_panel() -> str:
@@ -2469,4 +2570,8 @@ def connectivity_test_minimal_html():
 if __name__ == "__main__":
     ensure_host_panel()
     ensure_state_dir()
-    app.run(host="0.0.0.0", port=int(CFG["port"]), debug=False)
+    internal_port = int(CFG.get("internal_port") or 0)
+    bind_host = str(CFG.get("bind_host") or "").strip()
+    if not bind_host:
+        bind_host = "127.0.0.1" if internal_port else "0.0.0.0"
+    app.run(host=bind_host, port=internal_port or int(CFG["port"]), debug=False)

@@ -9,7 +9,8 @@ AgentControl runs Cursor Cloud Agent workers per project on Linux. The optional 
 | OpenCode | `opencode_panel.py`, `app.py`, `scripts/install-opencode.sh`, versioned frontend patch |
 | Authentication | `app.py`, `panel_totp.py`, gate templates |
 | Fleet | `fleet/src/index.ts`, `fleet/public/index.html`, `fleet/CLOUDFLARE.md` |
-| Host install/update | `bootstrap.sh`, `install-wizard.sh`, `install.sh`, `agentcontrol.service`, `scripts/panel-update.sh` |
+| Host install/update | `bootstrap.sh`, `install-wizard.sh`, `install.sh`, `agentcontrol.service`, `agentcontrol-caddy.service`, `scripts/install-caddy.sh`, `scripts/panel-update.sh` |
+| Sessions | `panel_sessions.py`, `sessions.db` (state dir), `/api/auth/sessions/revoke-all` |
 
 ## Panel
 
@@ -17,7 +18,9 @@ AgentControl runs Cursor Cloud Agent workers per project on Linux. The optional 
 - Config and secrets are under `/etc/agentcontrol`. State, worker logs and update logs are under `/var/lib/agentcontrol` by default. `CONFIG_SEARCH` and `save_config_patch()` handle configuration.
 - Scan root defaults to `/root`. A project's `.agentcontrol-ignore` hides it. Workers start as `agentcontrol-<folder>`. Preserve `WORKER_NAMESPACE` because IDs are UUID v5 per folder. Readiness prefers loopback `/readyz`. Idle release defaults to 12 hours.
 - Runtime proxy settings come from `/etc/agentcontrol/env`. `xray_client.py` owns the VLESS+Reality client configuration and loopback HTTP inbound. The optional Cursor bridge applies its environment after the proxy.
-- Panel API accepts `X-AgentControl-Auth`, Bearer auth or the panel cookie. Browser login sets the cookie and checks TOTP when enabled.
+- Browser auth uses server-side sessions in `/var/lib/agentcontrol/sessions.db` (`panel_sessions.py`, only SHA-256 token hashes stored). TOTP is checked when the session is created. `POST /api/auth/logout` revokes the current session; `POST /api/auth/sessions/revoke-all` revokes all browsers. The panel cookie is HttpOnly/SameSite=Lax (Secure behind TLS) and never contains the password. Automation and Fleet keep using `X-AgentControl-Auth` with the panel password; Bearer auth is also accepted.
+- The browser UI no longer stores the password in `localStorage`.
+- Bundled Caddy: `scripts/install-caddy.sh` + `agentcontrol-caddy.service` serve TLS on the public `port` and proxy to `127.0.0.1:<internal_port>` (default example 30328). It is a managed binary under the state dir with its own config/unit, so it never conflicts with a system nginx/Caddy and never binds 80/443 for the site. Certificate files can be supplied via `tls_cert_file`/`tls_key_file`; otherwise Let's Encrypt HTTP-01 is used, which needs inbound 80 only for the challenge. The panel must be enabled with `public_hostname` + `internal_port` + `bind_host: 127.0.0.1`; `install.sh` and `panel-update.sh` refresh Caddy when those keys are present.
 - The panel polls every 2 seconds and pauses during modal work. Use event delegation for buttons inside refreshed lists.
 
 ## OpenCode
@@ -32,6 +35,7 @@ AgentControl runs Cursor Cloud Agent workers per project on Linux. The optional 
 
 - Read [fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md) before changing cache, polling or KV. Use hostname URLs for panels. Workers cannot fetch raw IPs.
 - Fleet authenticates with `X-Fleet-Password`. Per-server credentials stay in KV and are forwarded as `X-AgentControl-Auth`.
+- Stored panel URLs may still be `http://`. `proxyAgent` retries `https://` on a TLS-only port (plaintext gets 400) so certificates can be enabled before editing every Fleet entry. Browser links use the panel-provided `public_base` (from `api/opencode/open`) instead of rebuilding from the stored URL.
 - Initial load uses `/api/fleet/cache`. Visible tabs rotate one server every 60 seconds without routine KV writes. Hidden tabs stop polling. **Refresh** performs a full snapshot and writes the cache once.
 - **Update all panels** calls `POST /api/fleet/update-all` once per confirmed click. It skips paused servers and displays each panel's request result. Accepted requests run asynchronously on each host. The action does not write KV.
 - Keep server cards responsive, with two metric columns on mobile and four on desktop.

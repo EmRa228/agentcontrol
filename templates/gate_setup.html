@@ -31,7 +31,8 @@
     <p class="err" id="error"></p>
   </form>
   <script>
-    const AUTH_KEY = 'agentcontrol_auth_' + location.host;
+    // Sessions live in an HttpOnly cookie now; drop any legacy password copy.
+    localStorage.removeItem('agentcontrol_auth_' + location.host);
     document.getElementById('setup-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const pw = document.getElementById('pw1').value;
@@ -46,7 +47,6 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { err.textContent = data.error || 'Setup failed'; return; }
-      localStorage.setItem(AUTH_KEY, pw);
       location.replace('/');
     });
   </script>
