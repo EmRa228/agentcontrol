@@ -391,6 +391,15 @@
           </div>
         </div>
         <div class="settings-block">
+          <div class="section-title">Sessions</div>
+          <p class="settings-note">Browser sessions are stored server-side, so a device stays signed in after 2FA until it is revoked. Revoke everything here or from Fleet.</p>
+          <div class="api-key-hint" id="sessions-status">—</div>
+          <div class="settings-row" style="margin-top:8px">
+            <button class="btn btn-danger btn-sm" type="button" onclick="revokeAllSessions()">Sign out all devices</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="signOutCurrent()">Sign out</button>
+          </div>
+        </div>
+        <div class="settings-block">
           <div class="section-title">OpenCode (shared serve)</div>
           <p class="settings-note">API keys sync to <code>/etc/agentcontrol/opencode-secrets.json</code> and <code>~/.config/opencode/opencode.json</code>. UI opens at <code>/oc/</code> after sign-in.</p>
           <div class="api-key-hint" id="opencode-settings-status">—</div>
@@ -519,7 +528,8 @@
   </div>
 
   <script>
-    const AUTH_KEY = 'agentcontrol_auth_' + location.host;
+    // Sessions are stored in an HttpOnly cookie; never keep the password client-side.
+    localStorage.removeItem('agentcontrol_auth_' + location.host);
     const list = document.getElementById('list');
     const msg = document.getElementById('msg');
     let busy = false;
@@ -536,19 +546,11 @@
     let longPressTimer = null;
     let longPressRow = null;
 
-    function getStoredPassword() { return localStorage.getItem(AUTH_KEY) || ''; }
-    function storePassword(pw) { localStorage.setItem(AUTH_KEY, pw); }
-    function clearPassword() { localStorage.removeItem(AUTH_KEY); }
-    function authHeaders() {
-      const pw = getStoredPassword();
-      return pw ? { 'X-AgentControl-Auth': pw } : {};
-    }
-
     async function apiFetch(url, opts = {}) {
-      opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
+      opts.headers = { ...(opts.headers || {}) };
       opts.credentials = opts.credentials || 'same-origin';
       const res = await fetch(url, opts);
-      if (res.status === 401) { clearPassword(); location.replace('/'); throw new Error('unauthorized'); }
+      if (res.status === 401) { location.replace('/'); throw new Error('unauthorized'); }
       if (res.status === 403) {
         const data = await res.json().catch(() => ({}));
         if (data.needs_password) { showSetup(); throw new Error('setup'); }
@@ -1308,6 +1310,7 @@
         if (ocSecrets.remote_public_url) {
           document.getElementById('oc-remote-url').value = ocSecrets.remote_public_url;
         }
+        await refreshSessionsStatus();
       } catch (e) {}
     }
 
@@ -1354,6 +1357,7 @@
     async function rotateTotpSecret() {
       const res = await apiFetch('/api/settings/totp/rotate', { method: 'POST' });
       const data = await res.json();
+      if (data.reauthentication_required) { location.replace('/'); return; }
       document.getElementById('totp-secret-preview').value = data.secret || '';
       document.getElementById('totp-settings-status').textContent = data.provisioning_uri
         ? 'Scan URI in your app: ' + data.provisioning_uri
@@ -1373,14 +1377,43 @@
         el.textContent = data.error || 'Enable failed';
         return;
       }
+      if (data.reauthentication_required) { location.replace('/'); return; }
       el.textContent = 'Authenticator enabled.';
       document.getElementById('totp-enable-code').value = '';
       await loadSettingsPanel();
     }
 
     async function disableTotp() {
-      await apiFetch('/api/settings/totp/disable', { method: 'POST' });
+      const res = await apiFetch('/api/settings/totp/disable', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (data.reauthentication_required) { location.replace('/'); return; }
       await loadSettingsPanel();
+    }
+
+    async function refreshSessionsStatus() {
+      try {
+        const res = await apiFetch('/api/auth/sessions');
+        const data = await res.json();
+        const el = document.getElementById('sessions-status');
+        if (el) el.textContent = `${data.count || 0} active session(s) · ${data.ttl_days || 0} day(s)`;
+      } catch (_) {}
+    }
+
+    async function revokeAllSessions() {
+      if (!confirm('Sign out every browser session on this server? You will need the password (and 2FA) again.')) return;
+      const res = await apiFetch('/api/auth/sessions/revoke-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(data.error || 'Failed'); return; }
+      location.replace('/');
+    }
+
+    async function signOutCurrent() {
+      await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      location.replace('/');
     }
 
     async function saveBridgeSettings() {

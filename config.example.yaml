@@ -1,6 +1,21 @@
 # Copy to /etc/agentcontrol/config.yaml (or ./config.yaml for local dev)
 
+# Public port used in browser/Fleet URLs (Caddy listens here when configured).
 port: 30228
+
+# --- Bundled Caddy (optional) -------------------------------------------------
+# Leave internal_port empty to keep the old behaviour: Flask binds `port` on all
+# interfaces. When public_hostname + internal_port are set, install.sh starts the
+# bundled Caddy on `port` (TLS) and Flask moves to 127.0.0.1:internal_port, which
+# is never exposed publicly. Caddy is isolated from any system nginx/Caddy.
+# internal_port: 30328
+# bind_host: 127.0.0.1
+# public_hostname: panel.example.com
+# tls_cert_file: ""          # optional: reuse an existing certificate
+# tls_key_file: ""
+# acme_email: ""             # optional: Let's Encrypt account email
+# session_days: 30           # browser session lifetime after password + 2FA
+
 scan_root: /root
 idle_release_seconds: 43200  # 12 hours
 

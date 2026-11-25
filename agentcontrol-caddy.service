@@ -1,0 +1,24 @@
+[Unit]
+Description=AgentControl Caddy reverse proxy (TLS on the public panel port)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=@CADDY_DATA@/home
+Environment=XDG_DATA_HOME=@CADDY_DATA@/data
+Environment=XDG_CONFIG_HOME=@CADDY_DATA@/config
+ExecStart=@CADDY_BIN@ run --config @CONFIG_DIR@/Caddyfile --adapter caddyfile
+ExecReload=@CADDY_BIN@ reload --config @CONFIG_DIR@/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@CADDY_DATA@ @CONFIG_DIR@
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

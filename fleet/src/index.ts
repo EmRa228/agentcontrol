@@ -246,7 +246,7 @@ async function proxyAgent(
   method = "GET",
   body?: unknown,
 ): Promise<Response> {
-  const url = `${server.url.replace(/\/$/, "")}${path}`;
+  const base = server.url.replace(/\/$/, "");
   const init: RequestInit = {
     method,
     headers: {
@@ -259,7 +259,27 @@ async function proxyAgent(
     init.headers = { ...init.headers, "content-type": "application/json" };
     init.body = JSON.stringify(body);
   }
-  return fetch(url, init);
+  const httpsBase = base.startsWith("http://") ? `https://${base.slice("http://".length)}` : "";
+  const send = (origin: string) => fetch(`${origin}${path}`, init);
+
+  let res: Response;
+  try {
+    res = await send(base);
+  } catch (e) {
+    // A stored http:// URL may now be a TLS-only panel port. Retry over https
+    // so certificates can be enabled without editing every Fleet entry first.
+    if (!httpsBase) throw e;
+    return send(httpsBase);
+  }
+  // Caddy answers plaintext HTTP sent to its TLS port with 400.
+  if (httpsBase && res.status === 400) {
+    try {
+      return await send(httpsBase);
+    } catch {
+      return res;
+    }
+  }
+  return res;
 }
 
 async function readJsonSafe(res: Response): Promise<unknown> {
@@ -939,12 +959,16 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     );
     const body = await readJsonSafe(res);
     if (body && typeof body === "object") {
-      const panelUrl = `${server.url.replace(/\/$/, "")}/?${new URLSearchParams({ opencode: project })}`;
+      const publicBase =
+        "public_base" in body && typeof body.public_base === "string" && body.public_base
+          ? body.public_base.replace(/\/$/, "")
+          : server.url.replace(/\/$/, "");
+      const panelUrl = `${publicBase}/?${new URLSearchParams({ opencode: project })}`;
       if (res.ok && "opencode_launch_path" in body && typeof body.opencode_launch_path === "string") {
         return json(
           {
             ...body,
-            fleet_opencode_url: `${server.url.replace(/\/$/, "")}${body.opencode_launch_path}`,
+            fleet_opencode_url: `${publicBase}${body.opencode_launch_path}`,
             fleet_panel_url: panelUrl,
           },
           res.status,
@@ -954,7 +978,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         return json(
           {
             ...body,
-            fleet_opencode_url: `${server.url.replace(/\/$/, "")}${body.opencode_path}`,
+            fleet_opencode_url: `${publicBase}${body.opencode_path}`,
             fleet_panel_url: panelUrl,
           },
           res.status,
