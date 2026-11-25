@@ -1,0 +1,272 @@
+diff --git a/packages/app/index.html b/packages/app/index.html
+index d715351..9c21865 100644
+--- a/packages/app/index.html
++++ b/packages/app/index.html
+@@ -11,13 +11,13 @@
+     <link rel="icon" type="image/svg+xml" href="/favicon-v3.svg" />
+     <link rel="shortcut icon" href="/favicon-v3.ico" />
+     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v3.png" />
+-    <link rel="manifest" href="/site.webmanifest" />
++    <link rel="manifest" href="%BASE_URL%site.webmanifest" />
+     <meta name="theme-color" content="#fafafa" />
+     <meta name="mobile-web-app-capable" content="yes" />
+     <meta name="apple-mobile-web-app-capable" content="yes" />
+     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+-    <meta property="og:image" content="/social-share.png" />
+-    <meta property="twitter:image" content="/social-share.png" />
++    <meta property="og:image" content="%BASE_URL%social-share.png" />
++    <meta property="twitter:image" content="%BASE_URL%social-share.png" />
+     <script id="oc-theme-preload-script" src="/oc-theme-preload.js"></script>
+   </head>
+   <body class="antialiased overscroll-none text-12-regular overflow-hidden bg-v2-background-bg-deep">
+diff --git a/packages/app/src/app.tsx b/packages/app/src/app.tsx
+index 6acc5ef..c96d65d 100644
+--- a/packages/app/src/app.tsx
++++ b/packages/app/src/app.tsx
+@@ -64,6 +64,7 @@ import NewLayout from "@/pages/layout-new"
+ import { ErrorPage } from "./pages/error"
+ import { useCheckServerHealth } from "./utils/server-health"
+ import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
++import { baseRouter } from "@/runtime/platform/base-path-router"
+ import { createSessionLineage } from "@/pages/session/session-lineage"
+
+ import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent } from "@/pages/session"
+@@ -590,9 +591,10 @@ export function AppInterface(props: {
+           <ConnectionGate disableHealthCheck={props.disableHealthCheck} startup={props.startup}>
+             <Show when={useSettings().general.newLayoutDesigns().toString()} keyed>
+               <Dynamic
+-                component={props.router ?? Router}
++                component={props.router ?? baseRouter ?? Router}
+                 root={(routerProps) => (
+                   <TabsProvider>
++                    <ProjectLaunch />
+                     <PermissionProvider>
+                       <NotificationProvider>
+                         <ServerShell>
+@@ -615,6 +617,32 @@ export function AppInterface(props: {
+   )
+ }
+
++function ProjectLaunch() {
++  const [search, setSearch] = useSearchParams<{ directory?: string }>()
++  const location = useLocation()
++  const navigate = useNavigate()
++  const server = useServer()
++  const global = useGlobal()
++  const tabs = useTabs()
++  const settings = useSettings()
++
++  createEffect(() => {
++    const directory = search.directory
++    const connection = server.current
++    if (location.pathname !== "/" || !directory?.startsWith("/") || !tabs.ready() || !connection) return
++    const projects = global.ensureServerCtx(connection).projects
++    projects.open(directory)
++    projects.touch(directory)
++    if (settings.general.newLayoutDesigns()) {
++      setSearch({ directory: undefined }, { replace: true })
++      void tabs.newDraft({ server: ServerConnection.key(connection), directory })
++    } else {
++      navigate(`/${base64Encode(directory)}/session`, { replace: true })
++    }
++  })
++  return null
++}
++
+ function Routes(props: { serverScoped?: JSX.Element }) {
+   const settings = useSettings()
+
+diff --git a/packages/app/src/entry.tsx b/packages/app/src/entry.tsx
+index 6e5f63f..5bbbdc3 100644
+--- a/packages/app/src/entry.tsx
++++ b/packages/app/src/entry.tsx
+@@ -100,10 +100,11 @@ const getCurrentUrl = () => {
+   if (location.hostname.includes("opencode.ai")) return "http://localhost:4096"
+   if (import.meta.env.DEV)
+     return `http://${import.meta.env.VITE_OPENCODE_SERVER_HOST ?? "localhost"}:${import.meta.env.VITE_OPENCODE_SERVER_PORT ?? "4096"}`
+-  return location.origin
++  return new URL(import.meta.env.BASE_URL, location.origin).href.replace(/\/$/, "")
+ }
+
+ const getDefaultUrl = () => {
++  if (import.meta.env.BASE_URL !== "/") return getCurrentUrl()
+   const lsDefault = readDefaultServerUrl()
+   if (lsDefault) return lsDefault
+   return getCurrentUrl()
+diff --git a/packages/app/src/runtime/platform/base-path-router.tsx b/packages/app/src/runtime/platform/base-path-router.tsx
+new file mode 100644
+index 0000000..0dfe885
+--- /dev/null
++++ b/packages/app/src/runtime/platform/base-path-router.tsx
+@@ -0,0 +1,66 @@
++import {
++  type BaseRouterProps,
++  createBeforeLeave,
++  createRouter,
++  keepDepth,
++  notifyIfNotBlocked,
++  saveCurrentDepth,
++} from "@solidjs/router"
++import { basePath, stripBasePath, withBasePath } from "@/runtime/platform/base-path"
++
++/**
++ * A history router for builds served under a base path. Unlike the router's own `base`, it keeps every route path the
++ * app sees base-free, so code reading `useLocation().pathname` or navigating to it works the same under any base.
++ */
++export function BasePathRouter(props: BaseRouterProps) {
++  const read = () => {
++    const state = history.state
++
++    return {
++      value: stripBasePath(location.pathname + location.search + location.hash),
++      // The router marks its own entries with only a depth; that is not app state.
++      state: state && state._depth && Object.keys(state).length === 1 ? undefined : state,
++    }
++  }
++
++  const beforeLeave = createBeforeLeave()
++
++  return createRouter({
++    get: read,
++    set({ value, replace, scroll, state }) {
++      const url = withBasePath(value)
++
++      if (replace) history.replaceState(keepDepth(state), "", url)
++      else history.pushState(state, "", url)
++
++      const hash = decodeURIComponent(location.hash.slice(1))
++      const target = hash && document.getElementById(hash)
++
++      if (target) target.scrollIntoView()
++      else if (scroll) window.scrollTo(0, 0)
++
++      saveCurrentDepth()
++    },
++    init: (notify) => {
++      const handler = notifyIfNotBlocked(notify, (delta) => {
++        if (delta) return !beforeLeave.confirm(delta)
++
++        const source = read()
++
++        return !beforeLeave.confirm(source.value, { state: source.state })
++      })
++
++      window.addEventListener("popstate", handler)
++
++      return () => window.removeEventListener("popstate", handler)
++    },
++    utils: {
++      go: (delta) => history.go(delta),
++      renderPath: withBasePath,
++      parsePath: stripBasePath,
++      beforeLeave,
++    },
++  })(props)
++}
++
++export const baseRouter = basePath ? BasePathRouter : undefined
+diff --git a/packages/app/src/runtime/platform/base-path.ts b/packages/app/src/runtime/platform/base-path.ts
+new file mode 100644
+index 0000000..220a322
+--- /dev/null
++++ b/packages/app/src/runtime/platform/base-path.ts
+@@ -0,0 +1,28 @@
++/** The path a build is served under, such as `/opencode`, without a trailing slash; empty at the root. */
++export const basePath = normalizeBasePath(import.meta.env.BASE_URL)
++
++export function normalizeBasePath(base: string | undefined) {
++  const trimmed = (base ?? "").replace(/^\/+|\/+$/g, "")
++
++  return trimmed ? `/${trimmed}` : ""
++}
++
++/** The browser path for an app path, such as `/opencode/new-session` for `/new-session`. */
++export function withBasePath(path: string, base = basePath) {
++  if (!base) return path
++
++  return path === "/" ? `${base}/` : `${base}${path}`
++}
++
++/** The app path for a browser path, or the path itself when it lies outside the base. */
++export function stripBasePath(path: string, base = basePath) {
++  if (!base || !path.startsWith(base)) return path
++
++  const rest = path.slice(base.length)
++
++  if (rest.startsWith("/")) return rest
++
++  if (rest === "" || rest.startsWith("?") || rest.startsWith("#")) return `/${rest}`
++
++  return path
++}
+diff --git a/packages/app/src/utils/server-health.ts b/packages/app/src/utils/server-health.ts
+index 1d7d9e4..5de56ce 100644
+--- a/packages/app/src/utils/server-health.ts
++++ b/packages/app/src/utils/server-health.ts
+@@ -84,7 +84,13 @@ export async function checkServerHealth(
+       .then(() => attempt(count + 1))
+       .catch(() => ({ healthy: false }))
+   }
++  const legacy = (count: number) =>
++    createSdkForServer({ server, fetch, signal })
++      .global.health()
++      .then((x) => (x.error ? next(count, x.error) : { healthy: x.data?.healthy === true, version: x.data?.version }))
++      .catch((error) => next(count, error))
+   const attempt = async (count: number): Promise<ServerHealth> => {
++    if (new URL(server.url).pathname !== "/") return legacy(count)
+     const current = await OpenCode.make({
+       baseUrl: server.url,
+       fetch,
+@@ -104,10 +110,7 @@ export async function checkServerHealth(
+     if ("data" in current && current.data) return current.data
+     if (signal?.aborted) return { healthy: false }
+
+-    return createSdkForServer({ server, fetch, signal })
+-      .global.health()
+-      .then((x) => (x.error ? next(count, x.error) : { healthy: x.data?.healthy === true, version: x.data?.version }))
+-      .catch((error) => next(count, error))
++    return legacy(count)
+   }
+   return attempt(0).finally(() => timeout?.clear?.())
+ }
+diff --git a/packages/app/src/utils/server-protocol.ts b/packages/app/src/utils/server-protocol.ts
+index 27b8dc2..e7523db 100644
+--- a/packages/app/src/utils/server-protocol.ts
++++ b/packages/app/src/utils/server-protocol.ts
+@@ -11,7 +11,7 @@ function headers(server: ServerConnection.HttpBase) {
+ }
+
+ async function probe(server: ServerConnection.HttpBase, fetch: typeof globalThis.fetch, path: string) {
+-  const response = await fetch(new URL(path, server.url), {
++  const response = await fetch(new URL(path.slice(1), `${server.url.replace(/\/$/, "")}/`), {
+     headers: headers(server),
+     signal: AbortSignal.timeout(5_000),
+   })
+diff --git a/packages/ui/src/assets/favicon/site.webmanifest b/packages/ui/src/assets/favicon/site.webmanifest
+index 427c3ad..34ad239 100644
+--- a/packages/ui/src/assets/favicon/site.webmanifest
++++ b/packages/ui/src/assets/favicon/site.webmanifest
+@@ -1,18 +1,18 @@
+ {
+   "name": "OpenCode",
+   "short_name": "OpenCode",
+-  "id": "/",
+-  "start_url": "/",
+-  "scope": "/",
++  "id": "./",
++  "start_url": "./",
++  "scope": "./",
+   "icons": [
+     {
+-      "src": "/web-app-manifest-192x192.png",
++      "src": "./web-app-manifest-192x192.png",
+       "sizes": "192x192",
+       "type": "image/png",
+       "purpose": "maskable"
+     },
+     {
+-      "src": "/web-app-manifest-512x512.png",
++      "src": "./web-app-manifest-512x512.png",
+       "sizes": "512x512",
+       "type": "image/png",
+       "purpose": "maskable"

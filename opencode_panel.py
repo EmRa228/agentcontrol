@@ -11,11 +11,15 @@ import socket
 import subprocess
 import threading
 import time
+from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
+
+import simple_websocket
+import websocket
 
 _SERVE_LOCK = threading.Lock()
 _SERVE_PROC: subprocess.Popen | None = None
@@ -397,16 +401,15 @@ def opencode_status(cfg: dict, state_dir: Path, panel_password: str | None) -> d
     }
 
 
-def inject_html_base(html: bytes, base_href: str) -> bytes:
-    text = html.decode("utf-8", errors="replace")
-    if "<base " in text.lower():
-        return html
-    insert = f'<base href="{base_href}">'
-    match = re.search(r"<head[^>]*>", text, flags=re.IGNORECASE)
-    if match:
-        idx = match.end()
-        return (text[:idx] + insert + text[idx:]).encode("utf-8")
-    return (insert + text).encode("utf-8")
+_HOP_HEADERS = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "proxy-connection", "te", "trailer", "trailers", "transfer-encoding", "upgrade",
+}
+
+
+def _upstream_target(subpath: str, query: bytes) -> str:
+    path = "/" + quote(subpath.lstrip("/"), safe="/")
+    return path + ("?" + query.decode("ascii") if query else "")
 
 
 def proxy_request(
@@ -417,67 +420,109 @@ def proxy_request(
     query_string: bytes,
     headers: dict[str, str],
     body: bytes | None,
-) -> tuple[int, list[tuple[str, str]], bytes]:
-    password = serve_password(cfg, panel_password)
-    if not is_serve_healthy(cfg, password):
-        return 503, [("Content-Type", "text/plain")], b"OpenCode serve is not running"
-
-    path = subpath.lstrip("/")
-    url = f"{serve_base_url(cfg)}/{path}"
-    if query_string:
-        url = f"{url}?{query_string.decode('utf-8', errors='replace')}"
-
-    hop_by_hop = {
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailers",
-        "transfer-encoding",
-        "upgrade",
-        "host",
-        "content-length",
+):
+    origin = serve_base_url(cfg)
+    endpoint = urlsplit(origin)
+    oauth_callback = method == "POST" and subpath.endswith("/oauth/callback")
+    upstream = HTTPConnection(endpoint.hostname, endpoint.port, timeout=600 if oauth_callback else 120)
+    target = _upstream_target(subpath, query_string)
+    connection_tokens = set(headers.get("Connection", "").lower().replace(" ", "").split(","))
+    skip = _HOP_HEADERS | connection_tokens | {
+        "host", "content-length", "accept-encoding", "cookie", "authorization",
+        "origin", "referer", "x-agentcontrol-auth",
     }
-    forward_headers = {
-        k: v for k, v in headers.items() if k.lower() not in hop_by_hop
+    forwarded = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in skip and not key.lower().startswith(("forwarded", "x-forwarded-"))
     }
-    forward_headers["Authorization"] = _basic_auth_header(password)
-
-    if headers.get("Upgrade", "").lower() == "websocket":
-        return (
-            501,
-            [("Content-Type", "text/plain")],
-            b"WebSocket upgrade via /oc is not supported yet; use the panel HTTP UI.",
-        )
-
-    req = Request(url, data=body, method=method, headers=forward_headers)
+    forwarded["Authorization"] = _basic_auth_header(serve_password(cfg, panel_password))
+    forwarded["Accept-Encoding"] = "identity"
+    if "Origin" in headers:
+        forwarded["Origin"] = origin
     try:
-        with urlopen(req, timeout=120) as resp:
-            data = resp.read()
-            status = resp.status
-            resp_headers = list(resp.headers.items())
-    except HTTPError as exc:
-        data = exc.read()
-        status = exc.code
-        resp_headers = list(exc.headers.items())
-    except URLError as exc:
-        return 502, [("Content-Type", "text/plain")], str(exc.reason).encode("utf-8")
+        upstream.request(method, target, body=body, headers=forwarded)
+        response = upstream.getresponse()
+    except (OSError, HTTPException):
+        upstream.close()
+        return 502, [("Content-Type", "text/plain")], b"OpenCode upstream unavailable", None
 
-    out_headers: list[tuple[str, str]] = []
-    content_type = ""
-    for key, value in resp_headers:
-        lk = key.lower()
-        if lk in hop_by_hop or lk == "content-encoding":
-            continue
-        if lk == "content-type":
-            content_type = value
-        out_headers.append((key, value))
+    pinned_headers = {"cache-control", "set-cookie", "www-authenticate", "location"}
+    response_connections = set(response.headers.get("Connection", "").lower().replace(" ", "").split(","))
+    out = [
+        (key, value) for key, value in response.getheaders()
+        if key.lower() not in _HOP_HEADERS | pinned_headers | response_connections
+        and not key.lower().startswith("access-control-")
+    ]
+    out.append(("Cache-Control", "no-store"))
+    location = response.headers.get("Location")
+    if location:
+        destination = urlsplit(urljoin(origin + target, location))
+        if (destination.scheme, destination.netloc) == (endpoint.scheme, endpoint.netloc):
+            location = "/oc" + destination._replace(scheme="", netloc="").geturl()
+        elif destination.scheme != "https" or not destination.hostname:
+            upstream.close()
+            return 502, [("Content-Type", "text/plain")], b"Invalid OpenCode redirect", None
+        out.append(("Location", location))
+    if response.headers.get("Content-Type", "").partition(";")[0].strip() == "text/event-stream":
+        out.append(("X-Accel-Buffering", "no"))
 
-    if "text/html" in content_type and method.upper() == "GET":
-        data = inject_html_base(data, "/oc/")
+    def stream():
+        try:
+            while chunk := response.read1(16 * 1024):
+                yield chunk
+        finally:
+            upstream.close()
 
-    return status, out_headers, data
+    return response.status, out, stream(), upstream.close
+
+
+def proxy_terminal(cfg: dict, panel_password: str | None, terminal: str, query: bytes, environ: dict) -> int:
+    url = serve_base_url(cfg).replace("http://", "ws://", 1)
+    target = _upstream_target(f"pty/{terminal}/connect", query)
+    password = serve_password(cfg, panel_password)
+    try:
+        upstream = websocket.create_connection(
+            url + target,
+            header={"Authorization": _basic_auth_header(password)},
+            http_no_proxy=["127.0.0.1", "localhost", "::1"],
+            redirect_limit=0,
+            timeout=5,
+        )
+    except (OSError, websocket.WebSocketException):
+        return 502
+    try:
+        downstream = simple_websocket.Server.accept(environ, ping_interval=20, max_message_size=1024 * 1024)
+        upstream.settimeout(None)
+
+        def relay_output():
+            try:
+                while True:
+                    opcode, payload = upstream.recv_data()
+                    if opcode == websocket.ABNF.OPCODE_CLOSE:
+                        break
+                    downstream.send(payload.decode("utf-8") if opcode == websocket.ABNF.OPCODE_TEXT else payload)
+            except (OSError, UnicodeError, websocket.WebSocketException, simple_websocket.ConnectionClosed):
+                pass
+            finally:
+                try:
+                    downstream.close()
+                except (OSError, simple_websocket.ConnectionClosed):
+                    pass
+
+        reader = threading.Thread(target=relay_output, daemon=True)
+        reader.start()
+        try:
+            while downstream.connected:
+                payload = downstream.receive(timeout=1)
+                if payload is not None:
+                    opcode = websocket.ABNF.OPCODE_TEXT if isinstance(payload, str) else websocket.ABNF.OPCODE_BINARY
+                    upstream.send(payload, opcode=opcode)
+        except (OSError, websocket.WebSocketException, simple_websocket.ConnectionClosed):
+            pass
+    finally:
+        upstream.shutdown()
+    return 204
 
 
 def try_refresh_remote_url(cfg: dict, state_dir: Path, panel_password: str | None) -> dict[str, Any]:

@@ -23,7 +23,8 @@ from urllib.parse import quote
 from urllib.request import urlopen
 
 import yaml
-from flask import Flask, jsonify, render_template, request, Response
+from flask import Flask, jsonify, redirect, render_template, request, Response, send_from_directory
+from werkzeug.security import safe_join
 
 from xray_client import (
     apply_client_settings,
@@ -2185,28 +2186,74 @@ def serve_password_for_panel() -> str:
     return opencode_panel.serve_password(CFG, read_panel_password())
 
 
-@app.get("/oc")
-@app.get("/oc/")
-@app.get("/oc/<path:subpath>")
-def opencode_proxy(subpath: str = ""):
+def opencode_proxy_access():
     if not panel_session_ok():
-        return Response(
-            '<p>Sign in to AgentControl first, then open OpenCode.</p>',
-            status=401,
-            mimetype="text/html; charset=utf-8",
+        return Response("Sign in to AgentControl first, then open OpenCode.", status=401)
+    origin = request.headers.get("Origin")
+    scheme = {"ws": "http", "wss": "https"}.get(request.scheme, request.scheme)
+    if origin and origin != f"{scheme}://{request.host}":
+        return Response("OpenCode requires a same-origin request.", status=403)
+    return None
+
+
+@app.get("/oc")
+def opencode_proxy_redirect():
+    denied = opencode_proxy_access()
+    if denied is not None:
+        return denied
+    query = request.query_string.decode("ascii")
+    return redirect("/oc/" + ("?" + query if query else ""), code=308)
+
+
+@app.route("/oc/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+@app.route("/oc/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+def opencode_proxy(subpath: str):
+    denied = opencode_proxy_access()
+    if denied is not None:
+        return denied
+    web_root = Path(__file__).resolve().parent / "opencode-web"
+    if request.method in {"GET", "HEAD"}:
+        asset = safe_join(str(web_root), subpath)
+        session_route = re.fullmatch(r"server/[^/]+/session/[^/]+", subpath)
+        navigation = (
+            not subpath
+            or session_route is not None
+            or request.headers.get("Sec-Fetch-Mode") == "navigate"
+            or request.accept_mimetypes.best == "text/html"
         )
-    body = request.get_data(cache=False)
-    headers = {k: v for k, v in request.headers.items()}
-    status, resp_headers, payload = opencode_panel.proxy_request(
-        CFG,
-        read_panel_password(),
-        subpath,
-        request.method,
-        request.query_string,
-        headers,
-        body if body else None,
+        if subpath and asset and Path(asset).is_file():
+            response = send_from_directory(web_root, subpath)
+            response.headers["Cache-Control"] = "private, no-cache"
+            return response
+        if subpath.startswith("assets/"):
+            return Response("OpenCode asset not found.", status=404)
+        if navigation:
+            if not (web_root / "index.html").is_file():
+                return Response("OpenCode web build missing. Run scripts/build-opencode-web.sh.", status=503)
+            response = send_from_directory(web_root, "index.html")
+            response.headers["Cache-Control"] = "no-store"
+            return response
+    status, headers, payload, close = opencode_panel.proxy_request(
+        CFG, read_panel_password(), subpath, request.method, request.query_string,
+        dict(request.headers), request.get_data(cache=False) or None,
     )
-    return Response(payload, status=status, headers=resp_headers)
+    response = Response(payload, status=status, headers=headers)
+    if close is not None:
+        response.call_on_close(close)
+    return response
+
+
+@app.route("/oc/pty/<terminal>/connect", websocket=True)
+def opencode_terminal_proxy(terminal: str):
+    denied = opencode_proxy_access()
+    if denied is not None:
+        return denied
+    if not re.fullmatch(r"pty_[A-Za-z0-9]+", terminal):
+        return Response(status=404)
+    status = opencode_panel.proxy_terminal(
+        CFG, read_panel_password(), terminal, request.query_string, request.environ,
+    )
+    return Response(status=status)
 
 
 @app.get("/api/ready/<name>")

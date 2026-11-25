@@ -82,6 +82,7 @@ Constants in `fleet/public/index.html`: `POLL_MS = 60000`, `REGISTRY_POLL_EVERY 
 | `DELETE /api/servers/:id` | servers + snapshot | servers + snapshot |
 | `POST /api/servers/:id/pause` | servers + snapshot | servers + optional snapshot |
 | `POST /api/fleet/.../start\|stop` | servers + recent | recent (+ touch server list) |
+| `POST /api/fleet/update-all` | servers | **none** |
 
 ---
 

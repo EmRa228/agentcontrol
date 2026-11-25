@@ -192,9 +192,11 @@
       <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy settings</button>
       <button class="btn btn-ghost btn-sm" type="button" id="fleet-update-btn" onclick="checkFleetUpdate(true)">Update fleet UI</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="panel-update-all-btn" onclick="updateAllPanels()">Update all panels</button>
       <button class="btn btn-ghost btn-sm" type="button" id="refresh-btn" onclick="refreshNow()">Refresh</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="logout()">Sign out</button>
     </div>
+    <div id="panel-update-results" class="update-banner hidden" role="status"></div>
 
     <section class="section" id="recent-section">
       <div class="section-head">
@@ -1100,6 +1102,38 @@
     function updateFleetTitle() {
       const host = window.location.hostname || 'fleet';
       document.title = `${host} | Fleet AgentControl`;
+    }
+
+    async function updateAllPanels() {
+      const btn = document.getElementById('panel-update-all-btn');
+      const output = document.getElementById('panel-update-results');
+      if (btn.disabled || !confirm('Update all unpaused panels? Panel restarts can stop active workers.')) return;
+      btn.disabled = true;
+      output.classList.remove('hidden');
+      output.textContent = 'Requesting panel updates…';
+      try {
+        const res = await api('/api/fleet/update-all', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !Array.isArray(data.results)) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        if (!data.results.length) {
+          output.textContent = 'No unpaused panels to update.';
+          return;
+        }
+        output.replaceChildren(...data.results.map(result => {
+          const line = document.createElement('div');
+          const status = result.ok ? 'Update requested'
+            : result.body?.status === 'already_running' ? 'Update already running'
+            : result.body?.error || result.error || `Request failed (HTTP ${result.status})`;
+          line.textContent = `${result.server}: ${status}`;
+          return line;
+        }));
+      } catch (error) {
+        output.textContent = `Could not request panel updates: ${error.message}`;
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     async function checkFleetUpdate(manual = false) {

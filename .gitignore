@@ -9,3 +9,5 @@ auth-password
 **/auth-password
 fleet/node_modules/
 fleet/.wrangler/
+/opencode-web
+/.opencode-web-builds/

@@ -179,7 +179,7 @@ Only needed if you want CI to call your Fleet hub and run `panel-update.sh` on *
 
 Use the **same password** you chose in the Fleet setup UI. This is independent of Cloudflare `wrangler secret put FLEET_PASSWORD` (KV password from setup is what matters for login).
 
-Without both `FLEET_URL` and `FLEET_PASSWORD`, you update each server manually (Fleet UI **Update all panels**, or SSH + `panel-update.sh` per host).
+For a manual rollout, push the panel release to `main`, open Fleet and choose **Update all panels**. Confirm to send an update request to every unpaused server. Fleet reports each response. An accepted request starts an asynchronous update on that host. Check the panel's `/health` for the installed version and `/var/lib/agentcontrol/update.log` for details. Panel restarts can stop active Cursor workers.
 
 ### Step 5 — Verify
 

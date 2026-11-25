@@ -125,13 +125,18 @@ Worker names in Cursor: `agentcontrol-<folder>`
 
 ## OpenCode (shared serve)
 
-- One `opencode serve` on loopback (default `127.0.0.1:4096`).
-- After panel sign-in, open a project via **OpenCode** (UI at `/oc/?directory=…` on the same port as the panel).
-- Provider keys: Settings → **OpenCode** — Anthropic, OpenAI, and/or **OpenCode Go** (`oc_sk_…`).
-- Optional **TOTP** in Settings (password + 6-digit code at sign-in; 30-day session cookie after login).
-- Fleet: `POST /api/fleet/<serverId>/opencode/<project>` opens the server panel URL (sign in to that panel in the browser once).
+- AgentControl runs one shared OpenCode server on `127.0.0.1:4096`. Keep port 4096 on loopback.
+- After panel sign-in, select **OpenCode** on a project. The URL at `/oc/?directory=…` opens a draft for that directory. The frontend and API share the panel origin.
+- Reload or bookmark an OpenCode session URL to return to that session while the panel login cookie is valid.
+- The proxy requires a panel session, adds upstream Basic auth, forwards API methods and SSE, and bridges the OpenCode terminal WebSocket. If the panel sits behind another proxy, preserve its host and scheme and allow long-lived streaming and WebSocket upgrades for `/oc/`.
+- Panel Settings → **OpenCode** manages API keys. To use a ChatGPT Plus or Pro subscription, open OpenCode's provider connection dialog, select **OpenAI**, and choose **ChatGPT Pro/Plus (headless)** for a remote server. Complete the device authorization on the official OpenAI page. Use the same OpenCode service user and data directory after restarts so saved credentials are reused.
+- Fleet project launch returns the server panel's OpenCode URL. Sign in to that panel in the browser once.
 
-Install OpenCode CLI on the host: `curl -fsSL https://opencode.ai/install | bash`
+The frontend build is pinned to OpenCode 1.19.6 and uses Bun 1.4.4. With that OpenCode release on the server, run `scripts/build-opencode-web.sh` from the AgentControl checkout. Set `BUN_BIN` if Bun is installed outside PATH. The script installs the built app at `opencode-web`. The patch makes the assets, router and API clients prefix-aware. Update the pinned source, patch, and matching backend together when upgrading OpenCode.
+
+To verify a deployment, test the authenticated OpenCode service directly on loopback first, then sign in through the panel and open two projects. Check that the selected project survives browser refresh, JS and CSS use `/oc/assets/` with the proper MIME types, `/oc/global/event` delivers an event before closing, and the terminal can send and receive over its WebSocket. Verify ChatGPT OAuth by making an OpenAI model request, restarting just the OpenCode child process, and repeating the request without signing in again.
+
+Back up `/etc/agentcontrol`, the OpenCode configuration, and its private data directory before changing service settings. Use a consistent SQLite backup if OpenCode is running. The default systemd unit can stop all child processes during a panel restart, including Cursor workers. Check worker state before reloading the panel.
 
 ## API
 
@@ -148,7 +153,7 @@ Install OpenCode CLI on the host: `curl -fsSL https://opencode.ai/install | bash
 | GET | `/api/opencode/status` | yes |
 | GET/POST | `/api/settings/opencode` | yes |
 | GET/POST | `/api/settings/totp/*` | yes |
-| GET | `/oc/…` | panel session cookie |
+| GET/POST/PUT/PATCH/DELETE | `/oc/…` | panel session cookie |
 | GET | `/health` | no |
 
 Header: `X-AgentControl-Auth: <password>`

@@ -1,3 +1,5 @@
 flask>=3.0,<4
 pyyaml>=6.0,<7
 pyotp>=2.9,<3
+simple-websocket>=1.1,<2
+websocket-client>=1.8,<2
