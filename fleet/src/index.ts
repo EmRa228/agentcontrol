@@ -1205,6 +1205,7 @@ async function scheduledHealthCheck(env: Env): Promise<void> {
       } else {
         const consecutive = (state.consecutive || 0) + 1;
         const down = consecutive >= Math.max(1, config.fail_threshold || 2);
+        const alreadyDown = state.status === "down";
         if (down && !state.notified && config.events.down) {
           await notifyFleet(
             config,
@@ -1213,16 +1214,20 @@ async function scheduledHealthCheck(env: Env): Promise<void> {
             `${server.name} (${serverUrlFor(server)}) failed ${consecutive} checks: ${error || "unreachable"}`,
           );
         }
-        await env.KV.put(
-          stateKey,
-          JSON.stringify({
-            ...state,
-            status: down ? "down" : "unknown",
-            consecutive,
-            notified: down ? true : Boolean(state.notified),
-            lastCheck: now,
-          }),
-        );
+        // Once a server is marked down, stop writing on every cron tick: one
+        // failure write is enough until it recovers or crosses the threshold.
+        if (!alreadyDown) {
+          await env.KV.put(
+            stateKey,
+            JSON.stringify({
+              ...state,
+              status: down ? "down" : "unknown",
+              consecutive,
+              notified: down ? true : Boolean(state.notified),
+              lastCheck: now,
+            }),
+          );
+        }
       }
     }),
   );
