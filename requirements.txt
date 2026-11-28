@@ -1,5 +1,7 @@
 flask>=3.0,<4
 pyyaml>=6.0,<7
 pyotp>=2.9,<3
+segno>=1.6,<2
 simple-websocket>=1.1,<2
 websocket-client>=1.8,<2
+argon2-cffi>=23,<26

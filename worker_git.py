@@ -39,6 +39,48 @@ def folder_git_status(path: Path) -> dict[str, Any]:
     }
 
 
+def git_details(path: Path) -> dict[str, Any]:
+    """On-demand git details for the project detail panel (not called on every poll)."""
+    if not (path / ".git").is_dir():
+        return {"is_repo": False}
+    branch = ""
+    ahead = behind = 0
+    status = _git(path, ["status", "--porcelain=1", "--branch"])
+    dirty = 0
+    for line in (status.stdout or "").splitlines():
+        if line.startswith("##"):
+            header = line[2:].strip()
+            branch = header.split("...")[0].split(" ")[0]
+            for part in header.split("["):
+                if "ahead" in part:
+                    try:
+                        ahead = int(part.split("ahead")[1].split(",")[0].strip(" ]"))
+                    except (IndexError, ValueError):
+                        ahead = 0
+                if "behind" in part:
+                    try:
+                        behind = int(part.split("behind")[1].split(",")[0].strip(" ]"))
+                    except (IndexError, ValueError):
+                        behind = 0
+        elif line.strip():
+            dirty += 1
+    head = _git(path, ["rev-parse", "--short", "HEAD"])
+    subject = _git(path, ["log", "-1", "--format=%s"])
+    last_date = _git(path, ["log", "-1", "--format=%cI"])
+    return {
+        "is_repo": True,
+        "branch": branch or "detached",
+        "dirty_files": dirty,
+        "ahead": ahead,
+        "behind": behind,
+        "head": (head.stdout or "").strip(),
+        "last_commit": (subject.stdout or "").strip(),
+        "last_commit_at": (last_date.stdout or "").strip(),
+        "has_remote": bool(git_remote_url(path)),
+        "remote_url": git_remote_url(path),
+    }
+
+
 def _read_marker_remote(path: Path) -> str | None:
     marker = path / GIT_REMOTE_MARKER
     if not marker.is_file():

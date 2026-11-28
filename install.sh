@@ -13,7 +13,6 @@ log() { echo "==> $*"; }
 caddy_configured() {
   local cfg="${CONFIG_DIR}/config.yaml"
   [[ -f "${cfg}" ]] || return 1
-  grep -qE '^public_hostname:[[:space:]]*[^"'"'"'[:space:]]' "${cfg}" || return 1
   grep -qE '^internal_port:[[:space:]]*[1-9][0-9]*' "${cfg}" || return 1
 }
 
@@ -133,7 +132,19 @@ setup_panel_password() {
   AUTH_FILE="${CONFIG_DIR}/auth-password"
   mkdir -p "${CONFIG_DIR}"
   if [[ -n "${PANEL_PASSWORD:-}" ]]; then
-    printf '%s' "${PANEL_PASSWORD}" > "${AUTH_FILE}"
+    if [[ -x "${INSTALL_DIR}/venv/bin/python" ]]; then
+      PANEL_PASSWORD="${PANEL_PASSWORD}" CONFIG_DIR="${CONFIG_DIR}" INSTALL_DIR="${INSTALL_DIR}" \
+        "${INSTALL_DIR}/venv/bin/python" - <<'PY' || printf '%s' "${PANEL_PASSWORD}" > "${AUTH_FILE}"
+import os
+from pathlib import Path
+import sys
+sys.path.insert(0, os.environ.get("INSTALL_DIR", "/opt/agentcontrol"))
+from panel.security import write_password_file
+write_password_file(Path(os.environ["CONFIG_DIR"]) / "auth-password", os.environ["PANEL_PASSWORD"])
+PY
+    else
+      printf '%s' "${PANEL_PASSWORD}" > "${AUTH_FILE}"
+    fi
     chmod 600 "${AUTH_FILE}"
     log "Panel password updated in ${AUTH_FILE}"
     return
@@ -159,7 +170,16 @@ install_app() {
   if [[ ! -f "${CONFIG_DIR}/config.yaml" ]]; then
     cp "${INSTALL_DIR}/config.example.yaml" "${CONFIG_DIR}/config.yaml"
   fi
+  if [[ ! -f "${CONFIG_DIR}/notifications.yaml" && -f "${INSTALL_DIR}/notifications.example.yaml" ]]; then
+    cp "${INSTALL_DIR}/notifications.example.yaml" "${CONFIG_DIR}/notifications.yaml"
+    chmod 600 "${CONFIG_DIR}/notifications.yaml"
+  fi
   ln -sf "${CONFIG_DIR}/config.yaml" "${INSTALL_DIR}/config.yaml"
+
+  if [[ ! -s "${CONFIG_DIR}/setup-token" ]]; then
+    python3 -c 'import secrets; print(secrets.token_urlsafe(24))' > "${CONFIG_DIR}/setup-token"
+    chmod 600 "${CONFIG_DIR}/setup-token"
+  fi
 
   AGENT_PATH="$(command -v agent 2>/dev/null || true)"
   if [[ -n "${AGENT_PATH}" ]] && [[ -f "${CONFIG_DIR}/config.yaml" ]]; then
@@ -169,13 +189,37 @@ install_app() {
   cp "${INSTALL_DIR}/agentcontrol.service" /etc/systemd/system/agentcontrol.service
   systemctl daemon-reload
   systemctl enable agentcontrol
+
+  # Move Flask behind the bundled Caddy before it restarts, so every install and
+  # update gets HTTPS on the public port with the same layout.
+  INSTALL_DIR="${INSTALL_DIR}" CONFIG_DIR="${CONFIG_DIR}" STATE_DIR="${STATE_DIR}" \
+    CONFIG_FILE="${CONFIG_DIR}/config.yaml" \
+    bash "${INSTALL_DIR}/scripts/enable-caddy.sh" || log "Could not enable the bundled Caddy layout"
+
   systemctl restart agentcontrol
   write_host_only_guard
 
-  if caddy_configured; then
-    log "Installing/refreshing the bundled Caddy reverse proxy"
-    INSTALL_DIR="${INSTALL_DIR}" CONFIG_DIR="${CONFIG_DIR}" STATE_DIR="${STATE_DIR}" \
-      bash "${INSTALL_DIR}/scripts/install-caddy.sh" || log "Caddy setup failed — panel is on the internal port until this is fixed"
+  log "Installing/refreshing the bundled Caddy reverse proxy"
+  INSTALL_DIR="${INSTALL_DIR}" CONFIG_DIR="${CONFIG_DIR}" STATE_DIR="${STATE_DIR}" \
+    bash "${INSTALL_DIR}/scripts/install-caddy.sh" || log "Caddy setup failed — panel is on the internal port until this is fixed"
+}
+
+install_maintenance() {
+  if [[ -f "${INSTALL_DIR}/agentcontrol-maintenance.service" ]]; then
+    sed -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
+        -e "s|@CONFIG_DIR@|${CONFIG_DIR}|g" \
+        -e "s|@STATE_DIR@|${STATE_DIR}|g" \
+        "${INSTALL_DIR}/agentcontrol-maintenance.service" > /etc/systemd/system/agentcontrol-maintenance.service
+    cp "${INSTALL_DIR}/agentcontrol-maintenance.timer" /etc/systemd/system/agentcontrol-maintenance.timer
+    systemctl daemon-reload
+    systemctl enable --now agentcontrol-maintenance.timer >/dev/null 2>&1 || log "Could not enable the maintenance timer"
+  fi
+  if [[ -x "${INSTALL_DIR}/scripts/install-logrotate.sh" ]]; then
+    STATE_DIR="${STATE_DIR}" bash "${INSTALL_DIR}/scripts/install-logrotate.sh" || log "logrotate setup failed"
+  fi
+  if [[ -x "${INSTALL_DIR}/scripts/install-fail2ban.sh" ]]; then
+    CONFIG_FILE="${CONFIG_DIR}/config.yaml" STATE_DIR="${STATE_DIR}" \
+      bash "${INSTALL_DIR}/scripts/install-fail2ban.sh" || log "fail2ban setup failed (panel lockout still applies)"
   fi
 }
 
@@ -197,21 +241,27 @@ main() {
   install_packages
   install_cursor_agent
   ensure_repo
+  install_app
   setup_api_key
   setup_panel_password
-  install_app
+  install_maintenance
 
   IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
   echo ""
   echo "Done."
+  host="$(awk -v k='public_hostname:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR}/config.yaml")"
+  port="$(awk -v k='port:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR}/config.yaml")"
   if caddy_configured; then
-    host="$(awk -v k='public_hostname:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR}/config.yaml")"
-    port="$(awk -v k='port:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR}/config.yaml")"
-    echo "Panel: https://${host}:${port:-30228}"
+    echo "Panel: https://${host:-${IP:-localhost}}:${port:-30228}"
+    [[ -z "$host" ]] && echo "Set public_hostname (with DNS pointing here) for a trusted certificate."
   else
-    echo "Panel: http://${IP:-localhost}:30228"
+    echo "Panel: http://${IP:-localhost}:${port:-30228}"
   fi
   echo "Set panel password and Cursor API key in the web UI on first visit."
+  if [[ ! -s "${CONFIG_DIR}/auth-password" || ! -s "${CONFIG_DIR}/api-key" ]]; then
+    echo "First-run setup token: $(cat "${CONFIG_DIR}/setup-token" 2>/dev/null || echo '(see ${CONFIG_DIR}/setup-token)')"
+    echo "Open: https://HOST:${port:-30228}/?setup=TOKEN  (required from non-loopback addresses)"
+  fi
   echo "API key: ${CONFIG_DIR}/api-key"
   echo "Logs:    journalctl -u agentcontrol -f"
 }

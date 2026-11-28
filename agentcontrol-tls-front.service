@@ -1,0 +1,19 @@
+[Unit]
+Description=AgentControl HTTPS front (TLS pass-through + HTTP redirect)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=@PYTHON@ @SCRIPT@ --listen-host 0.0.0.0 --listen-port @PUBLIC_PORT@ --upstream-host 127.0.0.1 --upstream-port @HTTPS_INTERNAL_PORT@ --public-port @PUBLIC_PORT@ --default-host "@DEFAULT_HOST@" --plain-port @INTERNAL_PORT@
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

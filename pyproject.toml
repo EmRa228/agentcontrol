@@ -1,0 +1,6 @@
+[tool.ruff]
+exclude = [".opencode-web-builds", "fleet/node_modules", "venv", "venv-new", ".git"]
+
+[tool.ruff.lint.per-file-ignores]
+# Route modules resolve helper globals from app.py at registration time.
+"panel/routes/*.py" = ["F821"]

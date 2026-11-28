@@ -110,6 +110,8 @@
     .modal-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: flex-start; justify-content: center; padding: max(16px, 4vh) 16px 16px; z-index: 50; overflow: auto; }
     @media (min-width: 800px) { .modal-overlay { align-items: center; } }
     .modal { width: 100%; max-width: min(720px, 96vw); background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; max-height: min(90vh, 900px); overflow: auto; margin: auto 0; }
+    .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 640px) { .modal-grid { grid-template-columns: 1fr; } }
     .modal-wide { max-width: min(920px, 96vw); }
     .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
     .modal-header h2, .modal-header h3 { margin: 0; }
@@ -159,7 +161,7 @@
   <div id="login" class="gate hidden">
     <div class="panel">
       <h1>AgentControl Fleet</h1>
-      <p class="sub">Enter the fleet password. Saved in this browser until you sign out.</p>
+      <p class="sub">Enter the fleet password. The session is stored in a secure cookie on this device.</p>
       <label>Fleet password</label>
       <input id="login-pw" type="password" autocomplete="current-password">
       <button class="btn btn-primary" type="button" id="login-btn" style="width:100%;margin-top:12px" onclick="doLogin()">Sign in</button>
@@ -191,6 +193,7 @@
       <input id="project-search" class="search-input" type="search" placeholder="Search all projects…" autocomplete="off" oninput="onProjectSearchInput()">
       <button class="btn btn-primary btn-sm" type="button" onclick="openAddModal()">+ Add server</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy settings</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="openNotifyModal()">Alerts</button>
       <button class="btn btn-ghost btn-sm" type="button" id="fleet-update-btn" onclick="checkFleetUpdate(true)">Update fleet UI</button>
       <button class="btn btn-ghost btn-sm" type="button" id="panel-update-all-btn" onclick="updateAllPanels()">Update all panels</button>
       <button class="btn btn-ghost btn-sm" type="button" id="refresh-btn" onclick="refreshNow()">Refresh</button>
@@ -223,7 +226,7 @@
         <div class="section-title">Servers</div>
       </div>
       <table class="servers-table">
-        <thead><tr><th>Name</th><th>Host / IP</th><th>Version</th><th>CPU</th><th>RAM</th><th>Disk</th><th>Disk IO</th><th>Workers</th><th>Proxy</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Host / IP</th><th>Version</th><th>Health</th><th>CPU</th><th>RAM</th><th>Disk</th><th>Disk IO</th><th>Workers</th><th>Proxy</th><th>Actions</th></tr></thead>
         <tbody id="servers-table"></tbody>
       </table>
     </section>
@@ -235,7 +238,7 @@
       <div class="modal-header"><h2>Add server</h2><button type="button" class="modal-close-x" onclick="closeAddModal()" aria-label="Close">×</button></div>
       <p class="sub">Use a hostname (not raw IP) — Cloudflare Workers block direct IPs.</p>
       <label>Name</label><input id="add-name" placeholder="e.g. iran-1">
-      <label>URL</label><input id="add-url" placeholder="http://ac.example.com:30228">
+      <label>URL</label><input id="add-url" placeholder="https://ac.example.com:30228">
       <label>Panel password</label><input id="add-password" type="password">
       <div class="modal-actions">
         <button class="btn btn-ghost btn-sm" type="button" onclick="closeAddModal()">Cancel</button>
@@ -277,6 +280,40 @@
     </div>
   </div>
 
+  <div id="notify-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal modal-wide">
+      <div class="modal-header"><h2>Alerts</h2><button type="button" class="modal-close-x" onclick="closeNotifyModal()" aria-label="Close">×</button></div>
+      <p class="sub">Fleet checks every server every 5 minutes. Alerts fire after the failure threshold and recoveries are optional.</p>
+      <label><input type="checkbox" id="notify-enabled" style="width:auto;margin-right:6px"> Enable Fleet alerts</label>
+      <div class="modal-grid">
+        <div><label>Minimum severity</label>
+          <select id="notify-severity">
+            <option value="info">Info</option>
+            <option value="warning">Warning</option>
+            <option value="critical">Critical only</option>
+          </select>
+        </div>
+        <div><label>Failures before alert</label><input id="notify-threshold" type="number" min="1" max="12" value="2"></div>
+      </div>
+      <label><input type="checkbox" id="notify-down" style="width:auto;margin-right:6px"> Alert when a server goes down</label>
+      <label><input type="checkbox" id="notify-recovered" style="width:auto;margin-right:6px"> Alert when a server recovers</label>
+      <div class="section-title">Webhook</div>
+      <label><input type="checkbox" id="notify-webhook-enabled" style="width:auto;margin-right:6px"> Enable webhook</label>
+      <input id="notify-webhook-url" placeholder="https://hooks.example.com/agentcontrol">
+      <input id="notify-webhook-secret" type="password" placeholder="Signing secret (optional)">
+      <div class="section-title">Telegram</div>
+      <label><input type="checkbox" id="notify-telegram-enabled" style="width:auto;margin-right:6px"> Enable Telegram</label>
+      <input id="notify-telegram-token" type="password" placeholder="Bot token">
+      <input id="notify-telegram-chat" placeholder="Chat ID">
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" type="button" onclick="closeNotifyModal()">Cancel</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="testNotify()">Send test</button>
+        <button class="btn btn-primary btn-sm" type="button" onclick="saveNotify()">Save</button>
+      </div>
+      <p id="notify-err" class="err"></p>
+    </div>
+  </div>
+
   <div id="start-modal" class="modal-overlay hidden" data-modal-closable="1" data-modal-guard-busy="1">
     <div class="modal modal-wide">
       <div class="modal-header"><h2 id="start-title">Starting…</h2><button type="button" class="modal-close-x" onclick="closeStartModal()" aria-label="Close">×</button></div>
@@ -294,7 +331,6 @@
   </div>
 
   <script>
-    const AUTH_KEY = 'agentcontrol_fleet_pw';
     const CACHE_KEY = 'agentcontrol_fleet_snapshot';
     const THEME_KEY = 'agentcontrol_fleet_theme';
     const POLL_MS = 60000;
@@ -371,8 +407,6 @@
         <td>${status}</td>
       </tr>`;
     }
-    function setPw(v) { localStorage.setItem(AUTH_KEY, v); }
-    function clearPw() { localStorage.removeItem(AUTH_KEY); }
     function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
     function actionKey(kind, serverId, project) {
       return `${kind}:${serverId}:${decodeURIComponent(project)}`;
@@ -522,12 +556,11 @@
       if (lastSnapshot) renderRecentProjects(lastSnapshot);
     }
 
-    function pw() { return localStorage.getItem(AUTH_KEY) || ''; }
-
     async function api(path, opts = {}) {
-      opts.headers = { 'Content-Type': 'application/json', 'X-Fleet-Password': pw(), ...(opts.headers || {}) };
+      opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      opts.credentials = opts.credentials || 'same-origin';
       const res = await fetch(path, opts);
-      if (res.status === 401) { clearPw(); showLogin(); throw new Error('unauthorized'); }
+      if (res.status === 401) { showLogin(); throw new Error('unauthorized'); }
       return res;
     }
 
@@ -561,18 +594,32 @@
     async function doLogin() {
       const btn = document.getElementById('login-btn');
       const p = document.getElementById('login-pw').value;
-      setPw(p);
       document.getElementById('login-err').textContent = '';
       await withButtonLoading(btn, async () => {
         try {
-          const res = await api('/api/servers');
-          if (res.ok) showApp();
-          else document.getElementById('login-err').textContent = 'Wrong password';
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: p }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            document.getElementById('login-err').textContent = data.error || 'Wrong password';
+            return;
+          }
+          document.getElementById('login-pw').value = '';
+          showApp();
+          await checkFleetUpdate(false);
+          await pollFleet();
+          setInterval(() => checkFleetUpdate(false), 300000);
         } catch (e) { document.getElementById('login-err').textContent = e.message; }
       });
     }
 
-    function logout() { clearPw(); showLogin(); }
+    async function logout() {
+      try { await api('/api/logout', { method: 'POST' }); } catch (_) {}
+      showLogin();
+    }
 
     async function submitSetup() {
       const btn = document.getElementById('setup-btn');
@@ -580,7 +627,7 @@
       const p2 = document.getElementById('setup-pw2').value;
       const errEl = document.getElementById('setup-err');
       errEl.textContent = '';
-      if (!p1 || p1.length < 4) { errEl.textContent = 'Password must be at least 4 characters'; return; }
+      if (!p1 || p1.length < 8) { errEl.textContent = 'Password must be at least 8 characters'; return; }
       if (p1 !== p2) { errEl.textContent = 'Passwords do not match'; return; }
       await withButtonLoading(btn, async () => {
         try {
@@ -591,7 +638,6 @@
           });
           const data = await res.json();
           if (!res.ok) { errEl.textContent = data.error || 'Setup failed'; return; }
-          setPw(p1);
           showApp();
           await checkFleetUpdate(false);
           await pollFleet();
@@ -675,6 +721,42 @@
       return s.online ? '<span class="badge ok">online</span>' : '<span class="badge bad">offline</span>';
     }
 
+    function versionTuple(value) {
+      return String(value || '').split('.').map(n => parseInt(n, 10) || 0);
+    }
+    function versionNewer(a, b) {
+      const x = versionTuple(a), y = versionTuple(b);
+      for (let i = 0; i < Math.max(x.length, y.length); i++) {
+        if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+      }
+      return false;
+    }
+    function driftBadge(s, servers) {
+      if (!s.online || s.paused) return '';
+      const notes = [];
+      const versions = servers.filter(x => x.online && x.version).map(x => x.version);
+      const latest = versions.reduce((best, v) => (versionNewer(v, best) ? v : best), '0.0.0');
+      if (s.version && latest && s.version !== latest) notes.push(`panel ${s.version} < ${latest}`);
+      const oc = s.opencode || {};
+      if (oc.version && oc.pinned && oc.version !== oc.pinned) notes.push(`opencode ${oc.version} ≠ ${oc.pinned}`);
+      if (oc.web_version && oc.pinned && oc.web_version !== oc.pinned) notes.push(`web ${oc.web_version} ≠ ${oc.pinned}`);
+      if (!notes.length) return '';
+      return `<span class="badge pause" title="${esc(notes.join(' · '))}">drift</span>`;
+    }
+    function healthCell(s) {
+      if (s.paused) return '—';
+      if (!s.online) return '<span class="badge bad">down</span>';
+      const h = s.health || {};
+      const status = h.status || 'ok';
+      const cls = status === 'ok' ? 'ok' : status === 'warning' ? 'pause' : 'bad';
+      const cert = h.certificate?.days_left;
+      const disk = h.disk?.percent;
+      const bits = [`<span class="badge ${cls}">${esc(status)}</span>`];
+      if (cert != null) bits.push(`<span class="sub">cert ${Math.max(0, Math.round(cert))}d</span>`);
+      if (disk != null) bits.push(`<span class="sub">${disk}% disk</span>`);
+      return bits.join(' ');
+    }
+
     function formatDiskSummary(sm) {
       if (!sm) return '—';
       const pct = sm.disk != null ? sm.disk + '%' : null;
@@ -689,7 +771,7 @@
     function renderServersTable(servers) {
       const tbody = document.getElementById('servers-table');
       if (!servers.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="sub">No servers — click Add server</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="sub">No servers — click Add server</td></tr>';
         return;
       }
       tbody.innerHTML = servers.map(s => {
@@ -701,9 +783,10 @@
         const pauseLabel = s.paused ? 'Resume' : 'Pause';
         const pauseClass = s.paused ? 'btn-primary' : 'btn-warn';
         return `<tr class="server-row${s.paused ? ' paused' : ''}${loadingServers.has(s.id) ? ' server-loading' : ''}" data-server="${esc(s.id)}">
-          <td><strong>${esc(s.name)}</strong> ${badge}</td>
+          <td><strong>${esc(s.name)}</strong> ${badge} ${driftBadge(s, servers)}</td>
           <td>${host}${ip}<br><a class="link sub" href="${esc(s.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(s.url)}</a></td>
           <td>${ver}</td>
+          <td>${healthCell(s)}</td>
           <td>${s.paused ? '—' : (sm.cpu != null ? sm.cpu + '%' : '—')}</td>
           <td>${s.paused ? '—' : (sm.ram != null ? sm.ram + '%' : '—')}</td>
           <td>${s.paused ? '—' : formatDiskSummary(sm)}</td>
@@ -962,6 +1045,79 @@
     function openProxyModal() { document.getElementById('proxy-modal').classList.remove('hidden'); }
     function closeProxyModal() { document.getElementById('proxy-modal').classList.add('hidden'); }
 
+    async function openNotifyModal() {
+      const errEl = document.getElementById('notify-err');
+      errEl.textContent = '';
+      try {
+        const res = await api('/api/notifications');
+        const data = await res.json();
+        const c = data.config || {};
+        const ch = c.channels || {};
+        document.getElementById('notify-enabled').checked = c.enabled !== false;
+        document.getElementById('notify-severity').value = c.min_severity || 'warning';
+        document.getElementById('notify-threshold').value = c.fail_threshold || 2;
+        document.getElementById('notify-down').checked = c.events?.down !== false;
+        document.getElementById('notify-recovered').checked = c.events?.recovered !== false;
+        document.getElementById('notify-webhook-enabled').checked = Boolean(ch.webhook?.enabled);
+        document.getElementById('notify-webhook-url').value = ch.webhook?.url || '';
+        document.getElementById('notify-webhook-secret').value = '';
+        document.getElementById('notify-telegram-enabled').checked = Boolean(ch.telegram?.enabled);
+        document.getElementById('notify-telegram-token').value = '';
+        document.getElementById('notify-telegram-chat').value = ch.telegram?.chat_id || '';
+        document.getElementById('notify-modal').classList.remove('hidden');
+      } catch (e) {
+        alert(e.message || 'Could not load alert settings');
+      }
+    }
+    function closeNotifyModal() { document.getElementById('notify-modal').classList.add('hidden'); }
+
+    function notifyPayload() {
+      return {
+        enabled: document.getElementById('notify-enabled').checked,
+        min_severity: document.getElementById('notify-severity').value,
+        fail_threshold: Number(document.getElementById('notify-threshold').value) || 2,
+        events: {
+          down: document.getElementById('notify-down').checked,
+          recovered: document.getElementById('notify-recovered').checked,
+        },
+        channels: {
+          webhook: {
+            enabled: document.getElementById('notify-webhook-enabled').checked,
+            url: document.getElementById('notify-webhook-url').value.trim(),
+            secret: document.getElementById('notify-webhook-secret').value,
+          },
+          telegram: {
+            enabled: document.getElementById('notify-telegram-enabled').checked,
+            bot_token: document.getElementById('notify-telegram-token').value,
+            chat_id: document.getElementById('notify-telegram-chat').value.trim(),
+          },
+        },
+      };
+    }
+
+    async function saveNotify() {
+      const errEl = document.getElementById('notify-err');
+      errEl.textContent = '';
+      try {
+        const res = await api('/api/notifications', { method: 'POST', body: JSON.stringify(notifyPayload()) });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error || 'Save failed'; return; }
+        errEl.textContent = 'Saved.';
+        setTimeout(() => closeNotifyModal(), 700);
+      } catch (e) { errEl.textContent = e.message; }
+    }
+
+    async function testNotify() {
+      const errEl = document.getElementById('notify-err');
+      await saveNotify();
+      if (errEl.textContent) return;
+      try {
+        const res = await api('/api/notifications/test', { method: 'POST' });
+        const data = await res.json();
+        errEl.textContent = res.ok ? 'Test sent.' : (data.error || 'Test failed');
+      } catch (e) { errEl.textContent = e.message; }
+    }
+
     async function pushProxy() {
       const btn = document.getElementById('proxy-submit-btn');
       const enabled = document.getElementById('proxy-enabled').checked;
@@ -1156,7 +1312,11 @@
         }
         output.replaceChildren(...data.results.map(result => {
           const line = document.createElement('div');
-          const status = result.ok ? 'Update requested'
+          if (result.skipped) {
+            line.textContent = `⏸ ${result.reason || 'Rollout stopped'}`;
+            return line;
+          }
+          const status = result.ok ? (result.canary ? 'Canary updated — continuing' : 'Update requested')
             : result.body?.status === 'already_running' ? 'Update already running'
             : result.body?.error || result.error || `Request failed (HTTP ${result.status})`;
           line.textContent = `${result.server}: ${status}`;
@@ -1235,7 +1395,6 @@
         const status = await statusRes.json();
         if (status.needs_password) { showSetup(); return; }
       } catch (_) {}
-      if (!pw()) { showLogin(); return; }
       try {
         const res = await api('/api/servers');
         if (!res.ok) { showLogin(); return; }
@@ -1253,6 +1412,7 @@
         'add-modal': closeAddModal,
         'server-modal': closeServerModal,
         'proxy-modal': closeProxyModal,
+        'notify-modal': closeNotifyModal,
         'start-modal': closeStartModal,
       };
       document.querySelectorAll('.modal-overlay[data-modal-closable]').forEach((overlay) => {

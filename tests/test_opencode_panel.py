@@ -82,6 +82,7 @@ class OpenCodePanelTests(unittest.TestCase):
                 mock.patch.object(panel, "__file__", str(root / "app.py")),
                 mock.patch.object(panel, "SESSIONS", store),
                 mock.patch.object(panel, "read_panel_password", return_value="test-password"),
+                mock.patch.object(panel.panel_totp, "totp_enabled", return_value=False),
                 mock.patch.object(opencode_panel, "proxy_request",
                                   return_value=(200, {"Content-Type": "application/json"}, b"{}", None)) as proxy,
                 panel.app.test_client() as client,
@@ -191,6 +192,7 @@ class OpenCodeLaunchTests(unittest.TestCase):
             with (
                 mock.patch.object(panel, "SESSIONS", store),
                 mock.patch.object(panel, "read_panel_password", return_value="panel-password"),
+                mock.patch.object(panel.panel_totp, "totp_enabled", return_value=False),
                 panel.app.test_client() as client,
             ):
                 token = opencode_panel.create_launch_path("/root/demo").split("token=", 1)[1]

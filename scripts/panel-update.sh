@@ -29,13 +29,6 @@ trap 'rm -f "${LOCK_FILE}"' EXIT
 
 log() { echo "$*" | tee -a "${LOG_FILE}"; }
 
-caddy_configured() {
-  local cfg="${CONFIG_DIR:-/etc/agentcontrol}/config.yaml"
-  [[ -f "${cfg}" ]] || return 1
-  grep -qE '^public_hostname:[[:space:]]*[^"'"'"'[:space:]]' "${cfg}" || return 1
-  grep -qE '^internal_port:[[:space:]]*[1-9][0-9]*' "${cfg}" || return 1
-}
-
 GIT_FETCH_TIMEOUT="${GIT_FETCH_TIMEOUT:-180}"
 
 ensure_https_origin() {
@@ -69,6 +62,8 @@ sync_main_branch() {
   fi
 
   cd "${INSTALL_DIR}"
+  PREV_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+  log "previous commit: ${PREV_SHA:-unknown}"
   sync_main_branch
   chmod +x bootstrap.sh install.sh install-wizard.sh scripts/*.sh scripts/*.py 2>/dev/null || true
 
@@ -76,9 +71,43 @@ sync_main_branch() {
     "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/requirements.txt" -q
   fi
 
+  if [[ -x "${INSTALL_DIR}/scripts/enable-caddy.sh" ]]; then
+    INSTALL_DIR="${INSTALL_DIR}" CONFIG_DIR="${CONFIG_DIR:-/etc/agentcontrol}" STATE_DIR="${STATE_DIR}" \
+      bash "${INSTALL_DIR}/scripts/enable-caddy.sh" >> "${LOG_FILE}" 2>&1 \
+      || log "Could not enable the bundled Caddy layout"
+  fi
+
+  INTERNAL_PORT="$(awk -v k='internal_port:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR:-/etc/agentcontrol}/config.yaml" 2>/dev/null || true)"
+  if [[ -z "${INTERNAL_PORT}" ]]; then
+    INTERNAL_PORT="$(awk -v k='port:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR:-/etc/agentcontrol}/config.yaml" 2>/dev/null || true)"
+  fi
+  INTERNAL_PORT="${INTERNAL_PORT:-30328}"
+
+  health_ok() {
+    curl -fsS --max-time 2 "http://127.0.0.1:${INTERNAL_PORT}/health" >/dev/null 2>&1
+  }
+
   if systemctl is-active agentcontrol &>/dev/null; then
     systemctl restart agentcontrol
     log "agentcontrol.service restarted"
+    HEALTHY=0
+    for _ in $(seq 1 30); do
+      sleep 1
+      if health_ok; then HEALTHY=1; break; fi
+    done
+    if [[ "$HEALTHY" != "1" ]]; then
+      log "health check failed after restart"
+      if [[ -n "${PREV_SHA}" ]]; then
+        log "rolling back to ${PREV_SHA}"
+        git reset --hard "${PREV_SHA}"
+        "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/requirements.txt" -q || true
+        systemctl restart agentcontrol
+        sleep 3
+        health_ok && log "rollback succeeded" || log "rollback failed — manual intervention required"
+      fi
+      exit 1
+    fi
+    log "health check passed"
   elif [[ -f /.dockerenv ]]; then
     log "ERROR: panel runs in Docker — migrate to host: bash scripts/migrate-from-docker.sh"
     exit 1
@@ -93,11 +122,22 @@ sync_main_branch() {
     exit 1
   fi
 
-  if [[ -x "${INSTALL_DIR}/scripts/install-caddy.sh" ]] && caddy_configured; then
+  if [[ -x "${INSTALL_DIR}/scripts/install-caddy.sh" ]]; then
     log "Refreshing bundled Caddy"
     INSTALL_DIR="${INSTALL_DIR}" CONFIG_DIR="${CONFIG_DIR:-/etc/agentcontrol}" STATE_DIR="${STATE_DIR}" \
       bash "${INSTALL_DIR}/scripts/install-caddy.sh" >> "${LOG_FILE}" 2>&1 \
       || log "Caddy refresh failed — see ${LOG_FILE}"
+  fi
+
+  if [[ -x "${INSTALL_DIR}/scripts/install-logrotate.sh" ]]; then
+    STATE_DIR="${STATE_DIR}" bash "${INSTALL_DIR}/scripts/install-logrotate.sh" >> "${LOG_FILE}" 2>&1 || true
+  fi
+  if [[ -x "${INSTALL_DIR}/scripts/install-fail2ban.sh" ]]; then
+    CONFIG_FILE="${CONFIG_DIR:-/etc/agentcontrol}/config.yaml" STATE_DIR="${STATE_DIR}" \
+      bash "${INSTALL_DIR}/scripts/install-fail2ban.sh" >> "${LOG_FILE}" 2>&1 || true
+  fi
+  if [[ -x "${INSTALL_DIR}/scripts/cleanup-builds.sh" ]]; then
+    bash "${INSTALL_DIR}/scripts/cleanup-builds.sh" >> "${LOG_FILE}" 2>&1 || true
   fi
 
   log "=== panel update finished $(date -Iseconds) ==="

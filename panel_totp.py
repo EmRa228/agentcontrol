@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
-import secrets
 from pathlib import Path
 
 import pyotp
@@ -22,23 +20,26 @@ def totp_config_path() -> Path:
 def load_totp_state() -> dict:
     path = totp_config_path()
     if not path.is_file():
-        return {"enabled": False, "secret": ""}
+        return {"enabled": False, "secret": "", "pending_secret": ""}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return {"enabled": False, "secret": ""}
+        return {"enabled": False, "secret": "", "pending_secret": ""}
+    pending = data.get("pending_secret", "")
     return {
         "enabled": bool(data.get("enabled")),
         "secret": str(data.get("secret", "")).strip(),
+        "pending_secret": str(pending or "").strip(),
     }
 
 
-def save_totp_state(enabled: bool, secret: str) -> None:
+def save_totp_state(enabled: bool, secret: str, pending_secret: str = "") -> None:
     path = totp_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "enabled": bool(enabled),
         "secret": secret.strip(),
+        "pending_secret": pending_secret.strip(),
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     try:
@@ -82,53 +83,76 @@ def verify_login_code(code: str) -> bool:
 
 
 def public_totp_status(hostname: str) -> dict:
+    """Status for unauthenticated pages: never include the secret or its URI."""
     state = load_totp_state()
-    enabled = totp_enabled()
-    uri = ""
     secret = state.get("secret", "")
-    if enabled and secret:
-        uri = provisioning_uri(secret, account=hostname)
     return {
-        "enabled": enabled,
+        "enabled": totp_enabled(),
         "configured": bool(secret),
-        "provisioning_uri": uri if enabled else "",
+        "pending": bool(state.get("pending_secret")),
     }
 
 
-def rotate_totp_secret() -> str:
+def begin_totp_setup(hostname: str) -> dict:
+    """Create (or reuse) a pending secret and return everything the UI needs.
+
+    The active authenticator is left untouched, so an enabled panel keeps
+    working until the new secret is verified with a 6-digit code.
+    """
+    state = load_totp_state()
+    secret = state.get("pending_secret") or generate_totp_secret()
+    save_totp_state(state.get("enabled", False), state.get("secret", ""), secret)
+    uri = provisioning_uri(secret, account=hostname)
+    return {
+        "secret": secret,
+        "provisioning_uri": uri,
+        "qr_data_uri": totp_qr_data_uri(uri),
+        "enabled": bool(state.get("enabled")),
+    }
+
+
+def rotate_totp_secret(hostname: str) -> dict:
+    """Start over with a brand new pending secret."""
+    state = load_totp_state()
     secret = generate_totp_secret()
-    save_totp_state(False, secret)
-    return secret
+    save_totp_state(state.get("enabled", False), state.get("secret", ""), secret)
+    uri = provisioning_uri(secret, account=hostname)
+    return {
+        "secret": secret,
+        "provisioning_uri": uri,
+        "qr_data_uri": totp_qr_data_uri(uri),
+        "enabled": bool(state.get("enabled")),
+    }
 
 
 def enable_totp(secret: str, code: str) -> tuple[bool, str]:
+    """Verify ``code`` for ``secret`` and make it the active factor."""
     if not verify_totp_code(secret, code):
         return False, "invalid authenticator code"
     save_totp_state(True, secret)
     return True, ""
 
 
+def enable_pending_totp(code: str, fallback_secret: str = "") -> tuple[bool, str]:
+    """Verify the pending (setup) secret and activate it."""
+    state = load_totp_state()
+    secret = state.get("pending_secret") or str(fallback_secret or "").strip()
+    if not secret:
+        return False, "no authenticator secret; start setup first"
+    return enable_totp(secret, code)
+
+
 def disable_totp() -> None:
     save_totp_state(False, "")
 
 
-def totp_qr_data_uri(provisioning_uri: str) -> str:
-    """Minimal inline SVG placeholder; browsers use provisioning_uri in authenticator apps."""
-    _ = provisioning_uri
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">'
-        '<rect width="120" height="120" fill="#111"/>'
-        '<text x="50%" y="50%" fill="#8b93a7" font-size="10" text-anchor="middle">'
-        "Scan URI in app</text></svg>"
-    )
-    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-    return f"data:image/svg+xml;base64,{encoded}"
+def totp_qr_data_uri(provisioning_uri_value: str) -> str:
+    """Render the provisioning URI as an inline SVG QR code (segno)."""
+    if not provisioning_uri_value:
+        return ""
+    try:
+        import segno
 
-
-def touch_pending_secret() -> str:
-    """Return secret for setup (not yet enabled)."""
-    state = load_totp_state()
-    secret = state.get("secret") or generate_totp_secret()
-    if not state.get("secret"):
-        save_totp_state(False, secret)
-    return secret
+        return segno.make(provisioning_uri_value, error="m").svg_data_uri(scale=4)
+    except Exception:
+        return ""

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import platform
@@ -13,6 +14,7 @@ import signal
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from collections import deque
@@ -23,7 +25,7 @@ from urllib.parse import quote
 from urllib.request import urlopen
 
 import yaml
-from flask import Flask, jsonify, redirect, render_template, request, Response, send_from_directory
+from flask import Flask, g, jsonify, redirect, render_template, request, Response, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import safe_join
 
@@ -60,10 +62,19 @@ from proxy_pool import (
     set_pool_enabled,
     test_all_proxies,
 )
-from worker_git import ensure_worker_git, folder_git_status
+from worker_git import ensure_worker_git, folder_git_status, git_details
 import opencode_panel
 import panel_sessions
 import panel_totp
+from panel import audit as audit_log
+from panel import health as health_mod
+from panel import metrics as metrics_mod
+from panel import security as security_mod
+from panel import terminal as terminal_mod
+from panel.config import build_settings, load_notifications, save_notifications, validate_settings
+from panel.db import Store
+from panel.monitor import Monitor
+from panel.notify import Notifier
 
 IGNORE_MARKER = ".agentcontrol-ignore"
 WORKER_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -224,7 +235,22 @@ def start_panel_update() -> tuple[dict, int]:
             script_path,
         ]
     else:
-        cmd = ["bash", script_path]
+        if shutil.which("systemd-run"):
+            cmd = [
+                "systemd-run",
+                "--unit=agentcontrol-update",
+                "--collect",
+                "--no-block",
+                "--property=Type=oneshot",
+                f"--property=WorkingDirectory={INSTALL_DIR}",
+                f"--setenv=INSTALL_DIR={INSTALL_DIR}",
+                f"--setenv=STATE_DIR={STATE_DIR}",
+                f"--setenv=CONFIG_DIR={os.environ.get('CONFIG_DIR', '/etc/agentcontrol')}",
+                "/bin/bash",
+                script_path,
+            ]
+        else:
+            cmd = ["bash", script_path]
     try:
         subprocess.Popen(
             cmd,
@@ -235,7 +261,20 @@ def start_panel_update() -> tuple[dict, int]:
             cwd=str(INSTALL_DIR),
         )
     except OSError as exc:
-        return {"error": f"failed to start update: {exc}"}, 500
+        if cmd and cmd[0] == "systemd-run":
+            try:
+                subprocess.Popen(
+                    ["bash", script_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=env,
+                    start_new_session=True,
+                    cwd=str(INSTALL_DIR),
+                )
+            except OSError as fallback_exc:
+                return {"error": f"failed to start update: {fallback_exc}"}, 500
+        else:
+            return {"error": f"failed to start update: {exc}"}, 500
 
     return {"status": "started", "in_progress": True}, 202
 
@@ -303,6 +342,18 @@ def load_config() -> dict:
 
     if os.environ.get("PORT"):
         cfg["port"] = int(os.environ["PORT"])
+    if os.environ.get("INTERNAL_PORT"):
+        cfg["internal_port"] = int(os.environ["INTERNAL_PORT"])
+    if os.environ.get("BIND_HOST"):
+        cfg["bind_host"] = os.environ["BIND_HOST"]
+    for key, env_name in (
+        ("state_dir", "STATE_DIR"),
+        ("scan_root", "SCAN_ROOT"),
+        ("api_key_file", "API_KEY_FILE"),
+        ("auth_password_file", "AUTH_PASSWORD_FILE"),
+    ):
+        if os.environ.get(env_name):
+            cfg[key] = os.environ[env_name]
 
     return cfg
 
@@ -321,10 +372,23 @@ def save_config_patch(updates: dict) -> None:
 
 
 CFG = load_config()
+SETTINGS = build_settings(CFG)
+CONFIG_PROBLEMS = validate_settings(SETTINGS)
 load_bridge_settings()  # /etc/agentcontrol/.env → os.environ
 STATE_DIR = Path(CFG["state_dir"])
+STORE = Store(STATE_DIR / "panel.db")
+STORE.initialize()
 SESSIONS = panel_sessions.SessionStore(STATE_DIR / "sessions.db")
 SESSIONS.initialize()
+NOTIFIER = Notifier(STORE, SETTINGS.notifications_file)
+LOGIN_LIMITER = security_mod.LoginLimiter(
+    SETTINGS.max_login_attempts,
+    max(SETTINGS.lockout_seconds, 300),
+    SETTINGS.lockout_seconds,
+)
+AUTH_FAILURE_LOG = STATE_DIR / "auth.log"
+PROCESS_START = time.time()
+MONITOR = None
 opencode_panel.reconcile_serve_state(STATE_DIR)
 STATE_FILE = STATE_DIR / "workers.json"
 WORKER_DATA_ROOT = STATE_DIR / "worker-data"
@@ -332,6 +396,21 @@ RECENT_TOUCHES_FILE = STATE_DIR / "recent-touches.json"
 UPDATE_LOG = STATE_DIR / "update.log"
 UPDATE_LOCK = STATE_DIR / "update.lock"
 METRICS_HISTORY: deque = deque(maxlen=1800)
+try:
+    for _point in STORE.metrics_since(time.time() - 7 * 86400, limit=1800):
+        METRICS_HISTORY.append(
+            {
+                "t": _point.get("ts"),
+                "cpu": _point.get("cpu"),
+                "load_pct": _point.get("load_pct"),
+                "ram": _point.get("ram"),
+                "disk": _point.get("disk"),
+                "swap": _point.get("swap"),
+                "net": _point.get("net"),
+            }
+        )
+except Exception:
+    pass
 _CPU_CACHE = {"percent": 0.0, "cores": 1, "at": 0.0}
 _DOCKER_CACHE = {"data": None, "at": 0.0}
 _NET_CACHE = {"rx": 0, "tx": 0, "at": 0.0}
@@ -431,14 +510,68 @@ def password_ok(candidate: str) -> bool:
     expected = read_panel_password()
     if not expected:
         return True
-    return secrets.compare_digest(candidate, expected)
+    if not security_mod.verify_password(candidate, expected):
+        return False
+    if not security_mod.password_is_hashed(expected):
+        security_mod.upgrade_password_file(Path(CFG["auth_password_file"]), candidate)
+    return True
 
 
 def write_panel_password(password: str) -> None:
-    path = Path(CFG["auth_password_file"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(password.strip(), encoding="utf-8")
-    os.chmod(path, 0o600)
+    security_mod.write_password_file(Path(CFG["auth_password_file"]), password.strip())
+
+
+def token_header() -> str:
+    header = request.headers.get("X-AgentControl-Token", "").strip()
+    if header:
+        return header
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        candidate = auth[7:].strip()
+        if candidate.startswith(security_mod.TOKEN_PREFIX + "_"):
+            return candidate
+    return ""
+
+
+def resolve_actor() -> dict | None:
+    """Return {name, role, source} for the request, or None when unauthenticated."""
+    token = token_header()
+    if token:
+        actor = security_mod.verify_token(token, STORE)
+        if actor:
+            return {"name": actor["name"], "role": actor["role"], "source": "token"}
+    if auth_enabled():
+        candidate = header_password()
+        if candidate and not candidate.startswith(security_mod.TOKEN_PREFIX + "_"):
+            if password_ok(candidate):
+                return {"name": "panel-password", "role": security_mod.ROLE_ADMIN, "source": "header"}
+        if SESSIONS.validate(session_token()):
+            return {"name": "panel", "role": security_mod.ROLE_ADMIN, "source": "session"}
+    return None
+
+
+def required_role(path: str, method: str) -> str:
+    if path.startswith(("/api/tokens", "/api/audit", "/api/notifications", "/api/terminal", "/api/agent")):
+        return security_mod.ROLE_ADMIN
+    if path.startswith("/api/settings"):
+        return security_mod.ROLE_ADMIN
+    if path.startswith("/api/opencode/update") or path.startswith("/api/opencode/restart"):
+        return security_mod.ROLE_ADMIN
+    if path == "/api/update/apply":
+        return security_mod.ROLE_ADMIN
+    if method in {"GET", "HEAD", "OPTIONS"}:
+        return security_mod.ROLE_READ
+    return security_mod.ROLE_OPS
+
+
+def same_origin_ok() -> bool:
+    """CSRF defence for state-changing requests with a browser Origin header."""
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return True
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True
+    return origin.rstrip("/") == request.host_url.rstrip("/")
 
 
 def write_api_key(key: str) -> None:
@@ -446,6 +579,44 @@ def write_api_key(key: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(key.strip(), encoding="utf-8")
     os.chmod(path, 0o600)
+
+
+SETUP_TOKEN_FILE = Path("/etc/agentcontrol/setup-token")
+
+
+def ensure_setup_token() -> str:
+    try:
+        existing = SETUP_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        existing = ""
+    if existing:
+        return existing
+    token = secrets.token_urlsafe(24)
+    try:
+        SETUP_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SETUP_TOKEN_FILE.write_text(token + "\n", encoding="utf-8")
+        SETUP_TOKEN_FILE.chmod(0o600)
+    except OSError:
+        pass
+    return token
+
+
+def setup_allowed() -> bool:
+    """Allow first-run setup from loopback, a valid setup token, or a session."""
+    client = request.remote_addr or ""
+    if client in {"127.0.0.1", "::1", "localhost"}:
+        return True
+    if auth_enabled() and panel_session_ok():
+        return True
+    supplied = (
+        request.headers.get("X-Setup-Token", "")
+        or request.args.get("setup", "")
+        or (request.get_json(silent=True) or {}).get("setup_token", "")
+    )
+    if not supplied:
+        return False
+    expected = ensure_setup_token()
+    return secrets.compare_digest(str(supplied).strip(), expected)
 
 
 def api_key_configured() -> bool:
@@ -457,6 +628,10 @@ def require_panel_auth():
     open_endpoints = {
         "health",
         "index",
+        "public_status_page",
+        "api_public_status",
+        "api_prometheus",
+        "api_openapi",
         "connectivity_test",
         "connectivity_test_minimal_html",
         "api_auth_login",
@@ -465,18 +640,59 @@ def require_panel_auth():
         "api_setup_status",
         "api_setup_password",
         "api_fleet_sso",
+        "api_caddy_allow",
     }
-    if request.endpoint in open_endpoints:
+    g.actor_name = "anonymous"
+    g.actor_role = ""
+    g.actor_source = "anonymous"
+    g.csp_nonce = secrets.token_urlsafe(16)
+    endpoint = (request.endpoint or "").split(".")[-1]
+    if endpoint in open_endpoints:
         return None
-    if request.endpoint == "api_setup_api_key" and not api_key_configured():
+    if endpoint == "api_setup_api_key" and not api_key_configured():
         return None
     if not request.path.startswith("/api/"):
         return None
     if not auth_enabled():
-        return jsonify({"error": "setup_required", "needs_password": True}), 403
-    if panel_session_ok():
-        return None
-    return jsonify({"error": "unauthorized"}), 401
+        return jsonify({"error": "setup_required", "needs_password": True, "code": "setup_required"}), 403
+    if not same_origin_ok():
+        return jsonify({"error": "cross-origin request rejected", "code": "cross_origin"}), 403
+    actor = resolve_actor()
+    if actor is None:
+        return jsonify({"error": "unauthorized", "code": "unauthorized"}), 401
+    g.actor_name = actor["name"]
+    g.actor_role = actor["role"]
+    g.actor_source = actor["source"]
+    needed = required_role(request.path, request.method)
+    if not security_mod.role_allows(actor["role"], needed):
+        return jsonify(
+            {
+                "error": f"role '{actor['role']}' cannot perform this action",
+                "code": "insufficient_role",
+                "required": needed,
+            }
+        ), 403
+    return None
+
+
+@app.after_request
+def security_headers(response):
+    if request.path.startswith("/oc/") or request.path == "/oc":
+        return response
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        f"script-src 'self' 'nonce-{getattr(g, 'csp_nonce', '')}'; connect-src 'self' ws: wss:; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    )
+    if request.is_secure:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
 
 
 def worker_id_for(folder: str) -> str:
@@ -1241,19 +1457,29 @@ def worker_data_dir(name: str) -> Path:
     return path
 
 
+def _seed_workers_from_json() -> None:
+    """One-time import of the legacy workers.json into SQLite."""
+    if not STATE_FILE.is_file() or STORE.workers():
+        return
+    try:
+        legacy = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if isinstance(legacy, dict) and legacy:
+        STORE.replace_workers(legacy)
+
+
+_seed_workers_from_json()
+
+
 def load_state() -> dict:
     ensure_state_dir()
-    if not STATE_FILE.is_file():
-        return {}
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
+    return STORE.workers()
 
 
 def save_state(state: dict) -> None:
     ensure_state_dir()
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    STORE.replace_workers(state)
 
 
 def is_running(pid: int) -> bool:
@@ -1637,309 +1863,9 @@ def stop_worker(name: str) -> tuple[dict, int]:
 
     del state[name]
     save_state(state)
+    if MONITOR is not None:
+        MONITOR.note_stopped(name)
     return {"status": "stopped", "name": name, "pid": pid}, 200
-
-
-@app.get("/")
-def index():
-    ctx = {
-        "port": CFG["port"],
-        "scan_root": CFG["scan_root"],
-        "version": load_version(),
-        "hostname": socket.gethostname(),
-        "ip": primary_ip() or "",
-        "host_label": request.host or socket.gethostname(),
-    }
-    if not auth_enabled():
-        return render_template("gate_setup.html", **ctx)
-    if not panel_session_ok():
-        return render_template("gate_login.html", **ctx)
-    return render_template("index.html", **ctx)
-
-
-@app.post("/api/auth/login")
-def api_auth_login():
-    if not auth_enabled():
-        return jsonify({"ok": True, "auth_required": False})
-    data = request.get_json(silent=True) or {}
-    password = str(data.get("password", ""))
-    if not password_ok(password):
-        return jsonify({"error": "wrong password", "auth_required": True}), 401
-    if panel_totp.totp_enabled() and not panel_totp.verify_login_code(str(data.get("totp", ""))):
-        return jsonify({"error": "invalid authenticator code", "totp_required": True}), 401
-    resp = jsonify({"ok": True, "auth_required": True})
-    return set_session_cookie(resp, create_session())
-
-
-@app.post("/api/auth/logout")
-def api_auth_logout():
-    SESSIONS.revoke(session_token())
-    resp = jsonify({"ok": True})
-    return clear_session_cookie(resp)
-
-
-@app.get("/api/auth/sessions")
-def api_auth_sessions():
-    return jsonify(
-        {
-            "count": SESSIONS.count(),
-            "ttl_days": round(session_ttl_seconds() / 86400, 3),
-        }
-    )
-
-
-@app.post("/api/auth/sessions/revoke-all")
-def api_auth_sessions_revoke_all():
-    data = request.get_json(silent=True) or {}
-    keep_current = bool(data.get("keep_current"))
-    current = session_token()
-    if keep_current and current:
-        revoked = SESSIONS.revoke_all(except_token=current)
-        return jsonify({"ok": True, "revoked": revoked, "kept_current": True})
-    revoked = SESSIONS.revoke_all()
-    resp = jsonify({"ok": True, "revoked": revoked, "kept_current": False})
-    return clear_session_cookie(resp)
-
-
-@app.get("/api/auth/status")
-def api_auth_status():
-    return jsonify(
-        {
-            "auth_required": auth_enabled(),
-            "api_key_set": api_key_configured(),
-            "needs_password": not auth_enabled(),
-            "needs_api_key": not api_key_configured(),
-            "totp": panel_totp.public_totp_status(socket.gethostname()),
-        }
-    )
-
-
-@app.get("/api/setup/status")
-def api_setup_status():
-    return jsonify(
-        {
-            "needs_password": not auth_enabled(),
-            "needs_api_key": not api_key_configured(),
-            "ready": auth_enabled() and api_key_configured(),
-        }
-    )
-
-
-@app.post("/api/setup/password")
-def api_setup_password():
-    if auth_enabled():
-        return jsonify({"error": "password already configured"}), 400
-    data = request.get_json(silent=True) or {}
-    password = str(data.get("password", "")).strip()
-    confirm = str(data.get("confirm", "")).strip()
-    if len(password) < 4:
-        return jsonify({"error": "password must be at least 4 characters"}), 400
-    if password != confirm:
-        return jsonify({"error": "passwords do not match"}), 400
-    write_panel_password(password)
-    resp = jsonify({"ok": True})
-    return set_session_cookie(resp, create_session())
-
-
-@app.post("/api/setup/api-key")
-def api_setup_api_key():
-    data = request.get_json(silent=True) or {}
-    api_key = str(data.get("api_key", "")).strip()
-    if not api_key:
-        return jsonify({"error": "api_key required"}), 400
-    if api_key_configured():
-        if not auth_enabled() or not panel_session_ok():
-            return jsonify({"error": "unauthorized"}), 401
-
-    verify = request.args.get("verify", "1").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-    }
-    if verify:
-        check = verify_cursor_api_key(api_key)
-        if not check.get("valid"):
-            payload: dict[str, object] = {
-                "error": check.get("error") or "invalid API key",
-            }
-            if check.get("detail"):
-                payload["detail"] = check["detail"]
-            return jsonify(payload), 400
-
-    write_api_key(api_key)
-    return jsonify({"ok": True, "valid": True})
-
-
-@app.get("/api/models")
-def api_models():
-    return jsonify({"models": list_agent_models()})
-
-
-@app.get("/api/settings")
-def api_settings():
-    return jsonify(
-        {
-            "default_model": CFG.get("default_model") or "",
-            "idle_hours": round(CFG["idle_release_seconds"] / 3600, 1),
-            "scan_root": CFG["scan_root"],
-            "port": CFG["port"],
-            "api_key_set": bool(read_api_key()),
-            "cursor_bridge": public_bridge_settings(),
-            "totp": panel_totp.public_totp_status(socket.gethostname()),
-            "opencode": opencode_panel.opencode_status(CFG, STATE_DIR, read_panel_password()),
-        }
-    )
-
-
-@app.get("/api/settings/bridge")
-def api_settings_bridge_get():
-    return jsonify(public_bridge_settings())
-
-
-@app.post("/api/settings/bridge")
-def api_settings_bridge_save():
-    data = request.get_json(silent=True) or {}
-    try:
-        settings = save_bridge_from_panel(data)
-    except (ValueError, OSError) as exc:
-        return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "cursor_bridge": public_bridge_settings(), "endpoint": settings.endpoint})
-
-
-@app.post("/api/settings/bridge/test")
-def api_settings_bridge_test():
-    api_key = read_api_key()
-    result = test_cursor_bridge(api_key=api_key)
-    status = 200 if result.get("ok") else 502
-    return jsonify(result), status
-
-
-@app.post("/api/settings/model")
-def api_settings_model():
-    data = request.get_json(silent=True) or {}
-    model = str(data.get("model", "")).strip()
-    save_config_patch({"default_model": model})
-    return jsonify({"ok": True, "default_model": model})
-
-
-@app.get("/api/xray/client")
-def api_xray_client_get():
-    settings = load_client_settings()
-    live = request.args.get("live") == "1"
-    return jsonify(build_status_report(settings, live_test=live))
-
-
-@app.get("/api/xray/status")
-def api_xray_status():
-    settings = load_client_settings()
-    live = request.args.get("live") == "1"
-    return jsonify(build_status_report(settings, live_test=live))
-
-
-@app.post("/api/xray/client/toggle")
-def api_xray_client_toggle():
-    data = request.get_json(silent=True) or {}
-    if "enabled" not in data:
-        return jsonify({"error": "enabled is required"}), 400
-    enabled = bool(data.get("enabled"))
-    try:
-        result = set_proxy_enabled(enabled, restart=bool(data.get("restart", enabled)))
-    except (ValueError, FileNotFoundError) as exc:
-        return jsonify({"error": str(exc)}), 400
-    except OSError as exc:
-        return jsonify({"error": str(exc)}), 500
-    return jsonify(result)
-
-
-@app.post("/api/xray/client")
-def api_xray_client_save():
-    data = request.get_json(silent=True) or {}
-    current = load_client_settings()
-    if data.get("share_url") or data.get("vless_url"):
-        share_url = str(data.get("share_url") or data.get("vless_url"))
-        try:
-            current = merge_share_url(current, share_url)
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-    updates = {
-        "enabled": bool(data.get("enabled", current.get("enabled", True))),
-        "proxy_port": int(data.get("proxy_port", current.get("proxy_port", 30229))),
-        "proxy_listen": str(data.get("proxy_listen", current.get("proxy_listen", "127.0.0.1"))),
-        "protocol": str(data.get("protocol", current.get("protocol", "vless"))).strip(),
-        "address": str(data.get("address", current.get("address", ""))).strip(),
-        "port": int(data.get("port", current.get("port", 443))),
-        "uuid": str(data.get("uuid", current.get("uuid", ""))).strip(),
-        "password": str(data.get("password", current.get("password", ""))).strip(),
-        "flow": str(data.get("flow", current.get("flow", ""))).strip(),
-        "network": str(data.get("network", current.get("network", "tcp"))).strip() or "tcp",
-        "security": str(data.get("security", current.get("security", "none"))).strip() or "none",
-        "server_name": str(data.get("server_name", current.get("server_name", ""))).strip(),
-        "fingerprint": str(data.get("fingerprint", current.get("fingerprint", "chrome"))).strip(),
-        "public_key": str(data.get("public_key", current.get("public_key", ""))).strip(),
-        "short_id": str(data.get("short_id", current.get("short_id", ""))).strip(),
-        "spider_x": str(data.get("spider_x", current.get("spider_x", ""))).strip(),
-        "alter_id": int(data.get("alter_id", current.get("alter_id", 0)) or 0),
-        "method": str(data.get("method", current.get("method", ""))).strip(),
-    }
-    if data.get("config_path"):
-        updates["config_path"] = str(data["config_path"])
-    try:
-        result = apply_client_settings(
-            {**current, **updates},
-            restart=bool(data.get("restart", True)),
-            write_env=bool(data.get("write_env", True)),
-        )
-    except (ValueError, FileNotFoundError) as exc:
-        return jsonify({"error": str(exc)}), 400
-    except OSError as exc:
-        return jsonify({"error": str(exc)}), 500
-    return jsonify(result)
-
-
-@app.post("/api/xray/client/import")
-def api_xray_client_import():
-    imported = import_from_xray_config()
-    if not imported:
-        return jsonify({"error": "could not import from xray config"}), 404
-    return jsonify({"settings": public_settings(imported)})
-
-
-@app.post("/api/xray/client/parse")
-def api_xray_client_parse():
-    data = request.get_json(silent=True) or {}
-    share_url = str(data.get("share_url") or data.get("vless_url") or "").strip()
-    if not share_url:
-        return jsonify({"error": "share_url is required"}), 400
-    try:
-        settings = public_settings(merge_share_url(load_client_settings(), share_url))
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return jsonify({"settings": settings})
-
-
-@app.post("/api/xray/client/test")
-def api_xray_client_test():
-    data = request.get_json(silent=True) or {}
-    settings = load_client_settings()
-    if data.get("share_url") or data.get("vless_url"):
-        share_url = str(data.get("share_url") or data.get("vless_url"))
-        try:
-            settings = merge_share_url(settings, share_url)
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-    elif data:
-        settings = {**settings, **data}
-    cursor_test = test_proxy(settings)
-    cursor_api_test = test_cursor_api(settings)
-    return jsonify(
-        {
-            "cursor_test": cursor_test,
-            "cursor_api_test": cursor_api_test,
-            "status": build_status_report(settings),
-        }
-    )
-
-
 
 
 def fleet_system_summary() -> dict:
@@ -1990,96 +1916,10 @@ def fleet_proxy_summary() -> dict:
     }
 
 
-@app.get("/api/fleet/bundle")
-def api_fleet_bundle():
-    folders = list_folders()
-    for item in folders:
-        if item["running"]:
-            item["ready"] = worker_ready(item["name"])
-    migrate_legacy_to_pool()
-    return jsonify(
-        {
-            "system": fleet_system_summary(),
-            "folders": fleet_folders_summary(folders),
-            "scan_root": CFG["scan_root"],
-            "version": load_version(),
-            "proxy": fleet_proxy_summary(),
-            "opencode": {
-                "healthy": opencode_panel.is_serve_healthy(
-                    CFG, opencode_panel.serve_password(CFG, read_panel_password())
-                ),
-                "proxy_prefix": "/oc",
-            },
-        }
-    )
-
-
-@app.post("/api/projects/touch/<name>")
-def api_projects_touch(name: str):
-    path = folder_path(name)
-    if not path:
-        return jsonify({"error": "folder not found"}), 404
-    touched = touch_project(name)
-    return jsonify({"ok": True, "name": name, "touched_at": touched})
-
-
-@app.get("/api/proxy/pool")
-def api_proxy_pool_get():
-    migrate_legacy_to_pool()
-    live = request.args.get("live") == "1"
-    status = pool_status()
-    if live and status.get("enabled"):
-        status["live_test"] = test_all_proxies(load_pool_safe(), apply_each=False)
-    return jsonify(status)
-
-
 def load_pool_safe():
     from proxy_pool import load_pool
 
     return load_pool()
-
-
-@app.post("/api/proxy/pool")
-def api_proxy_pool_save():
-    data = request.get_json(silent=True) or {}
-    try:
-        if "enabled" in data and len(data) == 1:
-            result = set_pool_enabled(bool(data["enabled"]))
-        else:
-            result = apply_pool_config(data)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except (FileNotFoundError, OSError) as exc:
-        return jsonify({"error": str(exc)}), 500
-    return jsonify(result)
-
-
-@app.post("/api/proxy/pool/subscription")
-def api_proxy_pool_subscription():
-    data = request.get_json(silent=True) or {}
-    url = str(data.get("url") or "").strip()
-    name = str(data.get("name") or "").strip()
-    if not url:
-        return jsonify({"error": "url required"}), 400
-    try:
-        entry = add_subscription(load_pool_safe(), url, name=name)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "subscription": entry, "status": pool_status()})
-
-
-@app.post("/api/proxy/pool/link")
-def api_proxy_pool_link():
-    data = request.get_json(silent=True) or {}
-    share_url = str(data.get("share_url") or data.get("vless_url") or "").strip()
-    name = str(data.get("name") or "").strip()
-    if not share_url:
-        return jsonify({"error": "share_url required"}), 400
-    try:
-        entry = add_proxy_link(load_pool_safe(), share_url, name=name)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "proxy": public_proxy_entry_safe(entry), "status": pool_status()})
 
 
 def public_proxy_entry_safe(entry):
@@ -2088,249 +1928,62 @@ def public_proxy_entry_safe(entry):
     return public_proxy_entry(entry)
 
 
-@app.post("/api/proxy/pool/refresh")
-def api_proxy_pool_refresh():
-    pool = refresh_all_subscriptions(load_pool_safe())
-    return jsonify({"ok": True, "status": pool_status()})
+def _normalized_ip_set(values) -> set:
+    out = set()
+    for value in values:
+        try:
+            out.add(ipaddress.ip_address(str(value).split("%", 1)[0]))
+        except ValueError:
+            continue
+    return out
 
 
-@app.post("/api/proxy/pool/test")
-def api_proxy_pool_test():
-    data = request.get_json(silent=True) or {}
-    apply_each = bool(data.get("apply_each", True))
-    report = test_all_proxies(load_pool_safe(), apply_each=apply_each)
-    return jsonify({"ok": bool(report.get("working")), "report": report, "status": pool_status()})
+def _local_address_set() -> set:
+    values = {primary_ip()}
+    for name in {socket.gethostname(), "localhost", "127.0.0.1"}:
+        try:
+            values.update(addr[4][0] for addr in socket.getaddrinfo(name, None))
+        except OSError:
+            pass
+    return _normalized_ip_set(values)
 
 
-@app.post("/api/proxy/pool/ensure")
-def api_proxy_pool_ensure():
-    force = request.args.get("force") == "1"
-    result = ensure_proxy_ready(force_reselect=force)
-    code = 200 if result.get("ok") else 503
-    return jsonify({**result, "status": pool_status()}), code
+_CADDY_ALLOW_CACHE: dict[str, tuple[float, bool]] = {}
+_CADDY_ALLOW_TTL = 300.0
 
 
-@app.post("/api/proxy/pool/select")
-def api_proxy_pool_select():
-    result = select_and_apply_best(load_pool_safe())
-    code = 200 if result.get("ok") else 503
-    return jsonify({**result, "status": pool_status()}), code
+def domain_resolves_here(domain: str) -> bool:
+    """True when Caddy may request a certificate for this hostname.
+
+    Restricts On-Demand TLS to the configured public hostname or names whose
+    DNS currently points at one of this server's addresses.
+    """
+    domain = domain.strip().lower().rstrip(".")
+    if not domain:
+        return False
+    configured = str(CFG.get("public_hostname") or "").strip().lower().rstrip(".")
+    if configured and domain == configured:
+        return True
+    now = time.time()
+    cached = _CADDY_ALLOW_CACHE.get(domain)
+    if cached and now - cached[0] < _CADDY_ALLOW_TTL:
+        return cached[1]
+    allowed = False
+    try:
+        addrs = {addr[4][0] for addr in socket.getaddrinfo(domain, None)}
+        allowed = bool(_normalized_ip_set(addrs) & _local_address_set())
+    except OSError:
+        allowed = False
+    if len(_CADDY_ALLOW_CACHE) > 512:
+        _CADDY_ALLOW_CACHE.clear()
+    _CADDY_ALLOW_CACHE[domain] = (now, allowed)
+    return allowed
 
 
-@app.get("/api/folders")
-def api_folders():
-    folders = list_folders()
-    return jsonify({"folders": folders, "scan_root": CFG["scan_root"]})
-
-
-@app.post("/api/start/<name>")
-def api_start(name: str):
-    result, code = start_worker(name)
-    return jsonify(result), code
-
-
-@app.post("/api/restart/<name>")
-def api_restart(name: str):
-    result, code = restart_worker(name)
-    return jsonify(result), code
-
-
-@app.post("/api/hide/<name>")
-def api_hide(name: str):
-    path = folder_path(name)
-    if not path:
-        return jsonify({"error": "folder not found"}), 404
-    state = reconcile_state()
-    if name in state:
-        stop_worker(name)
-    marker = path / IGNORE_MARKER
-    marker.write_text("Hidden from AgentControl. Delete this file to show again.\n", encoding="utf-8")
-    return jsonify({"status": "hidden", "name": name, "marker": str(marker)})
-
-
-@app.post("/api/stop/<name>")
-def api_stop(name: str):
-    result, code = stop_worker(name)
-    return jsonify(result), code
-
-
-@app.get("/api/opencode/status")
-def api_opencode_status():
-    return jsonify(opencode_panel.opencode_status(CFG, STATE_DIR, read_panel_password()))
-
-
-@app.post("/api/opencode/ensure")
-def api_opencode_ensure():
-    result = opencode_panel.ensure_serve(CFG, STATE_DIR, read_panel_password())
-    code = 200 if result.get("ok") else 503
-    return jsonify(result), code
-
-
-@app.route("/api/opencode/install", methods=["GET", "POST"])
-def api_opencode_install():
-    denied = opencode_proxy_access()
-    if denied is not None:
-        return denied
-    if request.method == "POST":
-        result, code = opencode_panel.start_install(CFG, STATE_DIR)
-        return jsonify(result), code
-    return jsonify(opencode_panel.install_status(CFG, STATE_DIR))
-
-
-@app.post("/api/opencode/open/<name>")
-def api_opencode_open(name: str):
-    path = folder_path(name)
-    if not path:
-        return jsonify({"error": "folder not found"}), 404
-    if opencode_panel.web_install_required(CFG):
-        return jsonify(
-            {
-                "ok": False,
-                "status": "install_required",
-                "version": opencode_panel.pinned_version(),
-                "error": "OpenCode needs to be installed.",
-            }
-        ), 409
-    touch_project(name)
-    ensure = opencode_panel.ensure_serve(CFG, STATE_DIR, read_panel_password())
-    if not ensure.get("ok"):
-        return jsonify(ensure), 503
-    public_path = opencode_panel.opencode_public_path(str(path))
-    payload = {
-        "status": "ready",
-        "name": name,
-        "path": str(path),
-        "opencode_path": public_path,
-        "opencode_url": request.host_url.rstrip("/") + public_path,
-        "public_base": request.host_url.rstrip("/"),
-        "opencode_version": opencode_panel.pinned_version(),
-    }
-    if auth_enabled() and not panel_totp.totp_enabled():
-        launch_path = opencode_panel.create_launch_path(str(path))
-        payload["opencode_launch_path"] = launch_path
-        # Older Fleet workers ignore opencode_launch_path and open opencode_path directly.
-        # Use the same one-time sign-in handoff there so the OpenCode button never lands on
-        # an unauthenticated /oc/ page ("Sign in to AgentControl first").
-        payload["opencode_path"] = launch_path
-    return jsonify(payload)
-
-
-@app.get("/api/fleet/sso")
-def api_fleet_sso():
-    """Consume a Fleet launch token, sign the browser in, and open OpenCode."""
-    if not auth_enabled():
-        return redirect("/")
-    token = request.args.get("token", "")
-    directory = opencode_panel.consume_launch_token(token)
-    if not directory:
-        return Response(
-            "This OpenCode link expired. Open the project from Fleet again.",
-            status=401,
-            content_type="text/plain",
-        )
-    if panel_totp.totp_enabled():
-        return redirect("/")
-    response = redirect(opencode_panel.opencode_public_path(directory), code=302)
-    set_session_cookie(response, create_session())
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    return response
-
-
-@app.get("/api/settings/opencode")
-def api_settings_opencode_get():
-    return jsonify(
-        {
-            "status": opencode_panel.opencode_status(CFG, STATE_DIR, read_panel_password()),
-            "secrets": opencode_panel.public_secrets(opencode_panel.load_secrets(CFG)),
-        }
-    )
-
-
-@app.post("/api/settings/opencode")
-def api_settings_opencode_save():
-    data = request.get_json(silent=True) or {}
-    secrets = opencode_panel.save_secrets(CFG, data)
-    if data.get("restart_serve"):
-        opencode_panel.start_serve_process(
-            CFG, STATE_DIR, serve_password_for_panel(), force=True
-        )
-    return jsonify({"ok": True, "secrets": secrets})
-
-
-@app.post("/api/settings/opencode/remote/refresh")
-def api_settings_opencode_remote_refresh():
-    result = opencode_panel.try_refresh_remote_url(CFG, STATE_DIR, read_panel_password())
-    code = 200 if result.get("ok") else 502
-    return jsonify(result), code
-
-
-@app.get("/api/settings/totp")
-def api_settings_totp_get():
-    host = socket.gethostname()
-    return jsonify(panel_totp.public_totp_status(host))
-
-
-@app.post("/api/settings/totp/begin")
-def api_settings_totp_begin():
-    secret = panel_totp.touch_pending_secret()
-    host = socket.gethostname()
-    uri = panel_totp.provisioning_uri(secret, account=host)
-    return jsonify({"secret": secret, "provisioning_uri": uri, "enabled": False})
-
-
-@app.post("/api/settings/totp/enable")
-def api_settings_totp_enable():
-    data = request.get_json(silent=True) or {}
-    secret = str(data.get("secret", "")).strip()
-    if not secret:
-        state = panel_totp.load_totp_state()
-        secret = state.get("secret", "")
-    code = str(data.get("code", ""))
-    ok, err = panel_totp.enable_totp(secret, code)
-    if not ok:
-        return jsonify({"error": err or "invalid code"}), 400
-    # A change to the second factor invalidates existing browser sessions so they
-    # must re-authenticate with the new factor configuration.
-    SESSIONS.revoke_all()
-    resp = jsonify(
-        {
-            "ok": True,
-            "totp": panel_totp.public_totp_status(socket.gethostname()),
-            "reauthentication_required": True,
-        }
-    )
-    return clear_session_cookie(resp)
-
-
-@app.post("/api/settings/totp/rotate")
-def api_settings_totp_rotate():
-    secret = panel_totp.rotate_totp_secret()
-    host = socket.gethostname()
-    SESSIONS.revoke_all()
-    resp = jsonify(
-        {
-            "secret": secret,
-            "provisioning_uri": panel_totp.provisioning_uri(secret, account=host),
-            "enabled": False,
-            "reauthentication_required": True,
-        }
-    )
-    return clear_session_cookie(resp)
-
-
-@app.post("/api/settings/totp/disable")
-def api_settings_totp_disable():
-    panel_totp.disable_totp()
-    SESSIONS.revoke_all()
-    resp = jsonify(
-        {
-            "ok": True,
-            "totp": panel_totp.public_totp_status(socket.gethostname()),
-            "reauthentication_required": True,
-        }
-    )
-    return clear_session_cookie(resp)
+def totp_json(payload: dict) -> Response:
+    resp = jsonify(payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def serve_password_for_panel() -> str:
@@ -2347,68 +2000,6 @@ def opencode_proxy_access():
     return None
 
 
-@app.get("/oc")
-def opencode_proxy_redirect():
-    denied = opencode_proxy_access()
-    if denied is not None:
-        return denied
-    query = request.query_string.decode("ascii")
-    return redirect("/oc/" + ("?" + query if query else ""), code=308)
-
-
-@app.route("/oc/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-@app.route("/oc/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-def opencode_proxy(subpath: str):
-    denied = opencode_proxy_access()
-    if denied is not None:
-        return denied
-    web_root = Path(__file__).resolve().parent / "opencode-web"
-    if request.method in {"GET", "HEAD"}:
-        asset = safe_join(str(web_root), subpath)
-        session_route = re.fullmatch(r"server/[^/]+/session/[^/]+", subpath)
-        navigation = (
-            not subpath
-            or session_route is not None
-            or request.headers.get("Sec-Fetch-Mode") == "navigate"
-            or request.accept_mimetypes.best == "text/html"
-        )
-        if subpath and asset and Path(asset).is_file():
-            response = send_from_directory(web_root, subpath)
-            response.headers["Cache-Control"] = "private, no-cache"
-            return response
-        if subpath.startswith("assets/"):
-            return Response("OpenCode asset not found.", status=404)
-        if navigation:
-            if not (web_root / "index.html").is_file():
-                return Response("OpenCode web build missing. Run scripts/build-opencode-web.sh.", status=503)
-            response = send_from_directory(web_root, "index.html")
-            response.headers["Cache-Control"] = "no-store"
-            return response
-    status, headers, payload, close = opencode_panel.proxy_request(
-        CFG, read_panel_password(), subpath, request.method, request.query_string,
-        dict(request.headers), request.get_data(cache=False) or None,
-    )
-    response = Response(payload, status=status, headers=headers)
-    if close is not None:
-        response.call_on_close(close)
-    return response
-
-
-@app.route("/oc/pty/<terminal>/connect", websocket=True)
-def opencode_terminal_proxy(terminal: str):
-    return opencode_terminal_proxy_for(terminal, "pty")
-
-
-@app.route("/oc/api/pty/<terminal>/connect", websocket=True)
-def opencode_api_terminal_proxy(terminal: str):
-    return opencode_terminal_proxy_for(terminal, "api/pty")
-
-
-@app.route("/oc/api/experimental/persistent-pty/<terminal>/connect", websocket=True)
-def opencode_persistent_terminal_proxy(terminal: str):
-    return opencode_terminal_proxy_for(terminal, "api/experimental/persistent-pty")
-
-
 def opencode_terminal_proxy_for(terminal: str, prefix: str):
     denied = opencode_proxy_access()
     if denied is not None:
@@ -2421,153 +2012,173 @@ def opencode_terminal_proxy_for(terminal: str, prefix: str):
     return Response(status=status)
 
 
-@app.get("/api/ready/<name>")
-def api_ready(name: str):
-    state = reconcile_state()
-    info = state.get(name)
-    if not info:
-        return jsonify({"ready": False, "running": False}), 200
-    running = bool(info.get("pid") and is_running(info["pid"]))
-    log_tail = worker_log_session(worker_log_tail(info))[-2000:]
-    log_errors = detect_worker_log_errors(log_tail)
-    ready = worker_ready(name) if running else False
-    probe = probe_worker_readyz(info["mgmt_port"]) if running and info.get("mgmt_port") else None
-    return jsonify(
-        {
-            "ready": ready,
-            "running": running,
-            "agent_url": agent_url(name),
-            "log_tail": log_tail,
-            "log_errors": log_errors,
-            "has_errors": bool(log_errors) and not ready,
-            "readyz": probe,
-        }
+def _project_total() -> int:
+    root = Path(CFG["scan_root"])
+    if not root.is_dir():
+        return 0
+    total = 0
+    for entry in root.iterdir():
+        if not entry.is_dir() or is_excluded(entry.name) or is_folder_ignored(entry):
+            continue
+        total += 1
+    return total
+
+
+def _opencode_healthy() -> bool | None:
+    try:
+        password = opencode_panel.serve_password(CFG, read_panel_password())
+        return bool(opencode_panel.is_serve_healthy(CFG, password))
+    except Exception:
+        return None
+
+
+def panel_health_snapshot(state: dict | None = None) -> dict:
+    state = state if state is not None else reconcile_state()
+    running = [name for name, info in state.items() if info.get("pid") and is_running(info["pid"])]
+    version = load_version().get("version", "0.0.0")
+    update_available = STORE.meta_get("update_available", "0") == "1"
+    snapshot = health_mod.collect_health(
+        state_dir=STATE_DIR,
+        version=version,
+        uptime_seconds=time.time() - PROCESS_START,
+        workers_running=len(running),
+        workers_total=_project_total(),
+        opencode_healthy=_opencode_healthy(),
+        cert_file=str(CFG.get("tls_cert_file") or ""),
+        disk_path="/",
+        warn_percent=SETTINGS.disk_warn_percent,
+        crit_percent=SETTINGS.disk_crit_percent,
+        cert_warn_days=SETTINGS.cert_warn_days,
+        cert_crit_days=SETTINGS.cert_crit_days,
+        update_available=update_available,
+        extra={"hostname": socket.gethostname(), "public_hostname": CFG.get("public_hostname", "")},
     )
+    snapshot["workers"] = {
+        name: {"running": bool(info.get("pid") and is_running(info["pid"]))}
+        for name, info in state.items()
+    }
+    return snapshot
 
 
-@app.get("/api/status")
-def api_status():
-    return jsonify(
-        {
-            "workers": reconcile_state(),
-            "agent_bin": find_agent_bin(),
-            "api_key_set": bool(read_api_key()),
-            "config": {
-                "port": CFG["port"],
-                "scan_root": CFG["scan_root"],
-                "idle_release_seconds": CFG["idle_release_seconds"],
-            },
-        }
-    )
-
-
-@app.get("/api/system")
-def api_system():
-    return jsonify(collect_system_info())
-
-
-@app.get("/api/system/history")
-def api_system_history():
-    return jsonify({"points": list(METRICS_HISTORY)})
-
-
-@app.get("/api/update/check")
-def api_update_check():
+def check_panel_update() -> dict:
     local = load_version()
     try:
         remote = fetch_github_json("version.json")
     except (URLError, OSError, ValueError, json.JSONDecodeError) as exc:
-        return jsonify(
-            {
-                "local": local,
-                "remote": None,
-                "update_available": False,
-                "error": str(exc),
-            }
-        )
+        return {"local": local, "remote": None, "update_available": False, "error": str(exc)}
     remote_version = str(remote.get("version", "0.0.0"))
-    return jsonify(
-        {
-            "local": local,
-            "remote": remote,
-            "update_available": version_is_newer(remote_version, local.get("version", "0.0.0")),
-            "in_progress": update_in_progress(),
-        }
-    )
+    available = version_is_newer(remote_version, local.get("version", "0.0.0"))
+    STORE.meta_set("update_available", "1" if available else "0")
+    STORE.meta_set("remote_version", remote_version)
+    return {"local": local, "remote": remote, "update_available": available}
 
 
-@app.get("/api/update/status")
-def api_update_status():
-    local = load_version()
-    remote = None
-    try:
-        remote = fetch_github_json("version.json")
-    except (URLError, OSError, ValueError, json.JSONDecodeError):
-        pass
-    return jsonify(
-        {
-            "local": local,
-            "remote": remote,
-            "in_progress": update_in_progress(),
-            "log_tail": read_update_log_tail(),
-        }
-    )
+def monitor_snapshot() -> dict:
+    return panel_health_snapshot()
 
 
-@app.post("/api/update/apply")
-def api_update_apply():
-    result, code = start_panel_update()
-    return jsonify(result), code
+def _merge_channels(current, incoming: dict) -> dict:
+    from panel.config import Channel
+
+    merged = {}
+    for name in ("telegram", "webhook", "email", "ntfy"):
+        existing = current.channels.get(name)
+        payload = incoming.get(name)
+        if payload is None:
+            if existing:
+                merged[name] = existing
+            continue
+        if isinstance(payload, bool):
+            merged[name] = Channel(enabled=payload, options=dict(existing.options) if existing else {})
+            continue
+        options = {str(k): v for k, v in payload.items() if k != "enabled"}
+        options.pop("bot_token_set", None)
+        options.pop("password_set", None)
+        options.pop("secret_set", None)
+        options.pop("token_set", None)
+        if existing:
+            for secret in ("bot_token", "password", "secret", "token"):
+                if not options.get(secret) and existing.options.get(secret):
+                    options[secret] = existing.options[secret]
+        merged[name] = Channel(enabled=bool(payload.get("enabled")), options=options)
+    return merged
 
 
-@app.get("/api/version")
-@app.get("/version.json")
-def api_version():
-    return jsonify(load_version())
+def _public_health(snapshot: dict) -> dict:
+    return {
+        "status": snapshot.get("status"),
+        "ok": snapshot.get("ok"),
+        "version": snapshot.get("version"),
+        "uptime_seconds": snapshot.get("uptime_seconds"),
+        "checked_at": snapshot.get("checked_at"),
+        "workers_running": snapshot.get("workers_running"),
+        "workers_total": snapshot.get("workers_total"),
+        "checks": [
+            {"key": check.get("key"), "status": check.get("status"), "message": check.get("message")}
+            for check in snapshot.get("checks", [])
+        ],
+        "certificate": {
+            "found": snapshot.get("certificate", {}).get("found"),
+            "days_left": snapshot.get("certificate", {}).get("days_left"),
+        },
+        "disk": {"percent": snapshot.get("disk", {}).get("percent")},
+    }
 
 
-@app.get("/health")
-def health():
-    version = load_version()
-    return jsonify(
-        {
-            "ok": True,
-            "component": version.get("component", "panel"),
-            "version": version.get("version", "0.0.0"),
-        }
-    )
+MONITOR = Monitor(
+    store=STORE,
+    notifier=NOTIFIER,
+    settings=SETTINGS,
+    snapshot=monitor_snapshot,
+    update_check=check_panel_update,
+    logger=lambda message: print(message, flush=True),
+)
 
 
-@app.get("/connectivity-test")
-def connectivity_test():
-    """Plain-text page for international reachability checks (no auth, no JS)."""
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    body = (
-        "egress connectivity test\n"
-        "service=agentcontrol\n"
-        f"port={CFG['port']}\n"
-        f"host={request.host}\n"
-        f"time_utc={stamp}\n"
-        "If you can read this from outside Iran, HTTP on this port works.\n"
-    )
-    return Response(body, mimetype="text/plain; charset=utf-8")
+from panel.routes import auth as _routes_auth  # noqa: E402
+from panel.routes import opencode as _routes_opencode  # noqa: E402
+from panel.routes import ops as _routes_ops  # noqa: E402
+from panel.routes import proxy as _routes_proxy  # noqa: E402
+from panel.routes import settings as _routes_settings  # noqa: E402
+from panel.routes import system as _routes_system  # noqa: E402
+from panel.routes import workers as _routes_workers  # noqa: E402
+
+for _routes in (
+    _routes_auth,
+    _routes_workers,
+    _routes_opencode,
+    _routes_proxy,
+    _routes_settings,
+    _routes_system,
+    _routes_ops,
+):
+    _routes.install(sys.modules[__name__])
+    app.register_blueprint(_routes.bp)
 
 
-@app.get("/connectivity-test-minimal.html")
-def connectivity_test_minimal_html():
-    """Minimal HTML (no scripts/stylesheets) for content-filter experiments."""
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    html = (
-        "<!DOCTYPE html><html><head><meta charset=utf-8>"
-        "<title>connectivity test</title></head><body>"
-        "<p>egress connectivity test — agentcontrol port "
-        f"{CFG['port']}</p><p>time: {stamp}</p>"
-        "</body></html>"
-    )
-    return Response(html, mimetype="text/html; charset=utf-8")
+def _install_v1_aliases() -> None:
+    """Expose every /api/... route under /api/v1/... without duplicating handlers."""
+    for rule in list(app.url_map.iter_rules()):
+        if not rule.rule.startswith("/api/") or rule.rule.startswith("/api/v1/"):
+            continue
+        if getattr(rule, "websocket", False):
+            continue
+        methods = sorted((rule.methods or set()) - {"HEAD", "OPTIONS"})
+        app.add_url_rule(
+            "/api/v1" + rule.rule[4:],
+            endpoint=rule.endpoint,
+            view_func=app.view_functions[rule.endpoint],
+            methods=methods,
+        )
+
+
+_install_v1_aliases()
 
 
 if __name__ == "__main__":
+    if CONFIG_PROBLEMS:
+        raise SystemExit("Invalid configuration:\n- " + "\n- ".join(CONFIG_PROBLEMS))
+    MONITOR.start()
     ensure_host_panel()
     ensure_state_dir()
     internal_port = int(CFG.get("internal_port") or 0)

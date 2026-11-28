@@ -1,7 +1,8 @@
 # AgentControl
 
-Lightweight web panel to **start/stop Cursor Cloud Agent workers** on any Linux server.  
-Mobile-friendly UI with per-server password protection.
+Lightweight web panel to **start/stop Cursor Cloud Agent workers** on any Linux
+server, open a shared **OpenCode** workspace, and manage many servers from one
+Cloudflare-hosted **Fleet** dashboard.
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -9,58 +10,57 @@ Mobile-friendly UI with per-server password protection.
 ## What it does
 
 - Lists project folders under a configurable root (default `/root`)
-- **Start** → launches `agent worker` as `agentcontrol-<folder>` and opens `cursor.com/agents#workerId=...`
-- **Stop** → terminates the worker process
-- Shows server stats (CPU, RAM, disk, uptime, Docker, active workers)
-- Stable worker ID per folder (deterministic UUID)
-- Auto idle-release after **12 hours**
-- Always-on via **systemd** (`agentcontrol.service`)
-- **Per-server password** — stored in browser `localStorage`
+- **Start / Stop / Restart** a worker (`agentcontrol-<folder>`) and open Cursor
+- Project search, filters, sorting, git details, live worker logs (tail/download)
+- Shared **OpenCode serve** with a patched web UI at `/oc/` after sign-in
+- Server stats, charts (live/1h/6h/24h/7d), per-project readiness
+- Optional **proxy pool** (xray) and **Cursor edge bridge** for restricted networks
+- **Password (Argon2) + optional TOTP**, server-side sessions, scoped API tokens
+- **Alerts** (Telegram, webhook, email, ntfy) with per-channel switches and severity
+- **HTTPS by default** — bundled Caddy behind a same-port front; HTTP redirects
+- **Public status page** (`/status`), Prometheus metrics (`/metrics`), audit log
+- **Admin terminal** in the browser (can be disabled in config)
+- **Fleet** — optional multi-server dashboard on Cloudflare Workers + KV, with
+  health badges, drift detection, down/recovery alerts and canary panel updates
 
 ## Requirements
 
-- Linux + systemd
+- Linux + systemd (host install; Docker is deprecated)
 - Python 3.10+
 - [Cursor agent CLI](https://cursor.com/docs/cloud-agent/self-hosted-guides/my-machines)
-- Personal API key from [Cursor Dashboard](https://cursor.com/settings)
+- A Cursor personal API key from [cursor.com/settings](https://cursor.com/settings)
 
-## Quick install (host systemd — recommended)
-
-**Default:** panel runs on the host via systemd so Cursor workers inherit `/var/run/docker.sock` (required for Docker Compose repos like nictry).
+## Quick install
 
 ```bash
 sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && /opt/agentcontrol/bootstrap.sh'
 ```
 
-Non-interactive with API key:
+Non-interactive:
 
 ```bash
-sudo CURSOR_API_KEY=YOUR_KEY /opt/agentcontrol/install.sh
+sudo CURSOR_API_KEY=YOUR_KEY PANEL_PASSWORD=your-password /opt/agentcontrol/install.sh
 ```
 
-Interactive wizard (network mode, scan root, optional API key — **default: direct, no proxy**):
+Interactive wizard (network mode, scan root, optional key):
 
 ```bash
 sudo /opt/agentcontrol/install-wizard.sh
-# or: sudo WIZARD=1 /opt/agentcontrol/bootstrap.sh
-```
-
-Non-interactive proxy mode (xray):
-
-```bash
-sudo AGENTCONTROL_NETWORK_MODE=2 AGENTCONTROL_PROXY_PORT=30229 SCAN_ROOT=/root /opt/agentcontrol/install-wizard.sh
+# proxy/xray variant:
+sudo AGENTCONTROL_NETWORK_MODE=2 AGENTCONTROL_PROXY_PORT=30229 /opt/agentcontrol/install-wizard.sh
 ```
 
 Update later:
 
 ```bash
 sudo /opt/agentcontrol/bootstrap.sh
-# or: cd /opt/agentcontrol && git pull && sudo bash install.sh
+# or from the panel: Update panel
 ```
 
-Guard file after host install: `/etc/agentcontrol/HOST_ONLY` — blocks Docker panel (`docker compose`).
+Open `https://SERVER:30228` (or `https://your-host:30228` when `public_hostname` is
+set). First visit asks for the panel password and Cursor API key.
 
-Fresh reinstall (removes legacy `agentstart`):
+**Fresh reinstall** (removes legacy `agentstart`):
 
 ```bash
 sudo CURSOR_API_KEY=YOUR_KEY bash -c '
@@ -72,130 +72,86 @@ git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol
 '
 ```
 
-Open from phone: `http://SERVER_IP:30228`
+## Password and API key
 
-## Panel password
-
-```bash
-sudo cat /etc/agentcontrol/auth-password
-```
-
-Set manually:
+The panel password is stored as an **Argon2 hash** in
+`/etc/agentcontrol/auth-password`, so `sudo cat` shows a hash, not the password.
 
 ```bash
-echo "my-password" | sudo tee /etc/agentcontrol/auth-password
-sudo chmod 600 /etc/agentcontrol/auth-password
-```
+# Set or reset (prompts twice; requires >= 8 chars)
+sudo /opt/agentcontrol/venv/bin/python /opt/agentcontrol/scripts/set-password.py
 
-Saved in browser **localStorage** (one login per server per browser).
-
-## Cursor API key
-
-```bash
-echo "YOUR_CURSOR_PERSONAL_API_KEY" | sudo tee /etc/agentcontrol/api-key
+# API key
+echo "YOUR_CURSOR_KEY" | sudo tee /etc/agentcontrol/api-key
 sudo chmod 600 /etc/agentcontrol/api-key
 sudo systemctl restart agentcontrol
 ```
 
+The browser stores no password; a server-side session (30 days by default) is
+created after password + optional TOTP. Settings → **Sessions** lists devices and
+can revoke one or all. Settings → **API tokens** creates scoped tokens (`read`,
+`ops`, `admin`) for Fleet/automation instead of sharing the panel password.
+
+On a fresh install, non-loopback setup requires the token printed by the installer
+(`/etc/agentcontrol/setup-token`), e.g. `https://HOST:30228/?setup=TOKEN`.
+
 ## Configuration
 
-File: `/etc/agentcontrol/config.yaml`
-
-| Key | Default |
-|-----|---------|
-| `port` | `30228` |
-| `scan_root` | `/root` |
-| `idle_release_seconds` | `43200` |
-| `api_key_file` | `/etc/agentcontrol/api-key` |
-| `auth_password_file` | `/etc/agentcontrol/auth-password` |
-| `state_dir` | `/var/lib/agentcontrol` |
-
-## Service
-
-Host systemd (default):
-
-```bash
-systemctl status agentcontrol
-systemctl restart agentcontrol
-journalctl -u agentcontrol -f
-```
-
-Worker logs: `/var/lib/agentcontrol/<folder>.log`  
-Worker names in Cursor: `agentcontrol-<folder>`
-
-## Bundled Caddy (TLS) and sessions
-
-The panel ships a managed Caddy reverse proxy. It serves TLS on the public `port` and forwards to Flask on a loopback-only `internal_port`, so it can coexist with any system nginx/Caddy and never binds 80/443 for the site.
+`/etc/agentcontrol/config.yaml` (the repo `config.yaml` is a symlink):
 
 ```yaml
-# /etc/agentcontrol/config.yaml
-port: 30228             # public port (Caddy)
-internal_port: 30328    # Flask, loopback only
+port: 30228               # public HTTPS port
+internal_port: 30328      # Flask, loopback only (set by enable-caddy.sh)
+https_internal_port: 30443
 bind_host: 127.0.0.1
-public_hostname: panel.example.com
-# tls_cert_file: /path/fullchain.pem   # optional: reuse an existing cert
-# tls_key_file:  /path/key.pem
-# acme_email: you@example.com          # optional
+public_hostname: panel.example.com   # optional; empty = On-Demand TLS
+scan_root: /root
+idle_release_seconds: 43200
+session_days: 30
 ```
 
-```bash
-sudo bash /opt/agentcontrol/scripts/install-caddy.sh
-systemctl status agentcontrol-caddy
+All keys, env overrides, secrets and state files: **[docs/CONFIG.md](docs/CONFIG.md)**.
+
+## TLS layout
+
+```text
+30228  agentcontrol-tls-front
+  TLS       -> 127.0.0.1:30443 Caddy -> 127.0.0.1:30328 Flask
+  HTTP      -> 308 https://HOST:30228   (bare IP -> Flask, no ACME)
 ```
 
-Without certificate files, Caddy obtains a Let's Encrypt certificate with HTTP-01, which needs inbound **80** only for `/.well-known/acme-challenge`; there is no redirect and the app is never served there. If port 80 belongs to another proxy, provide `tls_cert_file`/`tls_key_file` instead. Always allow the public port and keep `internal_port` loopback-only.
+Caddy never binds 80/443 for the site; port 80 is used only for ACME HTTP-01. With
+`public_hostname` the certificate is managed for that name and **renews
+automatically** about 30 days before expiry; keep port 80 free for that challenge.
+Plain `http://HOST:30228` is redirected to HTTPS with 308. Bare-IP HTTP access stays
+plain because ACME cannot issue certificates for IPs. If port 80 belongs to another
+proxy, set `tls_cert_file` / `tls_key_file` instead. Details:
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
 
-Browser authentication now uses server-side sessions in `/var/lib/agentcontrol/sessions.db` (only token hashes are stored). TOTP is checked when the session is created, so a device stays signed in for `session_days` (default 30) after one password + 2FA entry. Settings → **Sessions** can **Sign out all devices**; the API is `POST /api/auth/sessions/revoke-all`. The panel no longer stores the password in `localStorage`.
+## OpenCode
 
+One shared `opencode serve` on loopback `4096`, opened per project from the panel
+(button → `/oc/?directory=…`). The binary and patched frontend are pinned
+(OpenCode 2.4.1 + Bun 1.4.4) and installed on demand; check
+`/var/lib/agentcontrol/opencode-install.log` if it fails. Provider keys are managed
+in Settings → OpenCode; ChatGPT Plus/Pro uses OpenCode's headless OAuth flow.
 
+## Fleet (multi-server)
 
-## OpenCode (shared serve)
+One dashboard for all servers, no central VPS. Deploy steps:
+[fleet/README.md](fleet/README.md). Polling/KV limits:
+[fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md).
 
-- AgentControl runs one shared OpenCode server on `127.0.0.1:4096`. Keep port 4096 on loopback.
-- After panel sign-in, select **OpenCode** on a project. The URL at `/oc/?directory=…` opens a draft for that directory. The frontend and API share the panel origin.
-- If the OpenCode binary or web frontend is missing, confirm installation in the panel. AgentControl installs the missing components in the background and opens the selected project when ready. Fleet can start the installation on the selected server and open the project when it finishes.
-- Reload or bookmark an OpenCode session URL to return to that session while the panel login cookie is valid.
-- The proxy requires a panel session, adds upstream Basic auth, forwards API methods and SSE, and bridges the OpenCode terminal WebSocket. If the panel sits behind another proxy, preserve its host and scheme and allow long-lived streaming and WebSocket upgrades for `/oc/`.
-- Panel Settings → **OpenCode** manages API keys. To use a ChatGPT Plus or Pro subscription, open OpenCode's provider connection dialog, select **OpenAI**, and choose **ChatGPT Pro/Plus (headless)** for a remote server. Complete the device authorization on the official OpenAI page. Use the same OpenCode service user and data directory after restarts so saved credentials are reused.
-- Fleet project launch returns the server panel's OpenCode URL. Sign in to that panel in the browser once.
+## API and docs
 
-The installer targets glibc-based Linux x86_64 and ARM64. It verifies the pinned OpenCode 2.4.1 and Bun 1.4.4 downloads, reuses a matching OpenCode binary when available, and builds the patched frontend at `opencode-web`. The host needs access to GitHub and the package registries used during the build. Check `/var/lib/agentcontrol/opencode-install.log` if a panel install fails.
-
-To run the installer from SSH, use `sudo bash /opt/agentcontrol/scripts/install-opencode.sh`. Set `STATE_DIR` to match the panel if it uses a custom state directory. To build only the frontend, use `scripts/build-opencode-web.sh` with Bun 1.4.4. Set `BUN_BIN` if Bun is outside PATH. Update the pinned source, download checksums, frontend patch and matching backend together when upgrading OpenCode.
-
-To verify a deployment, test the authenticated OpenCode service directly on loopback first, then sign in through the panel and open two projects. Check that the selected project survives browser refresh, JS and CSS use `/oc/assets/` with the proper MIME types, `/oc/global/event` delivers an event before closing, and the terminal can send and receive over its WebSocket. Verify ChatGPT OAuth by making an OpenAI model request, restarting just the OpenCode child process, and repeating the request without signing in again.
-
-Back up `/etc/agentcontrol`, the OpenCode configuration, and its private data directory before changing service settings. Use a consistent SQLite backup if OpenCode is running. The default systemd unit can stop all child processes during a panel restart, including Cursor workers. Check worker state before reloading the panel.
-
-## API
-
-| Method | Path | Auth |
-|--------|------|------|
-| GET | `/` | no |
-| POST | `/api/auth/login` | no |
-| POST | `/api/auth/logout` | no |
-| GET | `/api/auth/status` | no |
-| GET | `/api/auth/sessions` | yes |
-| POST | `/api/auth/sessions/revoke-all` | yes |
-| GET | `/api/system` | yes |
-| GET | `/api/folders` | yes |
-| POST | `/api/start/<name>` | yes |
-| POST | `/api/stop/<name>` | yes |
-| POST | `/api/opencode/open/<name>` | yes |
-| GET/POST | `/api/opencode/install` | yes |
-| GET | `/api/opencode/status` | yes |
-| GET/POST | `/api/settings/opencode` | yes |
-| GET/POST | `/api/settings/totp/*` | yes |
-| GET/POST/PUT/PATCH/DELETE | `/oc/…` | panel session cookie |
-| GET | `/health` | no |
-
-Header: `X-AgentControl-Auth: <password>`
-
-## Multi-server fleet (Cloudflare Workers)
-
-Manage **all servers from one URL** — no central VPS, no Tunnel.  
-See **[fleet/README.md](fleet/README.md)** for deploy steps (`wrangler login` → KV → `npm run deploy` → first-visit password setup).  
-Contributors changing Fleet polling or caching must read **[fleet/CLOUDFLARE.md](fleet/CLOUDFLARE.md)** (Workers/KV limits).
+| Doc | Contents |
+|---|---|
+| [docs/API.md](docs/API.md) | panel + Fleet endpoints, auth |
+| [docs/CONFIG.md](docs/CONFIG.md) | config keys, env, secrets, state |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | install/update, TLS, rollback, failures |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | processes, auth, worker/OpenCode/Fleet flows |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | local dev, tests, release checklist |
+| [AGENTS.md](AGENTS.md) | guide for coding agents |
 
 ## License
 
@@ -209,6 +165,12 @@ MIT — see [LICENSE](LICENSE)
 sudo bash -c 'git clone https://github.com/EmRa228/agentcontrol.git /opt/agentcontrol && /opt/agentcontrol/bootstrap.sh'
 ```
 
-ویزارد: مستقیم یا پروکسی xray (پورت پیش‌فرض `30229`)، مسیر پروژه‌ها (پیش‌فرض `/root`). API key اختیاری — در داشبورد هم قابل تنظیم است.
+ویزارد: مستقیم یا پروکسی xray (پورت پیش‌فرض `30229`)، مسیر پروژه‌ها (پیش‌فرض `/root`). کلید API اختیاری است و از پنل هم قابل تنظیم است.
 
-پسورد: `sudo cat /etc/agentcontrol/auth-password`
+پسورد پنل به‌صورت هش ذخیره می‌شود؛ برای تغییر/بازنشانی:
+
+```bash
+sudo /opt/agentcontrol/venv/bin/python /opt/agentcontrol/scripts/set-password.py
+```
+
+آدرس پنل: `https://IP-SERVER:30228` (یا نام دامنه در صورت تنظیم `public_hostname`). برای گواهی معتبر، DNS دامنه را به سرور بدهید و پورت ۸۰ را باز نگه دارید.

@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  panel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+      - name: Syntax / undefined names
+        run: ruff check --select E9,F63,F7,F82 .
+      - name: Compile
+        run: python -m compileall -q app.py panel worker_git.py panel_sessions.py panel_totp.py
+        env:
+          PANEL_DISABLE_BACKGROUND: "1"
+      - name: Version files
+        run: python scripts/sync-versions.py --check
+      - name: Unit tests
+        run: python -m unittest discover -s tests
+        env:
+          STATE_DIR: /tmp/agentcontrol-test
+          PANEL_DISABLE_BACKGROUND: "1"
+
+  fleet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: fleet/package-lock.json
+      - name: Install
+        working-directory: fleet
+        run: npm ci
+      - name: Typecheck
+        working-directory: fleet
+        run: npx tsc --noEmit
+      - name: Wrangler dry run
+        working-directory: fleet
+        run: npx wrangler deploy --dry-run --outdir dist
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Bash syntax
+        run: |
+          set -e
+          for f in install.sh bootstrap.sh install-wizard.sh scripts/*.sh tests/*.sh; do
+            bash -n "$f"
+          done

@@ -87,12 +87,15 @@ stop_agentcontrol_container() {
 verify() {
   log "Verification"
   systemctl is-active --quiet agentcontrol || die "agentcontrol.service not active"
-  curl -sf --max-time 5 "http://127.0.0.1:${PANEL_PORT}/health" >/dev/null \
-    || die "panel health check failed on :${PANEL_PORT}"
+  local health_port="${PANEL_PORT}" internal
+  internal="$(awk -v k='internal_port:' '$1==k { $1=""; sub(/^[ \t]+/, ""); print; exit }' "${CONFIG_DIR}/config.yaml" 2>/dev/null || true)"
+  [[ -n "$internal" ]] && health_port="$internal"
+  curl -sf --max-time 5 "http://127.0.0.1:${health_port}/health" >/dev/null \
+    || die "panel health check failed on :${health_port}"
   test -S /var/run/docker.sock || die "/var/run/docker.sock missing on host"
   log "OK: panel on host systemd, docker.sock present"
   echo ""
-  echo "Next: open http://$(hostname -I | awk '{print $1}'):${PANEL_PORT} and Start your workers again."
+  echo "Next: open https://$(hostname -I | awk '{print $1}'):${PANEL_PORT} (http redirects to https) and Start your workers again."
 }
 
 main() {

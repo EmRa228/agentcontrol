@@ -1,0 +1,47 @@
+# Copy to /etc/agentcontrol/notifications.yaml (mode 600).
+# Every channel has its own switch; `min_severity` controls overall sensitivity.
+enabled: true
+min_severity: warning       # info | warning | critical
+throttle_seconds: 900       # do not repeat the same incident sooner
+
+events:
+  worker_down: true
+  worker_error: true
+  disk: true
+  cert: true
+  update: true
+  opencode: true
+  login_fail: false
+  backup: true
+  recovery: true
+
+thresholds:
+  disk_warn: 85
+  disk_crit: 95
+  cert_warn_days: 21
+  cert_crit_days: 7
+
+channels:
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+  webhook:
+    enabled: false
+    url: ""
+    secret: ""
+    headers: {}
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    username: ""
+    password: ""
+    from: ""
+    to: []
+    use_ssl: false
+    starttls: true
+  ntfy:
+    enabled: false
+    url: "https://ntfy.sh"
+    topic: ""

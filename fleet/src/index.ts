@@ -1,9 +1,32 @@
 import fleetVersion from "../version.json";
+import {
+  KV_NOTIFY,
+  defaultNotifyConfig,
+  notifyFleet,
+  publicNotifyConfig,
+  readNotifyConfig,
+  type FleetNotifyConfig,
+} from "./notify";
+import { json } from "./http";
+import {
+  createFleetSession,
+  fleetPasswordConfigured,
+  protectSecret,
+  requireFleetAuth,
+  revealSecret,
+  revokeFleetSession,
+  sameOriginRequest,
+  sessionCookie,
+  verifyFleetPassword,
+  writeFleetPassword,
+} from "./auth";
 
 export interface Env {
   KV: KVNamespace;
   ASSETS: Fetcher;
   FLEET_PASSWORD: string;
+  /** Optional base64 32-byte key: encrypts stored server passwords (AES-GCM). */
+  FLEET_ENC_KEY?: string;
 }
 
 interface StoredServer {
@@ -30,12 +53,15 @@ interface RecentProject {
   agent_url?: string;
 }
 
+
+
 const KV_KEY = "servers";
 const KV_UI_HTML = "fleet_ui_html";
 const KV_UI_VERSION = "fleet_ui_version";
 const KV_RECENT = "recent_projects";
 const KV_SNAPSHOT = "fleet_snapshot_cache";
-const KV_PASSWORD = "fleet_password";
+const KV_HEALTH_STATE = "fleet_health_state";
+const KV_HEALTH_PREFIX = "fleet_health:";
 const GITHUB_RAW = "https://raw.githubusercontent.com/EmRa228/agentcontrol/main/fleet";
 const FLEET_VERSION = fleetVersion as { component: string; version: string; updated: string };
 
@@ -111,12 +137,6 @@ async function applyFleetUiUpdate(kv: KVNamespace): Promise<VersionInfo> {
   return version;
 }
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
 
 function isDirectIpHost(hostname: string): boolean {
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return true;
@@ -129,7 +149,7 @@ function directIpError(hostname: string): string {
   return (
     `Cloudflare Workers cannot call direct IP addresses (${hostname} — error 1003). ` +
     "Create a DNS A record in your zone (grey cloud / DNS only), e.g. " +
-    "ac-tg-uk.aksbaz.com → 193.163.201.14, then use http://ac-tg-uk.aksbaz.com:30228"
+    "ac-tg-uk.aksbaz.com → 193.163.201.14, then use https://ac-tg-uk.aksbaz.com:30228"
   );
 }
 
@@ -144,46 +164,37 @@ function normalizeUrl(raw: string): string {
   return `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
 }
 
-function fleetAuth(request: Request, expected: string): boolean {
-  const header = request.headers.get("X-Fleet-Password") || "";
-  if (!expected) return false;
-  return header === expected;
-}
+const loginAttempts = new Map<string, { count: number; first: number }>();
 
-async function readFleetPassword(kv: KVNamespace, env: Env): Promise<string> {
-  const fromKv = await kv.get(KV_PASSWORD);
-  if (fromKv) return fromKv;
-  return (env.FLEET_PASSWORD || "").trim();
-}
-
-async function fleetPasswordConfigured(kv: KVNamespace, env: Env): Promise<boolean> {
-  return Boolean(await readFleetPassword(kv, env));
-}
-
-async function requireFleetAuth(request: Request, env: Env): Promise<Response | null> {
-  const expected = await readFleetPassword(env.KV, env);
-  if (!expected) {
-    return json({ error: "setup required", needs_password: true }, 403);
-  }
-  if (!fleetAuth(request, expected)) {
-    return json({ error: "unauthorized" }, 401);
-  }
-  return null;
-}
-
-async function readServers(kv: KVNamespace): Promise<StoredServer[]> {
+async function readServers(kv: KVNamespace, env?: Env): Promise<StoredServer[]> {
   const raw = await kv.get(KV_KEY);
   if (!raw) return [];
   try {
     const data = JSON.parse(raw) as ServerRecord;
-    return data.servers || [];
+    const servers = data.servers || [];
+    if (env?.FLEET_ENC_KEY) {
+      for (const server of servers) {
+        try {
+          server.password = await revealSecret(server.password, env);
+        } catch {
+          server.password = "";
+        }
+      }
+    }
+    return servers;
   } catch {
     return [];
   }
 }
 
-async function writeServers(kv: KVNamespace, servers: StoredServer[]): Promise<void> {
-  const payload: ServerRecord = { servers };
+async function writeServers(kv: KVNamespace, servers: StoredServer[], env?: Env): Promise<void> {
+  let stored = servers;
+  if (env?.FLEET_ENC_KEY) {
+    stored = await Promise.all(
+      servers.map(async (server) => ({ ...server, password: await protectSecret(server.password, env) })),
+    );
+  }
+  const payload: ServerRecord = { servers: stored };
   await kv.put(KV_KEY, JSON.stringify(payload));
 }
 
@@ -232,12 +243,12 @@ async function updateRecentProject(
   await writeRecentProjects(kv, filtered);
 }
 
-async function touchServerAccess(kv: KVNamespace, serverId: string): Promise<void> {
-  const servers = await readServers(kv);
+async function touchServerAccess(kv: KVNamespace, serverId: string, env?: Env): Promise<void> {
+  const servers = await readServers(kv, env);
   const idx = servers.findIndex((s) => s.id === serverId);
   if (idx < 0) return;
   servers[idx].lastAccessedAt = Date.now();
-  await writeServers(kv, servers);
+  await writeServers(kv, servers, env);
 }
 
 async function proxyAgent(
@@ -247,12 +258,18 @@ async function proxyAgent(
   body?: unknown,
 ): Promise<Response> {
   const base = server.url.replace(/\/$/, "");
+  const authHeaders: Record<string, string> = server.password.startsWith("ac_")
+    ? { "X-AgentControl-Token": server.password }
+    : { "X-AgentControl-Auth": server.password };
   const init: RequestInit = {
     method,
     headers: {
-      "X-AgentControl-Auth": server.password,
+      ...authHeaders,
       Accept: "application/json",
     },
+    // Handle the panel's HTTP -> HTTPS redirect ourselves so the auth header
+    // survives the scheme change.
+    redirect: "manual",
     signal: AbortSignal.timeout(45000),
   };
   if (body !== undefined) {
@@ -271,8 +288,10 @@ async function proxyAgent(
     if (!httpsBase) throw e;
     return send(httpsBase);
   }
-  // Caddy answers plaintext HTTP sent to its TLS port with 400.
-  if (httpsBase && res.status === 400) {
+  // Caddy answers plaintext HTTP sent to its TLS port with 400, and the panel's
+  // same-port front answers with a 308 redirect. Retry the https origin directly
+  // (custom auth headers are dropped when fetch follows a cross-origin redirect).
+  if (httpsBase && (res.status === 400 || [301, 302, 307, 308].includes(res.status))) {
     try {
       return await send(httpsBase);
     } catch {
@@ -288,7 +307,7 @@ async function readJsonSafe(res: Response): Promise<unknown> {
     return {
       error: "Cloudflare error 1003 — use a hostname, not an IP address",
       status: res.status,
-      hint: "Add an A record (DNS only) in your zone and use http://name.aksbaz.com:30228",
+      hint: "Add an A record (DNS only) in your zone and use https://name.aksbaz.com:30228",
     };
   }
   try {
@@ -476,6 +495,9 @@ async function snapshotOneServer(server: StoredServer) {
       history?: unknown[];
       version?: VersionInfo;
       proxy?: Record<string, unknown>;
+      health?: Record<string, unknown>;
+      agent?: Record<string, unknown>;
+      opencode?: Record<string, unknown>;
     };
     try {
       bundle = JSON.parse(raw) as typeof bundle;
@@ -506,6 +528,9 @@ async function snapshotOneServer(server: StoredServer) {
       hostname: hostname || null,
       ip: ip || null,
       proxy: bundle.proxy || null,
+      health: bundle.health || null,
+      agent: bundle.agent || null,
+      opencode: bundle.opencode || null,
       summary: {
         cpu: cpu?.percent ?? null,
         load_pct: cpu?.load_percent ?? null,
@@ -528,8 +553,8 @@ async function snapshotOneServer(server: StoredServer) {
   }
 }
 
-async function buildFleetSnapshot(kv: KVNamespace) {
-  const servers = await readServers(kv);
+async function buildFleetSnapshot(kv: KVNamespace, env?: Env) {
+  const servers = await readServers(kv, env);
   const snapshots = await Promise.all(servers.map(snapshotOneServer));
   const sorted = sortSnapshotsByRecent(snapshots);
   const recentKv = await readRecentProjects(kv);
@@ -556,9 +581,9 @@ async function readCachedSnapshot(kv: KVNamespace): Promise<Record<string, unkno
   }
 }
 
-async function reconcileSnapshotWithRegistry(kv: KVNamespace, cached: Record<string, unknown> | null) {
-  const registered = await readServers(kv);
-  if (!cached) return buildFleetSnapshot(kv);
+async function reconcileSnapshotWithRegistry(kv: KVNamespace, cached: Record<string, unknown> | null, env?: Env) {
+  const registered = await readServers(kv, env);
+  if (!cached) return buildFleetSnapshot(kv, env);
 
   const registeredIds = new Set(registered.map((s) => s.id));
   const serverList = ((cached.servers as Array<Record<string, unknown>>) || []).filter((s) =>
@@ -600,9 +625,9 @@ async function reconcileSnapshotWithRegistry(kv: KVNamespace, cached: Record<str
   };
 }
 
-async function buildFleetSnapshotFromCache(kv: KVNamespace) {
+async function buildFleetSnapshotFromCache(kv: KVNamespace, env?: Env) {
   const cached = await readCachedSnapshot(kv);
-  return reconcileSnapshotWithRegistry(kv, cached);
+  return reconcileSnapshotWithRegistry(kv, cached, env);
 }
 
 async function removeServerFromSnapshot(kv: KVNamespace, serverId: string) {
@@ -624,8 +649,8 @@ async function removeServerFromSnapshot(kv: KVNamespace, serverId: string) {
 }
 
 
-async function refreshFleetServer(kv: KVNamespace, serverId: string, persist = false) {
-  const servers = await readServers(kv);
+async function refreshFleetServer(kv: KVNamespace, serverId: string, persist = false, env?: Env) {
+  const servers = await readServers(kv, env);
   const server = servers.find((s) => s.id === serverId);
   if (!server) return { error: "server not found" };
 
@@ -657,8 +682,8 @@ async function refreshFleetServer(kv: KVNamespace, serverId: string, persist = f
   return { server: snapshot, snapshot: payload };
 }
 
-async function pushProxyToServers(kv: KVNamespace, config: Record<string, unknown>) {
-  const servers = await readServers(kv);
+async function pushProxyToServers(kv: KVNamespace, config: Record<string, unknown>, env?: Env) {
+  const servers = await readServers(kv, env);
   const results = [];
   for (const server of servers.filter((s) => !s.paused)) {
     try {
@@ -677,24 +702,73 @@ async function pushProxyToServers(kv: KVNamespace, config: Record<string, unknow
   return results;
 }
 
-async function updateAllPanels(kv: KVNamespace) {
-  const servers = await readServers(kv);
-  const results = [];
-  for (const server of servers.filter((s) => !s.paused)) {
+async function updateAllPanels(kv: KVNamespace, env?: Env) {
+  const servers = (await readServers(kv, env)).filter((s) => !s.paused);
+  const results: Array<Record<string, unknown>> = [];
+  if (!servers.length) return results;
+
+  const updateOne = async (server: StoredServer) => {
     try {
       const res = await proxyAgent(server, "/api/update/apply", "POST");
-      results.push({
+      return {
         server: server.name,
         id: server.id,
         ok: res.ok || res.status === 202,
         status: res.status,
         body: await readJsonSafe(res),
-      });
+      };
     } catch (e) {
-      results.push({ server: server.name, id: server.id, ok: false, error: String(e) });
+      return { server: server.name, id: server.id, ok: false, error: String(e) };
+    }
+  };
+
+  const canary = servers[0];
+  let before = "";
+  try {
+    const res = await proxyAgent(canary, "/health");
+    if (res.ok) before = String(((await res.json()) as { version?: string }).version || "");
+  } catch {
+    /* canary may be offline; update result will report it */
+  }
+  const first: Record<string, unknown> = { ...(await updateOne(canary)), canary: true };
+  results.push(first);
+  if (!(first.ok as boolean)) {
+    results.push({ skipped: true, reason: "canary update failed — remaining servers untouched" });
+    return results;
+  }
+  // Wait for the canary to come back healthy (up to 2 minutes).
+  let healthy = false;
+  const deadline = Date.now() + 120_000;
+  const startedAt = Date.now();
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    try {
+      const res = await proxyAgent(canary, "/health");
+      if (res.ok) {
+        const version = String(((await res.json()) as { version?: string }).version || "");
+        // A no-op update restarts the panel without changing the version; accept
+        // it once the panel has stayed healthy for a grace period.
+        if (!before || version !== before || Date.now() - startedAt > 45_000) {
+          healthy = true;
+          break;
+        }
+      }
+    } catch {
+      /* keep waiting */
     }
   }
+  if (!healthy) {
+    results.push({ canary: true, ok: false, error: "canary did not become healthy; rollout stopped" });
+    return results;
+  }
+  for (const server of servers.slice(1)) {
+    results.push(await updateOne(server));
+  }
   return results;
+}
+
+function serverUrlFor(server: StoredServer): string {
+  return server.url.replace(/\/$/, "");
 }
 
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
@@ -725,15 +799,46 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   if (path === "/api/login" && request.method === "POST") {
+    if (!sameOriginRequest(request)) return json({ error: "cross-origin request rejected" }, 403);
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    if (await env.KV.get(`fleet_lock:${ip}`)) {
+      return json({ error: "too many failed attempts — try again in 5 minutes", retry_after: 300 }, 429);
+    }
     const data = (await request.json().catch(() => ({}))) as { password?: string };
-    const expected = await readFleetPassword(env.KV, env);
-    if (!expected) {
+    if (!(await fleetPasswordConfigured(env.KV, env))) {
       return json({ error: "setup required", needs_password: true }, 403);
     }
-    if ((data.password || "") === expected) {
-      return json({ ok: true });
+    const password = data.password || "";
+    const result = await verifyFleetPassword(env.KV, env, password);
+    if (!result.ok) {
+      const now = Date.now();
+      const entry = loginAttempts.get(ip) || { count: 0, first: now };
+      if (now - entry.first > 300_000) {
+        entry.count = 0;
+        entry.first = now;
+      }
+      entry.count += 1;
+      loginAttempts.set(ip, entry);
+      if (entry.count >= 10) {
+        loginAttempts.delete(ip);
+        await env.KV.put(`fleet_lock:${ip}`, "1", { expirationTtl: 300 });
+        return json({ error: "too many failed attempts — try again in 5 minutes", retry_after: 300 }, 429);
+      }
+      return json({ error: "wrong password", attempts_left: 10 - entry.count }, 401);
     }
-    return json({ error: "wrong password" }, 401);
+    loginAttempts.delete(ip);
+    if (result.legacy) await writeFleetPassword(env.KV, password);
+    const token = await createFleetSession(request, env);
+    const response = json({ ok: true });
+    response.headers.append("Set-Cookie", sessionCookie(request, token));
+    return response;
+  }
+
+  if (path === "/api/logout" && request.method === "POST") {
+    await revokeFleetSession(request, env);
+    const response = json({ ok: true });
+    response.headers.append("Set-Cookie", sessionCookie(request, "", 0));
+    return response;
   }
 
   if (path === "/api/setup/status" && request.method === "GET") {
@@ -742,16 +847,20 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   if (path === "/api/setup" && request.method === "POST") {
+    if (!sameOriginRequest(request)) return json({ error: "cross-origin request rejected" }, 403);
     if (await fleetPasswordConfigured(env.KV, env)) {
       return json({ error: "already configured" }, 403);
     }
     const data = (await request.json().catch(() => ({}))) as { password?: string };
     const password = (data.password || "").trim();
-    if (password.length < 4) {
-      return json({ error: "password must be at least 4 characters" }, 400);
+    if (password.length < 8) {
+      return json({ error: "password must be at least 8 characters" }, 400);
     }
-    await env.KV.put(KV_PASSWORD, password);
-    return json({ ok: true });
+    await writeFleetPassword(env.KV, password);
+    const token = await createFleetSession(request, env);
+    const response = json({ ok: true });
+    response.headers.append("Set-Cookie", sessionCookie(request, token));
+    return response;
   }
 
   const authErr = await requireFleetAuth(request, env);
@@ -766,8 +875,45 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
   }
 
+  if (path === "/api/notifications" && request.method === "GET") {
+    return json({ config: publicNotifyConfig(await readNotifyConfig(env.KV)) });
+  }
+
+  if (path === "/api/notifications" && request.method === "POST") {
+    const current = await readNotifyConfig(env.KV);
+    const data = (await request.json().catch(() => ({}))) as Partial<FleetNotifyConfig>;
+    const next: FleetNotifyConfig = {
+      ...current,
+      ...data,
+      events: { ...current.events, ...(data.events || {}) },
+      channels: {
+        webhook: { ...current.channels.webhook, ...(data.channels?.webhook || {}) },
+        telegram: { ...current.channels.telegram, ...(data.channels?.telegram || {}) },
+      },
+    };
+    if (!next.channels.webhook.url && next.channels.webhook.enabled) {
+      return json({ error: "webhook url required" }, 400);
+    }
+    if (!next.channels.webhook.secret) next.channels.webhook.secret = current.channels.webhook.secret;
+    if (!next.channels.telegram.bot_token) next.channels.telegram.bot_token = current.channels.telegram.bot_token;
+    await env.KV.put(KV_NOTIFY, JSON.stringify(next));
+    return json({ ok: true, config: publicNotifyConfig(next) });
+  }
+
+  if (path === "/api/notifications/test" && request.method === "POST") {
+    const config = await readNotifyConfig(env.KV);
+    await notifyFleet(config, "info", "AgentControl Fleet test", `Test notification from ${new URL(request.url).host}`);
+    return json({ ok: true });
+  }
+
+  const healthHistoryMatch = path.match(/^\/api\/fleet\/health\/([^/]+)$/);
+  if (healthHistoryMatch && request.method === "GET") {
+    const raw = await env.KV.get(KV_HEALTH_PREFIX + healthHistoryMatch[1]);
+    return json({ points: raw ? JSON.parse(raw) : [] });
+  }
+
   if (path === "/api/servers" && request.method === "GET") {
-    const servers = await readServers(env.KV);
+    const servers = await readServers(env.KV, env);
     return json({ servers: servers.map(publicServer) });
   }
 
@@ -790,7 +936,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ error: "cannot reach server", detail: err }, 400);
     }
 
-    const servers = await readServers(env.KV);
+    const servers = await readServers(env.KV, env);
     const duplicate = findDuplicateServer(servers, name, baseUrl);
     if (duplicate) {
       return json(
@@ -811,8 +957,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       lastAccessedAt: Date.now(),
     };
     servers.push(entry);
-    await writeServers(env.KV, servers);
-    const refreshed = await refreshFleetServer(env.KV, entry.id, true);
+    await writeServers(env.KV, servers, env);
+    const refreshed = await refreshFleetServer(env.KV, entry.id, true, env);
     if ("error" in refreshed) {
       return json({ server: publicServer(entry), warning: "saved but snapshot refresh failed" });
     }
@@ -822,8 +968,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const deleteMatch = path.match(/^\/api\/servers\/([^/]+)$/);
   if (deleteMatch && request.method === "DELETE") {
     const id = deleteMatch[1];
-    const servers = (await readServers(env.KV)).filter((s) => s.id !== id);
-    await writeServers(env.KV, servers);
+    const servers = (await readServers(env.KV, env)).filter((s) => s.id !== id);
+    await writeServers(env.KV, servers, env);
     await removeServerFromSnapshot(env.KV, id);
     return json({ ok: true });
   }
@@ -832,13 +978,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (pauseMatch && request.method === "POST") {
     const id = pauseMatch[1];
     const data = (await request.json().catch(() => ({}))) as { paused?: boolean };
-    const servers = await readServers(env.KV);
+    const servers = await readServers(env.KV, env);
     const idx = servers.findIndex((s) => s.id === id);
     if (idx < 0) return json({ error: "server not found" }, 404);
     const nextPaused = data.paused !== undefined ? Boolean(data.paused) : !servers[idx].paused;
     servers[idx].paused = nextPaused;
-    await writeServers(env.KV, servers);
-    const refreshed = await refreshFleetServer(env.KV, id, true);
+    await writeServers(env.KV, servers, env);
+    const refreshed = await refreshFleetServer(env.KV, id, true, env);
     if ("error" in refreshed) {
       return json({ ok: true, server: publicServer(servers[idx]) });
     }
@@ -849,16 +995,16 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const data = (await request.json().catch(() => ({}))) as { serverId?: string };
     const serverId = String(data.serverId || "").trim();
     if (!serverId) return json({ error: "serverId required" }, 400);
-    await touchServerAccess(env.KV, serverId);
+    await touchServerAccess(env.KV, serverId, env);
     return json({ ok: true });
   }
 
   if (path === "/api/fleet/snapshot" && request.method === "GET") {
-    return json(await buildFleetSnapshot(env.KV));
+    return json(await buildFleetSnapshot(env.KV, env));
   }
 
   if (path === "/api/fleet/cache" && request.method === "GET") {
-    const cached = await buildFleetSnapshotFromCache(env.KV);
+    const cached = await buildFleetSnapshotFromCache(env.KV, env);
     return json({ ...cached, cached: true });
   }
 
@@ -866,28 +1012,28 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (serverRefreshMatch && request.method === "GET") {
     const serverId = serverRefreshMatch[1];
     const persist = url.searchParams.get("persist") === "1";
-    const result = await refreshFleetServer(env.KV, serverId, persist);
+    const result = await refreshFleetServer(env.KV, serverId, persist, env);
     if ("error" in result) return json(result, 404);
     return json(result);
   }
 
   if (path === "/api/fleet/update-all" && request.method === "POST") {
-    const results = await updateAllPanels(env.KV);
+    const results = await updateAllPanels(env.KV, env);
     return json({ ok: true, results });
   }
 
   if (path === "/api/fleet/proxy/push" && request.method === "POST") {
     const data = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const results = await pushProxyToServers(env.KV, data);
+    const results = await pushProxyToServers(env.KV, data, env);
     return json({ ok: results.every((r) => r.ok), results });
   }
 
   const startMatch = path.match(/^\/api\/fleet\/([^/]+)\/start\/([^/]+)$/);
   if (startMatch && request.method === "POST") {
     const [, serverId, project] = startMatch;
-    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    const server = (await readServers(env.KV, env)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
-    await touchServerAccess(env.KV, serverId);
+    await touchServerAccess(env.KV, serverId, env);
     await touchRecentProject(env.KV, server, decodeURIComponent(project), true);
     const res = await proxyAgent(server, `/api/start/${encodeURIComponent(project)}`, "POST");
     return json(await readJsonSafe(res), res.status);
@@ -896,9 +1042,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const restartMatch = path.match(/^\/api\/fleet\/([^/]+)\/restart\/([^/]+)$/);
   if (restartMatch && request.method === "POST") {
     const [, serverId, project] = restartMatch;
-    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    const server = (await readServers(env.KV, env)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
-    await touchServerAccess(env.KV, serverId);
+    await touchServerAccess(env.KV, serverId, env);
     await touchRecentProject(env.KV, server, decodeURIComponent(project), true);
     const res = await proxyAgent(server, `/api/restart/${encodeURIComponent(project)}`, "POST");
     return json(await readJsonSafe(res), res.status);
@@ -907,9 +1053,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const stopMatch = path.match(/^\/api\/fleet\/([^/]+)\/stop\/([^/]+)$/);
   if (stopMatch && request.method === "POST") {
     const [, serverId, project] = stopMatch;
-    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    const server = (await readServers(env.KV, env)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
-    await touchServerAccess(env.KV, serverId);
+    await touchServerAccess(env.KV, serverId, env);
     await updateRecentProject(env.KV, server, decodeURIComponent(project), { running: false });
     const res = await proxyAgent(server, `/api/stop/${encodeURIComponent(project)}`, "POST");
     return json(await readJsonSafe(res), res.status);
@@ -918,9 +1064,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const touchMatch = path.match(/^\/api\/fleet\/([^/]+)\/touch\/([^/]+)$/);
   if (touchMatch && request.method === "POST") {
     const [, serverId, project] = touchMatch;
-    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    const server = (await readServers(env.KV, env)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
-    await touchServerAccess(env.KV, serverId);
+    await touchServerAccess(env.KV, serverId, env);
     await touchRecentProject(env.KV, server, decodeURIComponent(project));
     await proxyAgent(server, `/api/projects/touch/${encodeURIComponent(project)}`, "POST");
     return json({ ok: true });
@@ -929,7 +1075,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const readyMatch = path.match(/^\/api\/fleet\/([^/]+)\/ready\/([^/]+)$/);
   if (readyMatch && request.method === "GET") {
     const [, serverId, project] = readyMatch;
-    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    const server = (await readServers(env.KV, env)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
     const res = await proxyAgent(server, `/api/ready/${encodeURIComponent(project)}`);
     return json(await readJsonSafe(res), res.status);
@@ -938,7 +1084,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const opencodeInstallMatch = path.match(/^\/api\/fleet\/([^/]+)\/opencode-install$/);
   if (opencodeInstallMatch && (request.method === "GET" || request.method === "POST")) {
     const [, serverId] = opencodeInstallMatch;
-    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    const server = (await readServers(env.KV, env)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
     const res = await proxyAgent(server, "/api/opencode/install", request.method);
     return json(await readJsonSafe(res), res.status);
@@ -948,9 +1094,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (opencodeMatch && request.method === "POST") {
     const [, serverId, projectSegment] = opencodeMatch;
     const project = decodeURIComponent(projectSegment);
-    const server = (await readServers(env.KV)).find((s) => s.id === serverId);
+    const server = (await readServers(env.KV, env)).find((s) => s.id === serverId);
     if (!server) return json({ error: "server not found" }, 404);
-    await touchServerAccess(env.KV, serverId);
+    await touchServerAccess(env.KV, serverId, env);
     await touchRecentProject(env.KV, server, project, true);
     const res = await proxyAgent(
       server,
@@ -994,6 +1140,94 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   return json({ error: "not found" }, 404);
 }
 
+async function scheduledHealthCheck(env: Env): Promise<void> {
+  const config = await readNotifyConfig(env.KV);
+  const servers = (await readServers(env.KV, env)).filter((server) => !server.paused);
+  await Promise.all(
+    servers.map(async (server) => {
+      const stateKey = `${KV_HEALTH_STATE}:${server.id}`;
+      let state: {
+        status?: string;
+        consecutive?: number;
+        notified?: boolean;
+        lastCheck?: number;
+        lastSample?: number;
+      } = {};
+      try {
+        const raw = await env.KV.get(stateKey);
+        state = raw ? JSON.parse(raw) : {};
+      } catch {
+        state = {};
+      }
+      let ok = false;
+      let health: Record<string, unknown> = {};
+      let error = "";
+      try {
+        const res = await proxyAgent(server, "/api/health");
+        ok = res.ok;
+        if (ok) health = (await res.json()) as Record<string, unknown>;
+        else error = `HTTP ${res.status}`;
+      } catch (e) {
+        error = String(e);
+      }
+      const now = Date.now();
+      if (ok) {
+        if (state.status === "down" && state.notified && config.events.recovered) {
+          await notifyFleet(
+            config,
+            "info",
+            `${server.name} recovered`,
+            `${server.name} (${serverUrlFor(server)}) is responding again.`,
+          );
+        }
+        const shouldWrite = state.status !== "ok" || Boolean(state.consecutive) || !state.lastCheck;
+        const shouldSample = !state.lastSample || now - state.lastSample > 3_600_000;
+        state = { ...state, status: "ok", consecutive: 0, notified: false, lastCheck: now };
+        if (shouldSample) {
+          state.lastSample = now;
+          try {
+            const rawHistory = await env.KV.get(KV_HEALTH_PREFIX + server.id);
+            const history = rawHistory ? (JSON.parse(rawHistory) as Array<Record<string, unknown>>) : [];
+            history.push({
+              t: now,
+              status: health.status || "ok",
+              uptime_seconds: health.uptime_seconds ?? null,
+              workers_running: health.workers_running ?? null,
+              disk: (health.disk as { percent?: number } | undefined)?.percent ?? null,
+              cert_days: (health.certificate as { days_left?: number } | undefined)?.days_left ?? null,
+            });
+            await env.KV.put(KV_HEALTH_PREFIX + server.id, JSON.stringify(history.slice(-168)));
+          } catch {
+            /* history is best-effort */
+          }
+        }
+        if (shouldWrite || shouldSample) await env.KV.put(stateKey, JSON.stringify(state));
+      } else {
+        const consecutive = (state.consecutive || 0) + 1;
+        const down = consecutive >= Math.max(1, config.fail_threshold || 2);
+        if (down && !state.notified && config.events.down) {
+          await notifyFleet(
+            config,
+            "critical",
+            `${server.name} is down`,
+            `${server.name} (${serverUrlFor(server)}) failed ${consecutive} checks: ${error || "unreachable"}`,
+          );
+        }
+        await env.KV.put(
+          stateKey,
+          JSON.stringify({
+            ...state,
+            status: down ? "down" : "unknown",
+            consecutive,
+            notified: down ? true : Boolean(state.notified),
+            lastCheck: now,
+          }),
+        );
+      }
+    }),
+  );
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -1028,5 +1262,9 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(scheduledHealthCheck(env));
   },
 };

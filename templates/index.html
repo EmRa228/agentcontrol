@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="ac-hostname" content="{{ hostname }}">
+  <meta name="ac-ip" content="{{ ip }}">
+  <meta name="ac-port" content="{{ port }}">
+  <meta name="ac-scan-root" content="{{ scan_root }}">
+  <meta name="ac-version" content="{{ version.version }}">
   <title>{{ host_label }} · {{ hostname }}{% if ip %} · {{ ip }}{% endif %} | AgentControl</title>
   <style>
     :root {
@@ -165,6 +170,47 @@
     .modal-steps li.done .step-dot { border-color: var(--green); background: rgba(61,214,140,.15); }
     .modal-steps li.error .step-dot { border-color: var(--red); }
     .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .oc-progress {
+      position: fixed; right: 18px; bottom: 18px; z-index: 70;
+      width: min(360px, calc(100vw - 36px)); padding: 12px 14px;
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.45);
+    }
+    @media (max-width: 600px) {
+      .oc-progress { right: 10px; left: 10px; bottom: 10px; width: auto; }
+    }
+    .oc-progress.hidden { display: none; }
+    .oc-progress-head { display: flex; align-items: center; gap: 8px; }
+    .oc-progress-head strong { flex: 1; font-size: .82rem; }
+    .oc-progress-close {
+      border: none; background: transparent; color: var(--muted); font-size: 1.1rem;
+      line-height: 1; cursor: pointer; padding: 0 4px; border-radius: 6px;
+    }
+    .oc-progress-close:hover { color: var(--text); background: rgba(255,255,255,.06); }
+    .oc-progress-text { font-size: .74rem; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+    .oc-progress.error .oc-progress-text { color: var(--red); }
+    .oc-progress-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .oc-progress-actions:empty { display: none; }
+    .oc-progress-bar {
+      margin-top: 9px; height: 4px; border-radius: 999px; overflow: hidden;
+      background: rgba(255,255,255,.08);
+    }
+    .oc-progress-bar span {
+      display: block; height: 100%; width: 38%; border-radius: inherit;
+      background: var(--accent); animation: oc-bar 1.2s ease-in-out infinite;
+    }
+    @keyframes oc-bar {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(320%); }
+    }
+    .oc-progress.done .oc-progress-bar, .oc-progress.error .oc-progress-bar { display: none; }
+    .oc-spinner {
+      width: 15px; height: 15px; flex-shrink: 0; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.18); border-top-color: var(--accent);
+      animation: oc-spin .8s linear infinite;
+    }
+    .oc-progress.done .oc-spinner, .oc-progress.error .oc-spinner { display: none; }
+    @keyframes oc-spin { to { transform: rotate(360deg); } }
     .ctx-item {
       width: 100%; text-align: left; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
       background: #0d1016; color: var(--text); font-size: .82rem; cursor: pointer;
@@ -202,6 +248,20 @@
       color: var(--text); border-radius: 8px; padding: 9px 11px; font-size: .82rem;
     }
     .settings-note { font-size: .68rem; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+    .totp-setup {
+      display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap;
+      margin-top: 10px; padding: 10px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px;
+    }
+    .totp-setup img {
+      flex: 0 0 auto; display: block; width: 168px; height: 168px;
+      padding: 6px; background: #fff; border-radius: 8px;
+    }
+    .totp-setup-body { flex: 1 1 220px; min-width: 200px; }
+    .totp-setup-body input {
+      width: 100%; border: 1px solid var(--border); background: #0d1016;
+      color: var(--text); border-radius: 8px; padding: 9px 11px; font-size: .82rem;
+    }
     .xray-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 8px; margin-top: 8px;
@@ -242,6 +302,87 @@
     .row.removing { opacity: 0; transform: scale(0.98); transition: opacity .15s, transform .15s; }
     .legend { font-size: .62rem; color: var(--muted); margin-top: 4px; }
     .legend i { display: inline-block; width: 10px; height: 2px; margin-right: 3px; vertical-align: middle; }
+    /* --- design tokens, themes, new UI --- */
+    :root[data-theme="light"] {
+      --bg: #f4f6fb; --card: #ffffff; --border: #d8deea; --text: #1b2233;
+      --muted: #5b657a; --accent: #2f6bff; --green: #128a5a; --yellow: #a87500; --red: #c53030;
+      --surface: #eef1f8; --shadow: 0 10px 30px rgba(24,38,74,.10);
+    }
+    :root[data-theme="nord"] {
+      --bg: #2e3440; --card: #3b4252; --border: #4c566a; --text: #eceff4;
+      --muted: #aeb8c8; --accent: #88c0d0; --green: #a3be8c; --yellow: #ebcb8b; --red: #bf616a;
+      --surface: #353c49; --shadow: 0 10px 30px rgba(0,0,0,.30);
+    }
+    :root { --surface: #0f131b; --shadow: 0 10px 30px rgba(0,0,0,.35); }
+    body { transition: background .15s ease, color .15s ease; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .search-input, .toolbar-select {
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 7px 10px; font-size: .78rem; min-height: 32px;
+    }
+    .search-input { min-width: 180px; flex: 1 1 180px; max-width: 320px; }
+    .toolbar-select { max-width: 190px; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .skeleton-list { display: grid; gap: 8px; }
+    .skeleton-row {
+      height: 52px; border-radius: 10px; border: 1px solid var(--border);
+      background: linear-gradient(90deg, var(--card) 25%, var(--surface) 37%, var(--card) 63%);
+      background-size: 400% 100%; animation: shimmer 1.4s ease infinite;
+    }
+    @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+    .empty-state, .error-state {
+      border: 1px dashed var(--border); border-radius: 12px; padding: 26px 18px; text-align: center; color: var(--muted);
+    }
+    .error-state { border-color: rgba(240,113,120,.45); color: var(--red); }
+    .toast-wrap { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 90; max-width: min(360px, 92vw); }
+    .toast {
+      background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+      border-radius: 10px; padding: 10px 12px; font-size: .8rem; box-shadow: var(--shadow);
+      animation: toast-in .18s ease-out;
+    }
+    .toast.error { border-left-color: var(--red); }
+    .toast.success { border-left-color: var(--green); }
+    @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+    #live-indicator.offline { color: var(--red); }
+    .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; vertical-align: middle; }
+    #live-indicator.offline .live-dot { background: var(--red); }
+    .logs-view, .terminal-view {
+      background: #05070b; color: #d7e2f7; border: 1px solid var(--border); border-radius: 10px;
+      padding: 12px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      max-height: 54vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    }
+    .terminal-view { min-height: 320px; max-height: 60vh; outline: none; }
+    .terminal-view:focus { border-color: var(--accent); }
+    .details-body { display: grid; gap: 10px; font-size: .82rem; }
+    .details-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+    .details-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    .details-item b { display: block; font-size: .92rem; }
+    .details-item span { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; }
+    .audit-list { display: grid; gap: 6px; max-height: 50vh; overflow: auto; font-size: .78rem; }
+    .audit-row { display: grid; grid-template-columns: 150px 120px 1fr; gap: 8px; border-bottom: 1px solid var(--border); padding: 6px 0; }
+    .audit-row .muted { color: var(--muted); }
+    .session-list { display: grid; gap: 6px; margin-top: 8px; }
+    .session-row { display: flex; justify-content: space-between; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; font-size: .75rem; align-items: center; }
+    .session-row .meta { color: var(--muted); font-size: .68rem; }
+    .settings-check { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--text); margin: 6px 0; }
+    .settings-check input[type="checkbox"] { width: auto; }
+    .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 14px; margin: 8px 0; }
+    .notify-channel { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-top: 10px; display: grid; gap: 6px; }
+    .notify-channel input[type="text"], .notify-channel input[type="password"], .notify-channel input[type="number"], .notify-channel input:not([type]) { width: 100%; }
+    .token-new {
+      background: var(--surface); border: 1px solid var(--green); color: var(--green);
+      border-radius: 8px; padding: 10px; font: 12px ui-monospace, monospace; word-break: break-all;
+    }
+    .icon { width: 14px; height: 14px; display: inline-block; vertical-align: -2px; stroke: currentColor; fill: none; stroke-width: 2; }
+    .modal-close-x .icon { width: 16px; height: 16px; }
+    @media (max-width: 700px) {
+      body { padding: 12px; }
+      .modal-overlay { align-items: flex-end; padding: 0; }
+      .modal, .modal.modal-wide { max-width: 100%; width: 100%; border-radius: 16px 16px 0 0; max-height: 92vh; }
+      .toolbar { gap: 6px; }
+      .toolbar .btn { flex: 1 1 auto; }
+      .audit-row { grid-template-columns: 1fr; gap: 2px; }
+    }
   </style>
 </head>
 <body>
@@ -254,7 +395,7 @@
         <input id="setup-api-key" type="password" placeholder="crsr_..." autocomplete="off">
         <p>From <a href="https://cursor.com/settings" target="_blank" rel="noopener" style="color:var(--accent)">Cursor Settings → API Keys</a>. Stored on the server only.</p>
       </div>
-      <button class="btn btn-primary" type="button" style="width:100%;margin-top:12px" onclick="submitSetup()">Continue</button>
+      <button class="btn btn-primary" type="button" style="width:100%;margin-top:12px" data-action="submitSetup">Continue</button>
       <p id="setup-error" class="err"></p>
     </div>
   </div>
@@ -272,28 +413,61 @@
     <p id="update-banner" class="update-banner hidden"></p>
 
     <div class="toolbar">
-      <button class="btn btn-primary btn-sm" type="button" onclick="refreshAll()">Refresh</button>
-      <button class="btn btn-ghost btn-sm" type="button" id="panel-update-btn" onclick="checkAndApplyUpdate(true)">Update panel</button>
-      <button class="btn btn-ghost btn-sm" type="button" onclick="openMetricsModal()">Metrics &amp; charts</button>
-      <button class="btn btn-ghost btn-sm" type="button" onclick="openSettingsModal()">Settings</button>
-      <button class="btn btn-ghost btn-sm" type="button" onclick="openProxyModal()">Proxy pool</button>
+      <input id="project-search" class="search-input" type="search" placeholder="Search projects…" autocomplete="off" aria-label="Search projects">
+      <select id="project-filter" class="toolbar-select" aria-label="Filter projects">
+        <option value="all">All projects</option>
+        <option value="running">Running</option>
+        <option value="idle">Idle</option>
+        <option value="starting">Starting (not ready)</option>
+      </select>
+      <select id="project-sort" class="toolbar-select" aria-label="Sort projects">
+        <option value="activity">Last activity</option>
+        <option value="name">Name</option>
+        <option value="status">Status</option>
+      </select>
+      <select id="theme-select" class="toolbar-select" aria-label="Theme">
+        <option value="dark">Theme: Dark</option>
+        <option value="light">Theme: Light</option>
+        <option value="nord">Theme: Nord</option>
+      </select>
+      <button class="btn btn-primary btn-sm" type="button" data-action="refreshAll">Refresh</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="panel-update-btn" data-action="checkAndApplyUpdate" data-arg="1">Update panel</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-action="openMetricsModal">Metrics &amp; charts</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-action="openSettingsModal">Settings</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-action="openProxyModal">Proxy pool</button>
       <span class="pill" id="toolbar-proxy-pill">Proxy: …</span>
       <span class="pill" id="toolbar-cpu-pill">CPU: …</span>
     </div>
 
-    <div class="section-title">Projects — right-click or long-press to hide</div>
-    <div id="list"><p class="loading">Loading projects…</p></div>
+    <div class="section-title">Projects — right-click or long-press for options</div>
+    <div id="list"><div class="skeleton-list" aria-hidden="true"><div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div></div></div>
     <p id="msg"></p>
-    <p id="opencode-msg" role="status" hidden></p>
+    <div id="oc-progress" class="oc-progress hidden" role="status" aria-live="polite">
+      <div class="oc-progress-head">
+        <span class="oc-spinner" id="oc-progress-spinner" aria-hidden="true"></span>
+        <strong id="oc-progress-title">OpenCode</strong>
+        <button class="oc-progress-close" type="button" data-action="hideOpencodeStatus" aria-label="Dismiss">×</button>
+      </div>
+      <div class="oc-progress-text" id="oc-progress-text"></div>
+      <div class="oc-progress-bar" id="oc-progress-bar"><span></span></div>
+      <div class="oc-progress-actions" id="oc-progress-actions"></div>
+    </div>
 
     <div id="metrics-modal" class="modal-overlay hidden" data-modal-closable="1">
       <div class="modal modal-wide">
         <div class="modal-header">
           <h3>Server metrics</h3>
-          <button type="button" class="modal-close-x" onclick="closeMetricsModal()" aria-label="Close">×</button>
+          <select id="chart-range" class="toolbar-select" aria-label="Chart range">
+            <option value="live">Live</option>
+            <option value="1h">1 hour</option>
+            <option value="6h">6 hours</option>
+            <option value="24h">24 hours</option>
+            <option value="7d">7 days</option>
+          </select>
+          <button type="button" class="modal-close-x" data-action="closeMetricsModal" aria-label="Close">×</button>
         </div>
         <div id="server-card">
-      <div class="server-summary" onclick="toggleServerDetails()">
+      <div class="server-summary" data-action="toggleServerDetails">
         <div class="metric" id="metric-cpu">
           <div class="metric-row">
             <div class="metric-info">
@@ -356,7 +530,7 @@
       </div>
     </div>
         <div class="modal-actions" style="margin-top:12px">
-          <button class="btn btn-ghost btn-sm" type="button" onclick="closeMetricsModal()">Close</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-action="closeMetricsModal">Close</button>
         </div>
       </div>
     </div>
@@ -365,14 +539,14 @@
       <div class="modal modal-wide">
         <div class="modal-header">
           <h3>Settings</h3>
-          <button type="button" class="modal-close-x" onclick="closeSettingsModal()" aria-label="Close">×</button>
+          <button type="button" class="modal-close-x" data-action="closeSettingsModal" aria-label="Close">×</button>
         </div>
         <p class="settings-note" style="margin-bottom:10px">API key, default model, and edge bridge for Cursor workers on this server.</p>
         <div class="api-key-block">
           <div class="section-title">Cursor API key</div>
           <div class="api-key-row">
             <input id="settings-api-key" type="password" placeholder="crsr_..." autocomplete="off">
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveApiKey()">Save API key</button>
+            <button class="btn btn-primary btn-sm" type="button" data-action="saveApiKey">Save API key</button>
           </div>
           <div class="api-key-hint" id="settings-api-status">—</div>
           <p class="settings-note">Saved to <code>/etc/agentcontrol/api-key</code>. Stop running workers before changing the key.</p>
@@ -382,22 +556,44 @@
           <div class="section-title">Panel authenticator (TOTP)</div>
           <p class="settings-note">Optional second factor at sign-in. Session cookie lasts 30 days after a successful login.</p>
           <div class="api-key-hint" id="totp-settings-status">—</div>
-          <input id="totp-secret-preview" type="text" readonly placeholder="Secret (after rotate)" style="font-size:.72rem;margin-top:6px">
+          <div id="totp-setup" class="totp-setup" style="display:none">
+            <img id="totp-qr" alt="Authenticator QR code" width="168" height="168" style="display:none">
+            <div class="totp-setup-body">
+              <p class="settings-note" style="margin:0 0 6px">Scan the QR code with Google Authenticator, 1Password, Aegis or any TOTP app. You can also add the key manually:</p>
+              <input id="totp-secret-preview" type="text" readonly placeholder="Authenticator secret" autocomplete="off" spellcheck="false" style="font-size:.72rem;font-family:monospace">
+              <div class="settings-row" style="margin-top:8px">
+                <input id="totp-enable-code" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code">
+                <button class="btn btn-primary btn-sm" type="button" data-action="enableTotpFromSettings">Verify &amp; enable</button>
+              </div>
+              <p id="totp-setup-msg" class="err" style="margin:6px 0 0"></p>
+            </div>
+          </div>
           <div class="settings-row" style="margin-top:8px">
-            <input id="totp-enable-code" type="text" inputmode="numeric" placeholder="6-digit code to enable" autocomplete="off">
-            <button class="btn btn-primary btn-sm" type="button" onclick="enableTotpFromSettings()">Enable</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="rotateTotpSecret()">Rotate secret</button>
-            <button class="btn btn-danger btn-sm" type="button" onclick="disableTotp()">Disable</button>
+            <button id="totp-begin-btn" class="btn btn-primary btn-sm" type="button" data-action="startTotpSetup" data-arg="0">Set up authenticator</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="startTotpSetup" data-arg="1">New secret</button>
+            <button class="btn btn-danger btn-sm" type="button" data-action="disableTotp">Disable</button>
           </div>
         </div>
         <div class="settings-block">
           <div class="section-title">Sessions</div>
-          <p class="settings-note">Browser sessions are stored server-side, so a device stays signed in after 2FA until it is revoked. Revoke everything here or from Fleet.</p>
+          <p class="settings-note">Browser sessions are stored server-side, so a device stays signed in after 2FA until it is revoked.</p>
           <div class="api-key-hint" id="sessions-status">—</div>
+          <div id="sessions-list" class="session-list"></div>
           <div class="settings-row" style="margin-top:8px">
-            <button class="btn btn-danger btn-sm" type="button" onclick="revokeAllSessions()">Sign out all devices</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="signOutCurrent()">Sign out</button>
+            <button class="btn btn-danger btn-sm" type="button" data-action="revokeAllSessions">Sign out all devices</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="signOutCurrent">Sign out</button>
           </div>
+        </div>
+        <div class="settings-block">
+          <div class="section-title">Security &amp; operations</div>
+          <div class="settings-row">
+            <button class="btn btn-ghost btn-sm" type="button" data-action="openNotificationsModal">Alerts</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="openAuditModal">Audit log</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="openTokensModal">API tokens</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="openHiddenModal">Hidden projects</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="openTerminal">Terminal</button>
+          </div>
+          <div class="api-key-hint" id="security-status">—</div>
         </div>
         <div class="settings-block">
           <div class="section-title">OpenCode (shared serve)</div>
@@ -411,17 +607,33 @@
             <input id="oc-remote-url" type="url" placeholder="Remote UI URL (optional — OpenCode cloud / tunnel)" autocomplete="off">
           </div>
           <div class="xray-actions">
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveOpencodeSettings()">Save OpenCode keys</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="refreshOpencodeRemote()">Refresh console URL</button>
+            <button class="btn btn-primary btn-sm" type="button" data-action="saveOpencodeSettings">Save OpenCode keys</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="refreshOpencodeRemote">Refresh console URL</button>
           </div>
           <div class="api-key-hint" id="opencode-save-msg"></div>
+          <div class="settings-row" style="margin-top:10px">
+            <button class="btn btn-ghost btn-sm" type="button" data-action="checkOpencodeUpdate">Check OpenCode update</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="updateOpencode">Update OpenCode</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="restartOpencode">Restart OpenCode</button>
+          </div>
+          <div class="api-key-hint" id="opencode-version-status">—</div>
+        </div>
+        <div class="settings-block">
+          <div class="section-title">Cursor agent CLI</div>
+          <p class="settings-note">The installer only adds the agent CLI when missing; use this to refresh it.</p>
+          <div class="api-key-hint" id="agent-version-status">—</div>
+          <div class="settings-row">
+            <button class="btn btn-ghost btn-sm" type="button" data-action="refreshAgentStatus">Check version</button>
+            <button class="btn btn-primary btn-sm" type="button" data-action="updateAgent">Update agent CLI</button>
+          </div>
+          <pre class="xray-log hidden" id="agent-update-log"></pre>
         </div>
         <div class="settings-block">
           <div class="section-title">Default agent model</div>
           <div class="settings-note">Used in the Cursor redirect after Start.</div>
           <div class="settings-row">
             <select id="settings-model"><option value="">Loading models…</option></select>
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveDefaultModel()">Save model</button>
+            <button class="btn btn-primary btn-sm" type="button" data-action="saveDefaultModel">Save model</button>
           </div>
           <div class="api-key-hint" id="settings-model-status">—</div>
         </div>
@@ -442,13 +654,13 @@
             <div class="full"><label>Full endpoint URL (optional override)</label><input id="bridge-endpoint" placeholder="https://api2.cursor.sh:33443"><p class="settings-note">Use <strong>https://api2.cursor.sh:PORT</strong> only — not <code>http://EDGE_IP</code>. The edge port is TLS passthrough, not HTTP.</p></div>
           </div>
           <div class="xray-actions">
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveBridgeSettings()">Save bridge</button>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="testBridgeConnection()">Test Cursor connection</button>
+            <button class="btn btn-primary btn-sm" type="button" data-action="saveBridgeSettings">Save bridge</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-action="testBridgeConnection">Test Cursor connection</button>
           </div>
           <div class="api-key-hint" id="bridge-settings-status">—</div>
           <pre class="xray-log hidden" id="bridge-test-log"></pre>
         </div>
-        <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" onclick="closeSettingsModal()">Close</button></div>
+        <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" data-action="closeSettingsModal">Close</button></div>
       </div>
     </div>
 
@@ -456,7 +668,7 @@
       <div class="modal modal-wide">
         <div class="modal-header">
           <h3>Proxy pool</h3>
-          <button type="button" class="modal-close-x" onclick="closeProxyModal()" aria-label="Close">×</button>
+          <button type="button" class="modal-close-x" data-action="closeProxyModal" aria-label="Close">×</button>
         </div>
         <p class="settings-note">All Cursor traffic uses the local xray HTTP proxy when enabled — no direct connection to Cursor.</p>
         <div class="xray-mode">
@@ -472,23 +684,178 @@
         </div>
         <div class="section-title">Share links</div>
         <textarea id="pool-links-input" placeholder="One vless/trojan/vmess/ss link per line"></textarea>
-        <button class="btn btn-ghost btn-sm" type="button" style="margin-top:8px" onclick="addPoolLinks()">Add links</button>
+        <button class="btn btn-ghost btn-sm" type="button" style="margin-top:8px" data-action="addPoolLinks">Add links</button>
         <div class="section-title">Subscriptions</div>
         <input id="pool-sub-url" placeholder="https://subscription-url…">
-        <button class="btn btn-ghost btn-sm" type="button" style="margin-top:8px" onclick="addPoolSubscription()">Add subscription</button>
+        <button class="btn btn-ghost btn-sm" type="button" style="margin-top:8px" data-action="addPoolSubscription">Add subscription</button>
         <div class="pool-list" id="pool-sub-list" style="margin-top:8px"></div>
         <div class="xray-actions">
-          <button class="btn btn-primary btn-sm" type="button" onclick="testPoolProxies()">Test all</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="ensurePoolProxy()">Ensure / failover now</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="refreshPoolSubscriptions()">Refresh subscriptions</button>
+          <button class="btn btn-primary btn-sm" type="button" data-action="testPoolProxies">Test all</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-action="ensurePoolProxy">Ensure / failover now</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-action="refreshPoolSubscriptions">Refresh subscriptions</button>
         </div>
         <div class="section-title">Proxies</div>
         <div class="pool-list" id="pool-proxy-list"></div>
         <div class="xray-status-row" id="pool-pills"></div>
         <div class="api-key-hint" id="pool-status-text">—</div>
         <pre class="xray-log hidden" id="pool-log"></pre>
-        <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" onclick="closeProxyModal()">Close</button></div>
+        <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" data-action="closeProxyModal">Close</button></div>
       </div>
+    </div>
+  </div>
+
+  <div id="logs-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3 id="logs-title">Logs</h3>
+        <button class="modal-close-x" type="button" data-action="closeLogsModal" aria-label="Close">×</button>
+      </div>
+      <div class="settings-row">
+        <input id="logs-search" placeholder="Filter lines…" autocomplete="off">
+        <button class="btn btn-ghost btn-sm" type="button" data-action="refreshLogs">Refresh</button>
+        <a class="btn btn-ghost btn-sm" id="logs-download" href="#" download>Download</a>
+      </div>
+      <p class="settings-note" id="logs-meta">—</p>
+      <pre class="logs-view" id="logs-view" tabindex="0" aria-live="polite"></pre>
+      <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" data-action="closeLogsModal">Close</button></div>
+    </div>
+  </div>
+
+  <div id="details-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="details-title">Project details</h3>
+        <button class="modal-close-x" type="button" data-action="closeDetailsModal" aria-label="Close">×</button>
+      </div>
+      <div id="details-body" class="details-body">Loading…</div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" type="button" data-action="refreshDetails">Refresh</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-action="closeDetailsModal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="audit-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>Audit log</h3>
+        <button class="modal-close-x" type="button" data-action="closeAuditModal" aria-label="Close">×</button>
+      </div>
+      <p class="settings-note">Login, worker, settings, token and terminal actions with actor, IP and time.</p>
+      <div id="audit-list" class="audit-list">Loading…</div>
+      <div class="modal-actions">
+        <a class="btn btn-ghost btn-sm" href="/api/audit/export.csv">Export CSV</a>
+        <button class="btn btn-ghost btn-sm" type="button" data-action="refreshAudit">Refresh</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-action="closeAuditModal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tokens-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>API tokens</h3>
+        <button class="modal-close-x" type="button" data-action="closeTokensModal" aria-label="Close">×</button>
+      </div>
+      <p class="settings-note">Use tokens instead of the panel password for Fleet or automation. <strong>read</strong> can view, <strong>ops</strong> can start/stop workers, <strong>admin</strong> can change settings.</p>
+      <div class="settings-row">
+        <input id="token-name" placeholder="Token name (e.g. fleet-iran-1)">
+        <select id="token-role">
+          <option value="read">read</option>
+          <option value="ops" selected>ops</option>
+          <option value="admin">admin</option>
+        </select>
+        <button class="btn btn-primary btn-sm" type="button" data-action="createToken">Create</button>
+      </div>
+      <p id="token-new" class="token-new hidden"></p>
+      <div id="tokens-list" class="audit-list">Loading…</div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" type="button" data-action="closeTokensModal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="notifications-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>Alerts &amp; notifications</h3>
+        <button class="modal-close-x" type="button" data-action="closeNotificationsModal" aria-label="Close">×</button>
+      </div>
+      <p class="settings-note">Alerts for worker stops, disk, certificate expiry and updates. Each channel has its own switch.</p>
+      <label class="settings-check"><input type="checkbox" id="notify-enabled"> Enable notifications</label>
+      <div class="settings-row">
+        <label class="settings-check">Minimum severity
+          <select id="notify-severity">
+            <option value="info">Info</option>
+            <option value="warning">Warning</option>
+            <option value="critical">Critical</option>
+          </select>
+        </label>
+        <label class="settings-check">Repeat after (seconds)
+          <input id="notify-throttle" type="number" min="60" step="60" value="900">
+        </label>
+      </div>
+      <div class="settings-grid" id="notify-events"></div>
+      <div class="notify-channel">
+        <label class="settings-check"><input type="checkbox" id="notify-telegram-enabled"> Telegram</label>
+        <input id="notify-telegram-token" type="password" placeholder="Bot token" autocomplete="off">
+        <input id="notify-telegram-chat" placeholder="Chat ID">
+        <button class="btn btn-ghost btn-sm" type="button" data-action="testNotifyChannel" data-arg="telegram">Test</button>
+      </div>
+      <div class="notify-channel">
+        <label class="settings-check"><input type="checkbox" id="notify-webhook-enabled"> Webhook</label>
+        <input id="notify-webhook-url" placeholder="https://hooks.example.com/…">
+        <input id="notify-webhook-secret" type="password" placeholder="Signing secret (optional)" autocomplete="off">
+        <button class="btn btn-ghost btn-sm" type="button" data-action="testNotifyChannel" data-arg="webhook">Test</button>
+      </div>
+      <div class="notify-channel">
+        <label class="settings-check"><input type="checkbox" id="notify-email-enabled"> Email</label>
+        <div class="settings-row">
+          <input id="notify-email-host" placeholder="SMTP host">
+          <input id="notify-email-port" type="number" placeholder="587" value="587">
+        </div>
+        <div class="settings-row">
+          <input id="notify-email-user" placeholder="SMTP username">
+          <input id="notify-email-pass" type="password" placeholder="SMTP password" autocomplete="off">
+        </div>
+        <input id="notify-email-from" placeholder="From address">
+        <input id="notify-email-to" placeholder="Recipients, comma separated">
+        <button class="btn btn-ghost btn-sm" type="button" data-action="testNotifyChannel" data-arg="email">Test</button>
+      </div>
+      <div class="notify-channel">
+        <label class="settings-check"><input type="checkbox" id="notify-ntfy-enabled"> ntfy</label>
+        <input id="notify-ntfy-url" placeholder="https://ntfy.sh">
+        <input id="notify-ntfy-topic" placeholder="Topic">
+        <button class="btn btn-ghost btn-sm" type="button" data-action="testNotifyChannel" data-arg="ntfy">Test</button>
+      </div>
+      <p id="notify-msg" class="err"></p>
+      <div class="modal-actions">
+        <button class="btn btn-primary btn-sm" type="button" data-action="saveNotifications">Save</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-action="closeNotificationsModal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="hidden-modal" class="modal-overlay hidden" data-modal-closable="1">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Hidden projects</h3>
+        <button class="modal-close-x" type="button" data-action="closeHiddenModal" aria-label="Close">×</button>
+      </div>
+      <div id="hidden-list">Loading…</div>
+      <div class="modal-actions"><button class="btn btn-ghost btn-sm" type="button" data-action="closeHiddenModal">Close</button></div>
+    </div>
+  </div>
+
+  <div id="terminal-modal" class="modal-overlay hidden" data-modal-closable="1" data-modal-guard-busy="1">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>Terminal</h3>
+        <button class="modal-close-x" type="button" data-action="closeTerminal" aria-label="Close">×</button>
+      </div>
+      <p class="settings-note">Runs as the panel service user on this host. Keep it open only while needed.</p>
+      <pre class="terminal-view" id="terminal-view" tabindex="0"></pre>
+      <div class="modal-actions"><button class="btn btn-danger btn-sm" type="button" data-action="closeTerminal">Disconnect</button></div>
     </div>
   </div>
 
@@ -496,7 +863,7 @@
     <div class="modal modal-wide">
       <div class="modal-header">
         <h3 id="start-modal-title">Starting worker</h3>
-        <button type="button" class="modal-close-x" onclick="closeStartModal()" aria-label="Close">×</button>
+        <button type="button" class="modal-close-x" data-action="closeStartModal" aria-label="Close">×</button>
       </div>
       <ul class="modal-steps" id="start-steps">
         <li data-step="request"><span class="step-dot">1</span>Send start request</li>
@@ -507,8 +874,8 @@
       <p id="start-modal-msg" class="err" style="min-height:1.2em"></p>
       <pre id="start-modal-log" class="xray-log hidden"></pre>
       <div class="modal-actions">
-        <button type="button" class="btn btn-ghost btn-sm hidden" id="start-modal-open" onclick="openCursorFromModal()">Open Cursor</button>
-        <button type="button" class="btn btn-ghost btn-sm hidden" id="start-modal-close" onclick="closeStartModal()">Close</button>
+        <button type="button" class="btn btn-ghost btn-sm hidden" id="start-modal-open" data-action="openCursorFromModal">Open Cursor</button>
+        <button type="button" class="btn btn-ghost btn-sm hidden" id="start-modal-close" data-action="closeStartModal">Close</button>
       </div>
     </div>
   </div>
@@ -517,1259 +884,16 @@
     <div class="modal">
       <div class="modal-header">
         <h3 id="ctx-modal-title">Project</h3>
-        <button type="button" class="modal-close-x" onclick="closeCtxModal()" aria-label="Close">×</button>
+        <button type="button" class="modal-close-x" data-action="closeCtxModal" aria-label="Close">×</button>
       </div>
       <p style="font-size:.78rem;color:var(--muted);margin-bottom:12px" id="ctx-modal-hint">Long-press or right-click a project for options.</p>
       <button type="button" class="ctx-item danger" id="ctx-hide-btn">Hide from list</button>
       <div class="modal-actions" style="margin-top:12px">
-        <button type="button" class="btn btn-ghost btn-sm" onclick="closeCtxModal()">Cancel</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="closeCtxModal">Cancel</button>
       </div>
     </div>
   </div>
 
-  <script>
-    // Sessions are stored in an HttpOnly cookie; never keep the password client-side.
-    localStorage.removeItem('agentcontrol_auth_' + location.host);
-    const list = document.getElementById('list');
-    const msg = document.getElementById('msg');
-    let busy = false;
-    let setupNeedsPassword = false;
-    let setupNeedsApiKey = false;
-    let refreshTimer = null;
-    let history = [];
-    let cpuCores = 1;
-    let netPeak = 1024;
-    let modalOpen = false;
-    let expandedDocker = new Set();
-    let lastFoldersJson = '';
-    let ctxProjectName = null;
-    let longPressTimer = null;
-    let longPressRow = null;
-
-    async function apiFetch(url, opts = {}) {
-      opts.headers = { ...(opts.headers || {}) };
-      opts.credentials = opts.credentials || 'same-origin';
-      const res = await fetch(url, opts);
-      if (res.status === 401) { location.replace('/'); throw new Error('unauthorized'); }
-      if (res.status === 403) {
-        const data = await res.json().catch(() => ({}));
-        if (data.needs_password) { showSetup(); throw new Error('setup'); }
-        throw new Error('forbidden');
-      }
-      return res;
-    }
-
-    function showSetup() {
-      document.getElementById('setup-gate').classList.remove('hidden');
-      document.getElementById('app').classList.add('hidden');
-    }
-
-
-    function showApp() {
-      document.getElementById('setup-gate').classList.add('hidden');
-      document.getElementById('app').classList.remove('hidden');
-      if (!refreshTimer) refreshTimer = setInterval(refreshAll, 2000);
-      loadSettingsPanel();
-      refreshAll();
-      checkAndApplyUpdate(false);
-      const url = new URL(location.href);
-      const project = url.searchParams.get('opencode');
-      if (project) {
-        url.searchParams.delete('opencode');
-        window.history.replaceState(null, '', url);
-        openOpencodeProject(project, true);
-      }
-    }
-
-    function updatePageTitle(sys) {
-      const host = window.location.hostname || '';
-      const hn = sys?.hostname || '{{ hostname }}';
-      const ip = sys?.ip || '{{ ip }}';
-      const workers = sys?.panel?.running_workers ?? 0;
-      const parts = [host, hn];
-      if (ip) parts.push(ip);
-      parts.push(workers + 'w');
-      document.title = parts.join(' · ') + ' | AgentControl';
-    }
-
-    async function checkAndApplyUpdate(apply = false) {
-      const banner = document.getElementById('update-banner');
-      const btn = document.getElementById('panel-update-btn');
-      try {
-        const res = await apiFetch('/api/update/check');
-        const data = await res.json();
-        const localV = data.local?.version || '?';
-        const remoteV = data.remote?.version || '';
-        if (btn) {
-          btn.textContent = data.update_available ? `Update v${localV}→${remoteV}` : `Panel v${localV}`;
-        }
-        if (!data.update_available) {
-          if (apply) {
-            banner.classList.remove('hidden');
-            banner.textContent = `Panel is up to date (v${localV}).`;
-            setTimeout(() => banner.classList.add('hidden'), 4000);
-          }
-          return;
-        }
-        banner.classList.remove('hidden');
-        if (!apply) {
-          banner.innerHTML = `Panel v${localV} → v${remoteV} available. <button class="btn btn-sm btn-primary" type="button" onclick="checkAndApplyUpdate(true)">Update now</button>`;
-          return;
-        }
-        if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Updating…'; }
-        banner.textContent = remoteV
-          ? `Downloading v${remoteV} from GitHub and updating…`
-          : 'Checking GitHub for updates…';
-        await apiFetch('/api/update/apply', { method: 'POST' });
-        const start = Date.now();
-        while (Date.now() - start < 180000) {
-          await new Promise(r => setTimeout(r, 3000));
-          try {
-            const health = await fetch('/health');
-            if (health.ok) {
-              const h = await health.json();
-              if (h.version === remoteV) {
-                banner.textContent = `Updated to v${remoteV} — reloading…`;
-                location.reload();
-                return;
-              }
-            }
-          } catch (_) {}
-          try {
-            const st = await apiFetch('/api/update/status');
-            const status = await st.json();
-            const lastLine = (status.log_tail || '').trim().split('\n').pop();
-            if (lastLine) banner.textContent = `Updating… ${lastLine}`;
-            if (!status.in_progress && status.local?.version === remoteV) {
-              location.reload();
-              return;
-            }
-          } catch (_) {}
-        }
-        banner.textContent = 'Update is taking longer than expected — check /var/lib/agentcontrol/update.log';
-      } catch (e) {
-        if (e.message !== 'unauthorized' && e.message !== 'setup') {
-          banner.classList.remove('hidden');
-          banner.textContent = 'Update check failed: ' + (e.message || 'unknown');
-        }
-      } finally {
-        if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
-      }
-    }
-
-    async function submitSetup() {
-      const errEl = document.getElementById('setup-error');
-      errEl.textContent = '';
-      try {
-        const key = document.getElementById('setup-api-key').value.trim();
-        const res = await apiFetch('/api/setup/api-key', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ api_key: key }),
-        });
-        const data = await res.json();
-        if (!res.ok) { errEl.textContent = data.error || 'Failed'; return; }
-        showApp();
-      } catch (e) {
-        if (e.message !== 'unauthorized') errEl.textContent = 'Setup failed';
-      }
-    }
-
-
-    async function boot() {
-      const st = await (await apiFetch('/api/setup/status')).json();
-      if (st.needs_api_key) { showSetup(); return; }
-      showApp();
-    }
-
-    function healthLevel(pct, loadMode) {
-      if (loadMode) {
-        if (pct >= 100) return 'bad';
-        if (pct >= 70) return 'warn';
-        return 'ok';
-      }
-      if (pct >= 90) return 'bad';
-      if (pct >= 75) return 'warn';
-      return 'ok';
-    }
-
-    function statusIcon(level) {
-      return level === 'bad' ? '✕' : level === 'warn' ? '!' : '✓';
-    }
-
-    function applyStatus(metricId, statusId, level) {
-      const card = document.getElementById(metricId);
-      const st = document.getElementById(statusId);
-      if (card) card.className = 'metric ' + level;
-      if (st) { st.className = 'status ' + level; st.textContent = statusIcon(level); }
-    }
-
-    function pctClass(p) { return p >= 90 ? 'bad' : p >= 75 ? 'warn' : ''; }
-
-    function drawGrid(ctx, w, h, maxY, percentMode) {
-      ctx.strokeStyle = 'rgba(139,147,167,.15)';
-      ctx.lineWidth = 1;
-      if (percentMode) {
-        [0.5, 1].forEach(frac => {
-          const y = h - 2 - frac * (h - 4);
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(w, y);
-          ctx.stroke();
-        });
-      }
-    }
-
-    function plotLine(ctx, values, w, h, max, color, dashed) {
-      if (!values.length) return;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      if (dashed) ctx.setLineDash([3, 2]); else ctx.setLineDash([]);
-      ctx.beginPath();
-      values.forEach((v, i) => {
-        const x = (i / Math.max(values.length - 1, 1)) * (w - 2) + 1;
-        const y = h - 2 - (Math.min(v, max) / max) * (h - 4);
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      });
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    function drawSparkline(canvasId, series, opts = {}) {
-      const c = document.getElementById(canvasId);
-      if (!c) return;
-      const ctx = c.getContext('2d');
-      const w = c.width, h = c.height;
-      ctx.clearRect(0, 0, w, h);
-      const max = opts.max ?? 100;
-      drawGrid(ctx, w, h, max, opts.percent !== false);
-      const list = Array.isArray(series[0]) ? series : [series];
-      const colors = opts.colors || ['#5b8cff'];
-      const dashed = opts.dashed || [];
-      list.forEach((values, idx) => plotLine(ctx, values, w, h, max, colors[idx] || colors[0], dashed[idx]));
-    }
-
-    function drawChart(canvasId, series, opts = {}) {
-      const c = document.getElementById(canvasId);
-      if (!c) return;
-      const ctx = c.getContext('2d');
-      const w = c.width, h = c.height;
-      ctx.clearRect(0, 0, w, h);
-      const max = opts.max ?? 100;
-      drawGrid(ctx, w, h, max, opts.percent !== false);
-      const list = Array.isArray(series[0]) ? series : [series];
-      const colors = opts.colors || ['#5b8cff'];
-      const dashed = opts.dashed || [];
-      list.forEach((values, idx) => {
-        if (!values.length) return;
-        const color = colors[idx] || colors[0];
-        if (!dashed[idx]) {
-          ctx.fillStyle = color + '22';
-          ctx.beginPath();
-          values.forEach((v, i) => {
-            const x = (i / Math.max(values.length - 1, 1)) * (w - 4) + 2;
-            const y = h - 4 - (Math.min(v, max) / max) * (h - 8);
-            i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-          });
-          ctx.lineTo(w - 2, h - 2);
-          ctx.lineTo(2, h - 2);
-          ctx.closePath();
-          ctx.fill();
-        }
-        plotLine(ctx, values, w, h, max, color, dashed[idx]);
-      });
-    }
-
-    function netMax(values) {
-      const peak = values.length ? Math.max(...values) : 0;
-      return Math.max(peak * 1.2, 1024);
-    }
-
-    function renderShareBars(cpuShare, memShare) {
-      return `<div class="share-bars">
-        <div class="share-row"><span>CPU</span><div class="bar"><i class="${pctClass(cpuShare)}" style="width:${Math.min(cpuShare,100)}%"></i></div><span class="pct">${cpuShare.toFixed(1)}%</span></div>
-        <div class="share-row"><span>RAM</span><div class="bar"><i class="${pctClass(memShare)}" style="width:${Math.min(memShare,100)}%;background:var(--green)"></i></div><span class="pct">${memShare.toFixed(1)}%</span></div>
-      </div>`;
-    }
-
-    function renderDockerGroups(docker) {
-      if (!docker.available) return '<div class="full" style="color:var(--muted)">Docker not installed</div>';
-      const groups = docker.groups || [];
-      if (!groups.length) return '<div class="full" style="color:var(--muted)">No running containers</div>';
-      const totals = docker.totals || {};
-      const head = `<div class="full docker-totals">Docker total: <strong>${(totals.cpu_percent||0).toFixed(1)}% CPU</strong> · <strong>${totals.mem_human||'0 B'} RAM</strong> — shares below are % of all Docker usage</div>`;
-      const body = groups.map(g => {
-        const open = expandedDocker.has(g.id) ? ' open' : '';
-        const chev = expandedDocker.has(g.id) ? '▾' : '▸';
-        const kind = g.type === 'compose' ? `compose · ${g.container_count} containers` : 'standalone';
-        const items = (g.containers || []).map(c => `
-          <div class="docker-item">
-            <div class="docker-item-name">${esc(c.service || c.name)}</div>
-            ${renderShareBars(c.cpu_share || 0, c.mem_share || 0)}
-            <div style="font-size:.62rem;color:var(--muted);margin-top:4px">${c.cpu_percent.toFixed(1)}% host CPU · ${c.mem_usage}</div>
-          </div>`).join('');
-        return `<div class="docker-group${open}" data-docker-group="${esc(g.id)}">
-          <div class="docker-group-head" data-docker-toggle="${esc(g.id)}">
-            <div>
-              <div class="docker-group-title">${esc(g.label)} <span class="docker-group-chevron">${chev}</span></div>
-              <div class="docker-group-sub">${kind}</div>
-              ${renderShareBars(g.cpu_share || 0, g.mem_share || 0)}
-            </div>
-            <div class="docker-group-pct"><strong>${g.cpu_share.toFixed(1)}%</strong> CPU<br><strong>${g.mem_share.toFixed(1)}%</strong> RAM</div>
-          </div>
-          <div class="docker-group-body">${items}</div>
-        </div>`;
-      }).join('');
-      return `<div class="full docker-list">${head}${body}</div>`;
-    }
-
-    function toggleDockerGroup(id) {
-      if (expandedDocker.has(id)) expandedDocker.delete(id); else expandedDocker.add(id);
-      document.querySelectorAll('.docker-group').forEach(el => {
-        const gid = el.dataset.dockerGroup;
-        const open = expandedDocker.has(gid);
-        el.classList.toggle('open', open);
-        const chev = el.querySelector('.docker-group-chevron');
-        if (chev) chev.textContent = open ? '▾' : '▸';
-      });
-    }
-
-    function renderSystem(s) {
-      cpuCores = s.cpu.cores;
-      const loadPct = s.cpu.load_percent;
-      const cpuLvl = healthLevel(Math.max(s.cpu.percent, loadPct), true);
-      const ramLvl = healthLevel(s.memory.percent, false);
-      const diskLvl = healthLevel(s.disk_root.percent, false);
-      const swapPct = s.memory.swap_percent;
-      const swapLvl = swapPct != null ? healthLevel(swapPct, false) : 'ok';
-
-      applyStatus('metric-cpu', 'st-cpu', cpuLvl);
-      applyStatus('metric-ram', 'st-ram', ramLvl);
-      applyStatus('metric-disk', 'st-disk', diskLvl);
-      applyStatus('metric-swap', 'st-swap', swapLvl);
-
-      document.getElementById('m-cpu-line').innerHTML =
-        `${s.cpu.percent}% <span class="dim">· ${s.cpu.cores}c · load ${loadPct}%</span>`;
-      document.getElementById('m-ram-line').innerHTML =
-        `${s.memory.percent}% <span class="dim">· ${s.memory.used_human}/${s.memory.total_human}</span>`;
-      document.getElementById('m-disk-line').innerHTML =
-        `${s.disk_root.percent}% <span class="dim">· ${s.disk_root.used_human}/${s.disk_root.total_human}</span>`;
-      document.getElementById('m-swap-line').innerHTML = swapPct != null
-        ? `${swapPct}% <span class="dim">· ${s.memory.swap_used_human || '—'} used</span>`
-        : `<span class="dim">none</span>`;
-      document.getElementById('m-net-line').innerHTML =
-        `↓${s.network.rx_rate_human} <span class="dim">↑${s.network.tx_rate_human}</span>`;
-
-      const cpuHist = history.map(p => p.cpu);
-      const loadHist = history.map(p => p.load_pct ?? 0);
-      const ramHist = history.map(p => p.ram);
-      const diskHist = history.map(p => p.disk);
-      const swapHist = history.map(p => p.swap ?? 0);
-      const netHist = history.map(p => p.net ?? 0);
-      netPeak = netMax(netHist);
-
-      drawSparkline('spark-cpu', [cpuHist.slice(-30), loadHist.slice(-30)], {
-        max: 100, percent: true, colors: ['#5b8cff', '#f0a060'], dashed: [false, true],
-      });
-      drawSparkline('spark-ram', ramHist.slice(-30), { max: 100, percent: true, colors: ['#3dd68c'] });
-      drawSparkline('spark-disk', diskHist.slice(-30), { max: 100, percent: true, colors: ['#e8c468'] });
-      drawSparkline('spark-swap', swapHist.slice(-30), { max: 100, percent: true, colors: ['#c678dd'] });
-      drawSparkline('spark-net', netHist.slice(-30), { max: netPeak, percent: false, colors: ['#9b8cff'] });
-
-      drawChart('chart-cpu', [cpuHist, loadHist], {
-        max: 100, percent: true, colors: ['#5b8cff', '#f0a060'], dashed: [false, true],
-      });
-      drawChart('chart-ram', ramHist, { max: 100, percent: true, colors: ['#3dd68c'] });
-      drawChart('chart-disk', diskHist, { max: 100, percent: true, colors: ['#e8c468'] });
-      drawChart('chart-swap', swapHist, { max: 100, percent: true, colors: ['#c678dd'] });
-      drawChart('chart-net', netHist, { max: netPeak, percent: false, colors: ['#9b8cff'] });
-
-      const cpuPill = document.getElementById('toolbar-cpu-pill');
-      if (cpuPill) cpuPill.textContent = `CPU ${s.cpu.percent}% · RAM ${s.memory.percent}%`;
-
-      const dockerSummary = s.docker.available
-        ? `${s.docker.running} running / ${s.docker.total} total · v${s.docker.version || '?'}`
-        : 'Docker not installed';
-
-      document.getElementById('server-detail-grid').innerHTML = `
-        <div class="full"><strong>${s.hostname}</strong> · ${s.ip}</div>
-        <div class="full">${s.os} · kernel ${s.kernel}</div>
-        <div><span>Uptime:</span> ${s.uptime_human}</div>
-        <div><span>Load:</span> ${s.cpu.load_1} / ${s.cpu.load_5} / ${s.cpu.load_15} (${loadPct}% of ${s.cpu.cores} cores)</div>
-        <div class="full"><span>Network:</span> ↓ ${s.network.rx_rate_human} · ↑ ${s.network.tx_rate_human}</div>
-        <div class="full"><span>Disk /:</span> ${s.disk_root.used_human} / ${s.disk_root.total_human} (${s.disk_root.free_human} free)</div>
-        ${s.disk_scan_root ? `<div class="full"><span>Disk ${s.panel.scan_root}:</span> ${s.disk_scan_root.used_human} / ${s.disk_scan_root.total_human}</div>` : ''}
-        <div><span>Workers:</span> ${s.panel.running_workers} active</div>
-        <div><span>Swap:</span> ${swapPct != null ? swapPct + '% · ' + (s.memory.swap_used_human || '—') : 'none'}</div>
-        <div><span>Agent CLI:</span> ${s.agent.version || 'not installed'}</div>
-        <div class="full section-title" style="margin-top:8px">Docker · ${dockerSummary}</div>
-        ${renderDockerGroups(s.docker)}
-        <div class="full" style="color:var(--muted);font-size:.72rem;margin-top:6px">History: ${history.length} samples (~${Math.round(history.length * 2 / 60)} min) · refreshes every 2s</div>`;
-    }
-
-    function openMetricsModal() {
-      document.getElementById('metrics-modal').classList.remove('hidden');
-      document.getElementById('server-details').classList.add('open');
-    }
-    function closeMetricsModal() { document.getElementById('metrics-modal').classList.add('hidden'); }
-    function openSettingsModal() {
-      document.getElementById('settings-modal').classList.remove('hidden');
-      loadSettingsPanel();
-    }
-    function closeSettingsModal() { document.getElementById('settings-modal').classList.add('hidden'); }
-    function openProxyModal() {
-      document.getElementById('proxy-modal').classList.remove('hidden');
-      refreshPoolStatus();
-    }
-    function closeProxyModal() { document.getElementById('proxy-modal').classList.add('hidden'); }
-
-    function renderPoolStatus(data) {
-      const enabled = data.enabled;
-      const pill = document.getElementById('toolbar-proxy-pill');
-      if (pill) {
-        if (!enabled) pill.textContent = 'Proxy: direct';
-        else if (data.listening) pill.textContent = 'Proxy: ' + (data.active_proxy?.name || 'active');
-        else pill.textContent = 'Proxy: down';
-      }
-      document.getElementById('pool-enabled').checked = !!enabled;
-      const subs = data.subscriptions || [];
-      const subList = document.getElementById('pool-sub-list');
-      if (subList) {
-        subList.innerHTML = subs.length ? subs.map(s => {
-          const err = s.last_error ? `<span style="color:var(--red)">${esc(s.last_error)}</span>` : '';
-          const count = s.last_link_count != null ? `${s.last_link_count} links` : '—';
-          const fetched = s.last_fetch_at ? new Date(s.last_fetch_at).toLocaleString() : 'never';
-          return `<div class="pool-item"><span><strong>${esc(s.name || s.id)}</strong><br><span style="color:var(--muted)">${esc(s.url_preview || '')}</span></span><span>${count}<br>${fetched}${err ? '<br>' + err : ''}</span></div>`;
-        }).join('') : '<p class="settings-note">No subscriptions — add a URL above</p>';
-      }
-      const list = document.getElementById('pool-proxy-list');
-      const proxies = data.proxies || [];
-      list.innerHTML = proxies.length ? proxies.map(p => {
-        const chk = p.last_check || {};
-        const cls = chk.ok ? 'ok' : (chk.at ? 'bad' : '');
-        const lat = chk.latency_ms != null ? chk.latency_ms + 'ms' : '—';
-        const active = data.active_proxy_id === p.id ? ' ★' : '';
-        return `<div class="pool-item ${cls}"><span><strong>${esc(p.name || p.id)}</strong>${active}<br><span style="color:var(--muted)">${esc(p.share_preview || '')}</span></span><span>${chk.ok ? 'OK ' + lat : esc(chk.error || 'untested')}</span></div>`;
-      }).join('') : '<p class="settings-note">No proxies — add links or subscriptions</p>';
-      const pills = [];
-      if (enabled) pills.push(pill(data.listening ? 'Listening' : 'Not listening', data.listening));
-      if (data.last_check_at) pills.push(pill('Last check ' + new Date(data.last_check_at).toLocaleTimeString(), true));
-      document.getElementById('pool-pills').innerHTML = pills.join('');
-      const sel = data.last_selection;
-      document.getElementById('pool-status-text').textContent = sel
-        ? `Active: ${sel.name || sel.proxy_id || '—'} · ${sel.reason || ''}`
-        : (data.recent_logs && data.recent_logs[0] ? data.recent_logs[0].message : '—');
-    }
-
-    async function refreshPoolStatus(live) {
-      try {
-        const res = await apiFetch('/api/proxy/pool' + (live ? '?live=1' : ''));
-        const data = await res.json();
-        renderPoolStatus(data);
-      } catch (e) {}
-    }
-
-    async function onPoolEnabledChange() {
-      const enabled = document.getElementById('pool-enabled').checked;
-      const res = await apiFetch('/api/proxy/pool', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
-      const data = await res.json();
-      if (!res.ok) document.getElementById('pool-status-text').textContent = data.error || 'Failed';
-      await refreshPoolStatus(true);
-    }
-
-    async function addPoolSubscription() {
-      const url = document.getElementById('pool-sub-url').value.trim();
-      if (!url) return;
-      document.getElementById('pool-status-text').textContent = 'Fetching subscription…';
-      try {
-        const res = await apiFetch('/api/proxy/pool/subscription', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          document.getElementById('pool-status-text').textContent = data.error || 'Subscription failed';
-          return;
-        }
-        document.getElementById('pool-sub-url').value = '';
-        document.getElementById('pool-status-text').textContent = `Added — ${data.subscription?.last_link_count ?? 0} links`;
-        await refreshPoolStatus(true);
-      } catch (e) {
-        document.getElementById('pool-status-text').textContent = e.message || 'Subscription failed';
-      }
-    }
-
-    async function addPoolLinks() {
-      const lines = document.getElementById('pool-links-input').value.split('\n').map(s => s.trim()).filter(Boolean);
-      for (const share_url of lines) {
-        await apiFetch('/api/proxy/pool/link', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ share_url }),
-        });
-      }
-      document.getElementById('pool-links-input').value = '';
-      await refreshPoolStatus(true);
-    }
-
-    async function testPoolProxies() {
-      document.getElementById('pool-status-text').textContent = 'Testing all proxies…';
-      const res = await apiFetch('/api/proxy/pool/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      const data = await res.json();
-      const logEl = document.getElementById('pool-log');
-      logEl.classList.remove('hidden');
-      logEl.textContent = JSON.stringify(data.report || data, null, 2);
-      renderPoolStatus(data.status || data);
-    }
-
-    async function ensurePoolProxy() {
-      const res = await apiFetch('/api/proxy/pool/ensure?force=1', { method: 'POST' });
-      const data = await res.json();
-      renderPoolStatus(data.status || data);
-      document.getElementById('pool-status-text').textContent = data.ok ? 'Proxy ready' : (data.error || 'Failed');
-    }
-
-    async function refreshPoolSubscriptions() {
-      await apiFetch('/api/proxy/pool/refresh', { method: 'POST' });
-      await refreshPoolStatus(true);
-    }
-
-    function toggleServerDetails() {
-      const el = document.getElementById('server-details');
-      el.classList.toggle('open');
-    }
-
-    function esc(s) {
-      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-    }
-
-    function openCursorUrl(url) {
-      if (!url) return;
-      window.location.href = url;
-    }
-
-    function renderProjectActions(folder) {
-      const parts = [];
-      if (folder.running && folder.agent_url) {
-        const encUrl = encodeURIComponent(folder.agent_url);
-        parts.push(`<button type="button" class="btn btn-primary btn-sm" onclick="openCursorUrl(decodeURIComponent('${encUrl}'))">Cursor</button>`);
-      }
-      const dis = busy ? ' disabled' : '';
-      parts.push(`<button type="button" class="btn btn-ghost btn-sm" data-action="opencode"${dis}>OpenCode</button>`);
-      parts.push(`<button type="button" class="btn btn-primary btn-sm" data-action="start"${dis}>Start</button>`);
-      parts.push(`<button type="button" class="btn btn-danger btn-sm" data-action="stop"${dis}>Stop</button>`);
-      parts.push(`<button type="button" class="btn btn-sm restart" data-action="restart"${dis}>Restart</button>`);
-      return `<span class="btn-group">${parts.join('')}</span>`;
-    }
-
-    let opencodeOpening = false;
-    async function openOpencodeProject(name, sameTab = false) {
-      if (busy || opencodeOpening) return;
-      opencodeOpening = true;
-      const status = document.getElementById('opencode-msg');
-      const projectUrl = '/api/opencode/open/' + encodeURIComponent(name);
-      status.hidden = false;
-      status.className = '';
-      status.textContent = 'Starting OpenCode…';
-      try {
-        let res = await apiFetch(projectUrl, { method: 'POST' });
-        let data = await res.json();
-        if (data.status === 'install_required') {
-          const installUrl = '/api/opencode/install';
-          let installation = await (await apiFetch(installUrl)).json();
-          if (installation.status !== 'installing' && installation.status !== 'ready') {
-            const target = data.version ? `OpenCode ${data.version}` : 'OpenCode';
-            if (!confirm(`Install ${target} and build its web interface on this server? This can take several minutes. Existing chats and settings are kept.`)) {
-              status.hidden = true;
-              return;
-            }
-            const start = await apiFetch(installUrl, { method: 'POST' });
-            installation = await start.json();
-            if (!start.ok) throw new Error(installation.error || 'Could not start installation.');
-          }
-          status.textContent = 'Installing OpenCode on this server…';
-          while (installation.status === 'installing') {
-            await new Promise(resolve => setTimeout(resolve, 2500));
-            installation = await (await apiFetch(installUrl)).json();
-          }
-          if (installation.status !== 'ready') {
-            throw new Error(installation.error || 'Installation stopped. Click OpenCode to try again.');
-          }
-          status.textContent = 'Installation complete. Starting OpenCode…';
-          res = await apiFetch(projectUrl, { method: 'POST' });
-          data = await res.json();
-          sameTab = true;
-        }
-        if (!res.ok) throw new Error(data.error || 'OpenCode failed');
-        if (sameTab) {
-          location.assign(data.opencode_path);
-          return;
-        }
-        const link = document.createElement('a');
-        link.href = data.opencode_path;
-        link.target = '_blank';
-        link.rel = 'noopener';
-        link.textContent = 'Open project';
-        status.replaceChildren('OpenCode ready. ', link);
-        window.open(data.opencode_path, '_blank', 'noopener');
-        lastFoldersJson = '';
-        await refreshAll();
-      } catch (e) {
-        if (e.message !== 'unauthorized') {
-          status.textContent = e.message || 'OpenCode failed';
-          status.className = 'error';
-        }
-      } finally {
-        opencodeOpening = false;
-      }
-    }
-
-    function renderFolders(folders) {
-      if (!folders.length) { list.innerHTML = '<p class="loading">No projects found</p>'; lastFoldersJson = '[]'; return; }
-      const json = JSON.stringify(folders.map(f => ({ n: f.name, r: f.running, rd: f.ready, t: f.touched_relative })));
-      if (json === lastFoldersJson && list.querySelector('.projects-table')) return;
-      lastFoldersJson = json;
-      const rows = folders.map(f => {
-        const running = f.running ? ' running' : '';
-        const badge = `<span class="badge ${f.running ? 'run' : ''}">${f.running ? 'on' : 'off'}</span>`;
-        const statusHint = f.running && f.ready ? ' · connected' : (f.running ? ' · starting…' : '');
-        const gitBadge = f.git_has_remote ? '' : '<span class="badge warn" title="No git remote — Cursor may show this machine as disabled">no git remote</span>';
-        return `<tr class="project-row${running}" data-name="${esc(f.name)}" data-path="${esc(f.path)}">
-          <td><strong>${esc(f.name)}</strong> ${gitBadge}<div class="project-path">${esc(f.path)}</div></td>
-          <td>${esc(f.touched_relative || f.mtime_relative || '—')}</td>
-          <td>${badge}<span class="sub">${statusHint}</span></td>
-          <td>${renderProjectActions(f)}</td>
-        </tr>`;
-      }).join('');
-      list.innerHTML = `<div class="projects-section"><table class="projects-table"><thead><tr><th>Project</th><th>Last activity</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-    }
-
-    let pendingAgentUrl = null;
-
-    function showStartLog(text) {
-      const el = document.getElementById('start-modal-log');
-      if (!text) {
-        el.classList.add('hidden');
-        el.textContent = '';
-        return;
-      }
-      el.classList.remove('hidden');
-      el.textContent = text;
-      el.scrollTop = el.scrollHeight;
-    }
-
-    function formatLogErrors(errors) {
-      return (errors || []).join('\n');
-    }
-
-    function openCursorFromModal() {
-      if (!pendingAgentUrl) return;
-      window.location.href = pendingAgentUrl;
-    }
-
-    function setStartStep(step, state) {
-      document.querySelectorAll('#start-steps li').forEach(li => {
-        li.classList.remove('active', 'done', 'error');
-        const key = li.dataset.step;
-        const order = ['request', 'launch', 'connect', 'redirect'];
-        const si = order.indexOf(step);
-        const ki = order.indexOf(key);
-        if (state === 'error' && key === step) li.classList.add('error');
-        else if (ki < si) li.classList.add('done');
-        else if (ki === si) li.classList.add(state === 'done' ? 'done' : 'active');
-      });
-    }
-
-    function openStartModal(name) {
-      modalOpen = true;
-      pendingAgentUrl = null;
-      document.getElementById('start-modal-title').textContent = 'Starting ' + name;
-      document.getElementById('start-modal-msg').textContent = '';
-      document.getElementById('start-modal-close').classList.add('hidden');
-      document.getElementById('start-modal-open').classList.add('hidden');
-      showStartLog('');
-      document.getElementById('start-modal').classList.remove('hidden');
-      setStartStep('request', 'active');
-    }
-
-    function closeStartModal() {
-      document.getElementById('start-modal').classList.add('hidden');
-      document.getElementById('start-modal-open').classList.add('hidden');
-      pendingAgentUrl = null;
-      modalOpen = false;
-      busy = false;
-      lastFoldersJson = '';
-      refreshAll();
-    }
-
-    function openCtxModal(name) {
-      ctxProjectName = name;
-      modalOpen = true;
-      document.getElementById('ctx-modal-title').textContent = name;
-      document.getElementById('ctx-modal-hint').textContent = 'Creates .agentcontrol-ignore in the project folder. Delete that file to restore.';
-      document.getElementById('ctx-modal').classList.remove('hidden');
-    }
-
-    function closeCtxModal() {
-      document.getElementById('ctx-modal').classList.add('hidden');
-      modalOpen = false;
-      ctxProjectName = null;
-    }
-
-    function removeProjectRow(name) {
-      const row = [...list.querySelectorAll('.project-row')].find(r => r.dataset.name === name);
-      if (row) {
-        row.classList.add('removing');
-        setTimeout(() => {
-          row.remove();
-          if (!list.querySelector('.project-row')) {
-            list.innerHTML = '<p class="loading">No folders found</p>';
-          }
-        }, 150);
-      }
-      lastFoldersJson = '';
-    }
-
-    function pill(label, ok, warn) {
-      const cls = ok ? 'ok' : (warn ? 'warn' : 'bad');
-      const dot = ok ? '●' : (warn ? '◐' : '○');
-      return `<span class="xray-pill ${cls}">${dot} ${esc(label)}</span>`;
-    }
-
-    async function loadSettingsPanel() {
-      try {
-        const [settingsRes, modelsRes] = await Promise.all([
-          apiFetch('/api/settings'),
-          apiFetch('/api/models'),
-        ]);
-        const settings = await settingsRes.json();
-        const select = document.getElementById('settings-model');
-        const models = (await modelsRes.json()).models || [];
-        const current = select.value;
-        select.innerHTML = '<option value="">— Cursor default —</option>' + models.map(m =>
-          `<option value="${esc(m.id)}">${esc(m.label)} (${esc(m.id)})</option>`
-        ).join('');
-        select.value = settings.default_model || current || '';
-        document.getElementById('settings-model-status').textContent = settings.default_model
-          ? 'Default model: ' + settings.default_model
-          : 'No default model — Cursor will use its own default.';
-        const statusEl = document.getElementById('settings-api-status');
-        if (statusEl) {
-          statusEl.textContent = settings.api_key_set
-            ? 'API key is configured on this server.'
-            : 'No API key saved yet — workers cannot start.';
-          statusEl.className = 'api-key-hint' + (settings.api_key_set ? ' ok' : '');
-        }
-        const bridge = settings.cursor_bridge || {};
-        document.getElementById('bridge-enabled').checked = !!bridge.enabled;
-        document.getElementById('bridge-edge-ip').value = bridge.edge_ip || '';
-        document.getElementById('bridge-port').value = bridge.port || 33443;
-        document.getElementById('bridge-tls-host').value = bridge.tls_host || 'api2.cursor.sh';
-        document.getElementById('bridge-endpoint').value = bridge.endpoint || '';
-        const bStatus = document.getElementById('bridge-settings-status');
-        if (bridge.enabled && bridge.endpoint) {
-          bStatus.textContent = 'Active endpoint: ' + bridge.endpoint + (bridge.hosts_configured ? ' · /etc/hosts OK' : ' · hosts pending');
-          bStatus.className = 'api-key-hint ok';
-        } else {
-          bStatus.textContent = 'Direct api2 (no edge bridge)';
-          bStatus.className = 'api-key-hint';
-        }
-        const totp = settings.totp || {};
-        const totpEl = document.getElementById('totp-settings-status');
-        if (totpEl) {
-          totpEl.textContent = totp.enabled
-            ? 'Authenticator enabled — required at sign-in.'
-            : (totp.configured ? 'Secret saved but not enabled yet.' : 'Authenticator off.');
-          totpEl.className = 'api-key-hint' + (totp.enabled ? ' ok' : '');
-        }
-        const oc = settings.opencode || {};
-        const ocSecrets = oc.secrets || {};
-        const ocEl = document.getElementById('opencode-settings-status');
-        if (ocEl) {
-          const bits = [
-            oc.installed
-              ? `CLI ${oc.version || 'installed'}${oc.pinned_version && oc.version !== oc.pinned_version ? ` (target ${oc.pinned_version})` : ''}`
-              : 'CLI missing',
-            oc.install_required ? 'install required' : '',
-            oc.healthy ? 'serve healthy' : 'serve down',
-            ocSecrets.opencode_go_set ? 'Go key set' : 'Go key —',
-            ocSecrets.anthropic_set ? 'Anthropic set' : '',
-            ocSecrets.openai_set ? 'OpenAI set' : '',
-          ].filter(Boolean).join(' · ');
-          ocEl.textContent = bits;
-          ocEl.className = 'api-key-hint' + (oc.healthy ? ' ok' : '');
-        }
-        if (ocSecrets.default_model) {
-          document.getElementById('oc-default-model').placeholder = 'Current: ' + ocSecrets.default_model;
-        }
-        if (ocSecrets.remote_public_url) {
-          document.getElementById('oc-remote-url').value = ocSecrets.remote_public_url;
-        }
-        await refreshSessionsStatus();
-      } catch (e) {}
-    }
-
-    async function saveOpencodeSettings() {
-      const msgEl = document.getElementById('opencode-save-msg');
-      msgEl.textContent = 'Saving…';
-      const body = {
-        anthropic_api_key: document.getElementById('oc-anthropic-key').value.trim(),
-        openai_api_key: document.getElementById('oc-openai-key').value.trim(),
-        opencode_go_key: document.getElementById('oc-go-key').value.trim(),
-        default_model: document.getElementById('oc-default-model').value.trim(),
-        remote_public_url: document.getElementById('oc-remote-url').value.trim(),
-        restart_serve: true,
-      };
-      try {
-        const res = await apiFetch('/api/settings/opencode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        msgEl.textContent = res.ok ? 'Saved — restarting shared serve if needed' : (data.error || 'Failed');
-        msgEl.style.color = res.ok ? 'var(--green)' : 'var(--red)';
-        if (res.ok) {
-          document.getElementById('oc-anthropic-key').value = '';
-          document.getElementById('oc-openai-key').value = '';
-          document.getElementById('oc-go-key').value = '';
-        }
-        await loadSettingsPanel();
-      } catch (e) { msgEl.textContent = 'Failed'; }
-    }
-
-    async function refreshOpencodeRemote() {
-      const msgEl = document.getElementById('opencode-save-msg');
-      try {
-        const res = await apiFetch('/api/settings/opencode/remote/refresh', { method: 'POST' });
-        const data = await res.json();
-        msgEl.textContent = res.ok
-          ? (data.remote_public_url ? 'Remote URL: ' + data.remote_public_url : 'No remote URL returned — use /oc/ on this panel')
-          : (data.error || 'Failed');
-      } catch (e) { msgEl.textContent = 'Failed'; }
-    }
-
-    async function rotateTotpSecret() {
-      const res = await apiFetch('/api/settings/totp/rotate', { method: 'POST' });
-      const data = await res.json();
-      if (data.reauthentication_required) { location.replace('/'); return; }
-      document.getElementById('totp-secret-preview').value = data.secret || '';
-      document.getElementById('totp-settings-status').textContent = data.provisioning_uri
-        ? 'Scan URI in your app: ' + data.provisioning_uri
-        : 'Secret rotated — enter a code to enable.';
-    }
-
-    async function enableTotpFromSettings() {
-      const code = document.getElementById('totp-enable-code').value.trim();
-      const res = await apiFetch('/api/settings/totp/enable', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
-      const el = document.getElementById('totp-settings-status');
-      if (!res.ok) {
-        el.textContent = data.error || 'Enable failed';
-        return;
-      }
-      if (data.reauthentication_required) { location.replace('/'); return; }
-      el.textContent = 'Authenticator enabled.';
-      document.getElementById('totp-enable-code').value = '';
-      await loadSettingsPanel();
-    }
-
-    async function disableTotp() {
-      const res = await apiFetch('/api/settings/totp/disable', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (data.reauthentication_required) { location.replace('/'); return; }
-      await loadSettingsPanel();
-    }
-
-    async function refreshSessionsStatus() {
-      try {
-        const res = await apiFetch('/api/auth/sessions');
-        const data = await res.json();
-        const el = document.getElementById('sessions-status');
-        if (el) el.textContent = `${data.count || 0} active session(s) · ${data.ttl_days || 0} day(s)`;
-      } catch (_) {}
-    }
-
-    async function revokeAllSessions() {
-      if (!confirm('Sign out every browser session on this server? You will need the password (and 2FA) again.')) return;
-      const res = await apiFetch('/api/auth/sessions/revoke-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { alert(data.error || 'Failed'); return; }
-      location.replace('/');
-    }
-
-    async function signOutCurrent() {
-      await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-      location.replace('/');
-    }
-
-    async function saveBridgeSettings() {
-      const status = document.getElementById('bridge-settings-status');
-      const payload = {
-        enabled: document.getElementById('bridge-enabled').checked,
-        edge_ip: document.getElementById('bridge-edge-ip').value.trim(),
-        port: parseInt(document.getElementById('bridge-port').value, 10) || 33443,
-        tls_host: document.getElementById('bridge-tls-host').value.trim() || 'api2.cursor.sh',
-        endpoint: document.getElementById('bridge-endpoint').value.trim(),
-      };
-      try {
-        const res = await apiFetch('/api/settings/bridge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok) { status.textContent = data.error || 'Save failed'; status.className = 'api-key-hint'; return; }
-        status.textContent = 'Saved — endpoint: ' + (data.endpoint || data.cursor_bridge?.endpoint || '—');
-        status.className = 'api-key-hint ok';
-        await loadSettingsPanel();
-      } catch (e) {
-        status.textContent = 'Save failed';
-      }
-    }
-
-    async function testBridgeConnection() {
-      const status = document.getElementById('bridge-settings-status');
-      const logEl = document.getElementById('bridge-test-log');
-      status.textContent = 'Testing edge bridge…';
-      logEl.classList.remove('hidden');
-      logEl.textContent = '';
-      try {
-        const res = await apiFetch('/api/settings/bridge/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-        const data = await res.json();
-        logEl.textContent = JSON.stringify(data, null, 2);
-        if (data.ok) {
-          status.textContent = 'OK — HTTP ' + data.http_status + (data.worker_auth_ok ? ' · worker auth OK' : '');
-          status.className = 'api-key-hint ok';
-        } else {
-          status.textContent = data.error || 'Test failed';
-          status.className = 'api-key-hint';
-        }
-      } catch (e) {
-        status.textContent = 'Test failed';
-      }
-    }
-
-    async function saveDefaultModel() {
-      const model = document.getElementById('settings-model').value;
-      const status = document.getElementById('settings-model-status');
-      try {
-        const res = await apiFetch('/api/settings/model', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model }),
-        });
-        const data = await res.json();
-        if (!res.ok) { status.textContent = data.error || 'Failed'; return; }
-        status.textContent = model ? 'Default model: ' + model : 'Cleared — using Cursor default.';
-        status.className = 'api-key-hint ok';
-      } catch (e) {
-        status.textContent = 'Failed to save model';
-      }
-    }
-
-    async function hideProject(name) {
-      closeCtxModal();
-      removeProjectRow(name);
-      try {
-        const res = await apiFetch('/api/hide/' + encodeURIComponent(name), { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) {
-          msg.textContent = data.error || 'Hide failed';
-          msg.className = 'error';
-          lastFoldersJson = '';
-          const foldRes = await apiFetch('/api/folders');
-          renderFolders((await foldRes.json()).folders);
-          return;
-        }
-        msg.textContent = 'Hidden — delete .agentcontrol-ignore to restore';
-        msg.className = '';
-      } catch (e) {
-        msg.textContent = 'Hide failed';
-        msg.className = 'error';
-        lastFoldersJson = '';
-        try {
-          const foldRes = await apiFetch('/api/folders');
-          renderFolders((await foldRes.json()).folders);
-        } catch (_) {}
-      }
-    }
-
-    function bindProjectList() {
-      if (list.dataset.bound) return;
-      list.dataset.bound = '1';
-
-      list.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-action]');
-        if (!btn) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const row = btn.closest('.project-row');
-        const name = row?.dataset.name;
-        if (!name || busy) return;
-        if (btn.dataset.action === 'start') startAgent(name);
-        if (btn.dataset.action === 'stop') stopAgent(name);
-        if (btn.dataset.action === 'restart') restartAgent(name);
-        if (btn.dataset.action === 'opencode') openOpencodeProject(name);
-      });
-
-      list.addEventListener('contextmenu', (e) => {
-        const row = e.target.closest('.project-row');
-        if (!row) return;
-        e.preventDefault();
-        openCtxModal(row.dataset.name);
-      });
-
-      const clearPress = () => {
-        if (longPressTimer) clearTimeout(longPressTimer);
-        longPressTimer = null;
-        if (longPressRow) longPressRow.classList.remove('pressing');
-        longPressRow = null;
-      };
-
-      list.addEventListener('touchstart', (e) => {
-        const row = e.target.closest('.project-row');
-        if (!row || e.target.closest('[data-action]') || e.target.closest('.btn')) return;
-        clearPress();
-        longPressRow = row;
-        row.classList.add('pressing');
-        longPressTimer = setTimeout(() => {
-          if (navigator.vibrate) navigator.vibrate(20);
-          openCtxModal(row.dataset.name);
-          clearPress();
-        }, 550);
-      }, { passive: true });
-
-      list.addEventListener('touchend', clearPress);
-      list.addEventListener('touchmove', clearPress);
-      list.addEventListener('touchcancel', clearPress);
-    }
-
-    document.getElementById('ctx-hide-btn').addEventListener('click', () => {
-      if (ctxProjectName) hideProject(ctxProjectName);
-    });
-
-    document.getElementById('server-detail-grid').addEventListener('click', (e) => {
-      const head = e.target.closest('[data-docker-toggle]');
-      if (!head) return;
-      e.stopPropagation();
-      toggleDockerGroup(head.dataset.dockerToggle);
-    });
-
-    async function refreshAll() {
-      if (document.getElementById('app').classList.contains('hidden')) return;
-      const skipFolders = busy || modalOpen;
-      try {
-        const reqs = [apiFetch('/api/system'), apiFetch('/api/system/history')];
-        if (!skipFolders) reqs.push(apiFetch('/api/folders'));
-        const results = await Promise.all(reqs);
-        const sys = await results[0].json();
-        const hist = await results[1].json();
-        history = hist.points || [];
-        renderSystem(sys);
-        updatePageTitle(sys);
-        if (!skipFolders && results[2]) {
-          renderFolders((await results[2].json()).folders);
-        }
-        refreshPoolStatus();
-      } catch (e) {
-        if (e.message === 'unauthorized') return;
-        if (e.message === 'setup') return;
-        if (!modalOpen) {
-          msg.textContent = 'Refresh failed: ' + (e.message || 'unknown');
-          msg.className = 'error';
-        }
-      }
-    }
-
-    async function saveApiKey() {
-      const key = document.getElementById('settings-api-key').value.trim();
-      const msgEl = document.getElementById('settings-msg');
-      if (!key) { msgEl.textContent = 'Enter an API key'; return; }
-      try {
-        const res = await apiFetch('/api/setup/api-key', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ api_key: key }),
-        });
-        const data = await res.json();
-        msgEl.textContent = res.ok ? 'API key saved and verified' : (data.error || 'Failed');
-        msgEl.style.color = res.ok ? 'var(--green)' : 'var(--red)';
-        if (!res.ok && data.detail) {
-          msgEl.textContent += ' — see worker log for details';
-        }
-        if (res.ok) document.getElementById('settings-api-key').value = '';
-        refreshAll();
-      } catch (e) { msgEl.textContent = 'Failed'; }
-    }
-
-    async function waitReady(name, timeoutMs = 60000) {
-      const start = Date.now();
-      const msgEl = document.getElementById('start-modal-msg');
-      while (Date.now() - start < timeoutMs) {
-        const res = await apiFetch('/api/ready/' + encodeURIComponent(name));
-        const data = await res.json();
-        if (!data.running) throw new Error('stopped');
-        if (data.log_tail) showStartLog(data.log_tail);
-        if (data.has_errors && !data.ready) {
-          const errText = formatLogErrors(data.log_errors) || 'Worker reported errors in log';
-          throw new Error(errText);
-        }
-        if (data.ready) return data;
-        if (data.readyz && data.readyz.connected) return data;
-        msgEl.textContent = 'Waiting for Cursor connection…';
-        await new Promise(r => setTimeout(r, 1500));
-      }
-      throw new Error('timeout');
-    }
-
-    async function startAgent(name) {
-      if (busy) return;
-      busy = true;
-      try { await apiFetch('/api/projects/touch/' + encodeURIComponent(name), { method: 'POST' }); } catch (_) {}
-      openStartModal(name);
-      const msgEl = document.getElementById('start-modal-msg');
-      try {
-        setStartStep('request', 'active');
-        const res = await apiFetch('/api/start/' + encodeURIComponent(name), { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) {
-          setStartStep('request', 'error');
-          msgEl.textContent = data.error || 'Start failed';
-          document.getElementById('start-modal-close').classList.remove('hidden');
-          return;
-        }
-        setStartStep('request', 'done');
-        setStartStep('launch', 'done');
-        setStartStep('connect', 'active');
-        msgEl.textContent = 'Waiting for Cursor connection…';
-
-        const ready = await waitReady(name);
-        setStartStep('connect', 'done');
-        setStartStep('redirect', 'active');
-        pendingAgentUrl = ready.agent_url || data.agent_url;
-        msgEl.textContent = 'Worker connected — opening Cursor…';
-        setStartStep('redirect', 'done');
-        document.getElementById('start-modal-close').classList.remove('hidden');
-        if (pendingAgentUrl) {
-          setTimeout(() => { window.location.href = pendingAgentUrl; }, 600);
-        }
-      } catch (e) {
-        if (e.message === 'stopped') {
-          setStartStep('connect', 'error');
-          msgEl.textContent = 'Worker stopped unexpectedly.';
-        } else if (e.message === 'timeout') {
-          setStartStep('connect', 'error');
-          msgEl.textContent = 'Timed out — check worker logs below. Fix the issue before opening Cursor.';
-        } else if (e.message !== 'unauthorized') {
-          setStartStep('connect', 'error');
-          const lines = (e.message || '').split('\n').filter(Boolean);
-          if (lines.length > 1) {
-            msgEl.textContent = 'Worker error — fix before opening Cursor:';
-            showStartLog(lines.join('\n'));
-          } else {
-            msgEl.textContent = 'Connection failed: ' + (e.message || 'unknown');
-          }
-        }
-        document.getElementById('start-modal-close').classList.remove('hidden');
-      } finally {
-        if (!document.getElementById('start-modal').classList.contains('hidden')) {
-          // keep busy until redirect or close
-        } else {
-          busy = false;
-        }
-      }
-    }
-
-    async function stopAgent(name) {
-      if (busy) return;
-      busy = true;
-      msg.textContent = 'Stopping…';
-      try {
-        const res = await apiFetch('/api/stop/' + encodeURIComponent(name), { method: 'POST' });
-        if (res.ok) {
-          msg.textContent = 'Stopped';
-          lastFoldersJson = '';
-        }
-        await refreshAll();
-      } catch (e) {} finally {
-        busy = false;
-      }
-    }
-
-    async function restartAgent(name) {
-      if (busy) return;
-      busy = true;
-      try { await apiFetch('/api/projects/touch/' + encodeURIComponent(name), { method: 'POST' }); } catch (_) {}
-      openStartModal(name);
-      document.getElementById('start-modal-title').textContent = 'Restarting ' + name;
-      const msgEl = document.getElementById('start-modal-msg');
-      try {
-        setStartStep('request', 'active');
-        const res = await apiFetch('/api/restart/' + encodeURIComponent(name), { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) {
-          setStartStep('request', 'error');
-          msgEl.textContent = data.error || 'Restart failed';
-          document.getElementById('start-modal-close').classList.remove('hidden');
-          return;
-        }
-        setStartStep('request', 'done');
-        setStartStep('launch', 'done');
-        setStartStep('connect', 'active');
-        msgEl.textContent = 'Waiting for Cursor connection…';
-        const ready = await waitReady(name);
-        setStartStep('connect', 'done');
-        setStartStep('redirect', 'active');
-        pendingAgentUrl = ready.agent_url || data.agent_url;
-        msgEl.textContent = 'Worker connected — opening Cursor…';
-        setStartStep('redirect', 'done');
-        document.getElementById('start-modal-close').classList.remove('hidden');
-        if (pendingAgentUrl) {
-          setTimeout(() => { window.location.href = pendingAgentUrl; }, 600);
-        }
-      } catch (e) {
-        setStartStep('connect', 'error');
-        msgEl.textContent = e.message || 'Restart failed';
-        document.getElementById('start-modal-close').classList.remove('hidden');
-      } finally {
-        if (document.getElementById('start-modal').classList.contains('hidden')) busy = false;
-      }
-    }
-
-    function bindModalBackdrops() {
-      const closers = {
-        'metrics-modal': closeMetricsModal,
-        'settings-modal': closeSettingsModal,
-        'proxy-modal': closeProxyModal,
-        'start-modal': closeStartModal,
-        'ctx-modal': closeCtxModal,
-      };
-      document.querySelectorAll('.modal-overlay[data-modal-closable]').forEach((overlay) => {
-        overlay.addEventListener('click', (e) => {
-          if (e.target !== overlay) return;
-          if (overlay.dataset.modalGuardBusy === '1' && busy) return;
-          closers[overlay.id]?.();
-        });
-      });
-    }
-
-    bindProjectList();
-    bindModalBackdrops();
-    boot();
-  </script>
+  <script type="module" src="/static/panel.js?v={{ version.version }}"></script>
 </body>
 </html>

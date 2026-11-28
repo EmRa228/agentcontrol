@@ -30,7 +30,7 @@
     <button type="submit">Continue</button>
     <p class="err" id="error"></p>
   </form>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     // Sessions live in an HttpOnly cookie now; drop any legacy password copy.
     localStorage.removeItem('agentcontrol_auth_' + location.host);
     document.getElementById('setup-form').addEventListener('submit', async (e) => {
@@ -43,7 +43,7 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw, confirm: pw2 }),
+        body: JSON.stringify({ password: pw, confirm: pw2, setup_token: new URLSearchParams(location.search).get('setup') || '' }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { err.textContent = data.error || 'Setup failed'; return; }

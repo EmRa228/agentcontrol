@@ -118,6 +118,43 @@ class SessionStore:
             con.commit()
             return int(cur.rowcount or 0)
 
+    def list_sessions(self, *, current_token: str | None = None) -> list[dict]:
+        now = time.time()
+        current_hash = self._hash(current_token) if current_token else ""
+        with self._lock, closing(self._connect()) as con:
+            rows = con.execute(
+                """SELECT token_hash, created_at, last_seen, expires_at, ip, ua
+                   FROM sessions WHERE expires_at > ? ORDER BY last_seen DESC""",
+                (now,),
+            ).fetchall()
+        sessions = []
+        for row in rows:
+            token_hash = row[0]
+            sessions.append(
+                {
+                    "id": token_hash[:16],
+                    "created_at": row[1],
+                    "last_seen": row[2],
+                    "expires_at": row[3],
+                    "ip": row[4],
+                    "ua": row[5],
+                    "current": bool(current_hash and token_hash == current_hash),
+                }
+            )
+        return sessions
+
+    def revoke_by_id(self, session_id: str) -> bool:
+        session_id = (session_id or "").strip()
+        if len(session_id) < 8 or not all(ch in "0123456789abcdef" for ch in session_id):
+            return False
+        with self._lock, closing(self._connect()) as con:
+            cur = con.execute(
+                "DELETE FROM sessions WHERE token_hash LIKE ?",
+                (session_id + "%",),
+            )
+            con.commit()
+            return bool(cur.rowcount)
+
     def prune(self) -> int:
         now = time.time()
         with self._lock, closing(self._connect()) as con:

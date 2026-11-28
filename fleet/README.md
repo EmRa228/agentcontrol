@@ -21,7 +21,7 @@ If you use `http://193.163.201.14:30228` you get **error 1003**.
 2. Name: `ac-tg-uk` (or any name)
 3. IPv4: `193.163.201.14`
 4. Proxy status: **DNS only** (grey cloud — not orange)
-5. In fleet, use: `http://ac-tg-uk.aksbaz.com:30228`
+5. In fleet, use: `https://ac-tg-uk.aksbaz.com:30228`
 
 Port `30228` only works with grey cloud. Orange cloud proxies ports 80/443 only.
 
@@ -71,7 +71,7 @@ Docs: [https://developers.cloudflare.com/workers/get-started/guide/#7-deploy-you
 
 ### 4. First visit — choose a password
 
-Open your fleet URL. On first visit you see a **setup** screen to choose the dashboard password (stored in KV).
+Open your fleet URL. On first visit you see a **setup** screen to choose the dashboard password (stored as a PBKDF2 hash in KV). Sign-in creates an HttpOnly session cookie; the password is no longer kept in `localStorage`.
 
 No `wrangler secret put FLEET_PASSWORD` is required for a fresh install.
 
@@ -91,9 +91,11 @@ Docs: [https://developers.cloudflare.com/workers/configuration/routing/custom-do
 2. Sign in with the password you chose at setup
 3. **Add server**:
    - **Name**: anything (e.g. `uk-prod`)
-   - **URL**: `http://193.163.201.14:30228`
-   - **Panel password**: same password you use on that server’s AgentControl UI
+   - **URL**: `https://ac-uk.example.com:30228` (hostname, grey-cloud DNS)
+   - **Panel password**: a scoped API token (`ac_…`, recommended) or the panel password
 4. Expand a server card → **Start** / **Stop** projects
+5. **Alerts** configures down/recovery notifications (webhook + Telegram) with a
+   failure threshold and severity; a cron checks every 5 minutes.
 
 The fleet UI keeps data fresh with **low KV usage** (important on Cloudflare free tier):
 
@@ -131,10 +133,17 @@ npm run deploy
 
 ## Security notes
 
-- Server panel passwords are stored in **KV** (only your Worker can read them).
-- Choose a strong fleet password at first visit and use HTTPS (workers.dev or custom domain).
-- Each AgentControl server should use its own panel password.
-- Fleet Worker calls your servers over **HTTP** — use only on trusted networks or add HTTPS to AgentControl later.
+- The dashboard password is stored as a **PBKDF2 hash**; browsers use an HttpOnly
+  session cookie. Login is limited to 10 failures per IP / 5 minutes.
+- Server credentials are stored in **KV**. Set `FLEET_ENC_KEY` (base64 32 bytes) to
+  encrypt them with AES-GCM:
+  `npx wrangler secret put FLEET_ENC_KEY`
+- Prefer a scoped **API token** (`read`/`ops`/`admin`) per server instead of the
+  panel password. Fleet sends it as `X-AgentControl-Token`.
+- Choose a strong fleet password at first visit and use HTTPS (workers.dev or a
+  custom domain). Put Cloudflare Access in front for an extra layer.
+- Per-server health history and down/recovery alerts are sampled hourly; estimate KV
+  writes before lowering the cron interval.
 
 ## Auto-deploy with GitHub Actions (no local `wrangler deploy`)
 
@@ -203,8 +212,8 @@ Push to `main` or **Actions** → **Deploy Fleet Worker** → **Run workflow**.
 ```
 Browser → fleet.yourdomain.com (Worker)
               ↓ HTTP + X-AgentControl-Auth
-         http://server1:30228/api/...
-         http://server2:30228/api/...
+         https://server1:30228/api/...
+         https://server2:30228/api/...
 ```
 
 No Cloudflare Tunnel. No config changes on individual servers.

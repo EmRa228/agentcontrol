@@ -25,7 +25,8 @@ Paid Workers ($5/mo minimum) raises KV to **10M reads** and **1M writes** per mo
 
 ## Why this matters for Fleet
 
-Before v1.5.3, a **single open browser tab** could cause:
+Earlier Fleet builds (before the cached/rotating design) let a **single open browser tab**
+cause:
 
 - Poll every **25s**
 - Refresh **every registered server** on each poll
@@ -37,7 +38,7 @@ Symptom: Cloudflare email *"KV operations are nearing the daily cap"* and `429` 
 
 ---
 
-## Current design (v1.5.3+)
+## Current design (cached + rotating)
 
 ### Polling model (browser)
 
@@ -65,11 +66,21 @@ Constants in `fleet/public/index.html`: `POLL_MS = 60000`, `REGISTRY_POLL_EVERY 
 
 | Key | Purpose | Write when |
 |-----|---------|------------|
-| `servers` | Registered servers (name, url, password, paused) | Add / delete / pause / touch |
+| `servers` | Registered servers (name, url, password/token, paused) | Add / delete / pause / touch |
 | `fleet_snapshot_cache` | Last full fleet snapshot JSON | Full snapshot, add server, delete, pause, manual refresh |
 | `recent_projects` | Cross-server “recent” touch metadata | Start / stop / touch project |
-| `fleet_password` | Dashboard password (setup UI) | First-time setup |
+| `fleet_auth` | Dashboard password hash (PBKDF2 + salt) | First setup |
+| `fleet_session:<hash>` | One HttpOnly browser session (TTL 30d) | Login / logout |
+| `fleet_notifications` | Alert channels/thresholds | Alerts settings |
+| `fleet_health:<id>` | Hourly health samples (max 168) | Cron, at most 1/hour/server |
+| `fleet_health_state:<id>` | Consecutive failures / notified flag | Cron, on change only |
 | `fleet_ui_html` / `fleet_ui_version` | Cached UI from GitHub | CI deploy, manual “Update fleet UI” |
+
+### Health cron
+
+`*/5 * * * *` fetches `/api/health` per server (one KV read). State writes happen
+only on transitions or while failures accumulate; history is appended at most once
+per hour per server. Do not lower the interval without re-estimating writes.
 
 ### API endpoints and KV impact
 
@@ -121,7 +132,7 @@ Target routine polling at **~0 writes/hour/tab**.
 
 | Constraint | Fleet impact |
 |------------|--------------|
-| No `fetch()` to raw IP | Server URL must be `http://hostname:30228` |
+| No `fetch()` to raw IP | Server URL should be `https://hostname:30228` (plain HTTP redirects) |
 | Request timeout | `proxyAgent` uses 45s timeout to panels |
 | No long-lived connections | No SSE from Worker to browser for fleet state; use polling |
 | Subrequest limits | Avoid fan-out of dozens of parallel panel calls per user request |
@@ -134,7 +145,7 @@ Target routine polling at **~0 writes/hour/tab**.
 
 1. Limit open Fleet tabs.
 2. Wait for UTC midnight reset (Cloudflare emails include reset time).
-3. Deploy latest fleet (v1.5.3+) if still on old polling.
+3. Deploy the latest Fleet worker if it still uses the old all-servers polling.
 4. Upgrade to Workers Paid if you genuinely need higher volume.
 
 ### Monitoring

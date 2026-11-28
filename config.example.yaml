@@ -3,18 +3,21 @@
 # Public port used in browser/Fleet URLs (Caddy listens here when configured).
 port: 30228
 
-# --- Bundled Caddy (optional) -------------------------------------------------
-# Leave internal_port empty to keep the old behaviour: Flask binds `port` on all
-# interfaces. When public_hostname + internal_port are set, install.sh starts the
-# bundled Caddy on `port` (TLS) and Flask moves to 127.0.0.1:internal_port, which
-# is never exposed publicly. Caddy is isolated from any system nginx/Caddy.
-# internal_port: 30328
-# bind_host: 127.0.0.1
+# --- Bundled Caddy (default) --------------------------------------------------
+# install.sh and panel-update.sh always set this up. The public `port` is served
+# by scripts/tls_front.py (HTTP -> HTTPS redirect, TLS pass-through) and Caddy
+# terminates TLS on 127.0.0.1:https_internal_port, proxying to Flask on
+# 127.0.0.1:internal_port. Caddy never binds 80/443 for the site itself.
+internal_port: 30328
+https_internal_port: 30443
+bind_host: 127.0.0.1
+# Optional fixed certificate name. When empty, Caddy uses On-Demand TLS for any
+# hostname whose DNS points at this server (it needs inbound 80 for ACME).
 # public_hostname: panel.example.com
 # tls_cert_file: ""          # optional: reuse an existing certificate
 # tls_key_file: ""
 # acme_email: ""             # optional: Let's Encrypt account email
-# session_days: 30           # browser session lifetime after password + 2FA
+session_days: 30             # browser session lifetime after password + 2FA
 
 scan_root: /root
 idle_release_seconds: 43200  # 12 hours
@@ -56,5 +59,23 @@ opencode_hostname: 127.0.0.1
 opencode_secrets_file: /etc/agentcontrol/opencode-secrets.json
 opencode_env_file: /etc/agentcontrol/opencode-providers.env
 opencode_serve_password_file: /etc/agentcontrol/opencode-serve-password
+
+# --- Security, monitoring and alerts -----------------------------------------
+max_login_attempts: 10      # per client before a temporary lockout
+lockout_seconds: 300        # 5 minutes
+monitor_interval_seconds: 60
+metrics_interval_seconds: 15
+metrics_retention_hours: 168
+update_check_seconds: 21600
+disk_warn_percent: 85
+disk_crit_percent: 95
+cert_warn_days: 21
+cert_crit_days: 7
+status_page_enabled: true   # public read-only /status and /api/public/status
+metrics_public: false       # /metrics requires a token/loopback unless true
+terminal_enabled: true      # admin-only browser terminal at /api/terminal/ws
+terminal_shell: /bin/bash
+terminal_max_seconds: 3600
+notifications_file: /etc/agentcontrol/notifications.yaml
 
 # Cursor edge bridge: use /etc/agentcontrol/.env (see .env.example), not this file, for IPs.
